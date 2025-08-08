@@ -72,13 +72,4 @@ tmp/
 __pycache__/
 *.py[cod]
 *$py.class
-*.so# Environment files
-.env
-agents/.env
-releases/*# Build outputs
-releases/
-dist/
-build/
-*.dmg
-*.zip
-*.blockmap
+*.so
