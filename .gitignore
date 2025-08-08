@@ -75,4 +75,10 @@ __pycache__/
 *.so# Environment files
 .env
 agents/.env
-releases/*
+releases/*# Build outputs
+releases/
+dist/
+build/
+*.dmg
+*.zip
+*.blockmap
