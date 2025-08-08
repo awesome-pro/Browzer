@@ -75,3 +75,4 @@ __pycache__/
 *.so# Environment files
 .env
 agents/.env
+releases/*
