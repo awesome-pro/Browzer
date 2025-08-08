@@ -1330,14 +1330,27 @@ function configureWebview(webview: any, url: string): void {
     webview.setAttribute('src', homepageUrl);
   } else if (url.startsWith('file://browzer-settings')) {
     // Load the settings page (with or without anchor)
-    const settingsPath = `file://${window.electronAPI.path.join(window.electronAPI.cwd(), 'src/renderer/settings.html')}`;
-    
-    // If there's an anchor in the URL, append it to the settings path
-    const anchorIndex = url.indexOf('#');
-    const finalUrl = anchorIndex !== -1 ? settingsPath + url.substring(anchorIndex) : settingsPath;
-    
-    console.log('[Settings] Loading settings page with URL:', finalUrl);
-    webview.setAttribute('src', finalUrl);
+    // For packaged apps, use getResourcePath instead of cwd
+    window.electronAPI.getResourcePath('src/renderer/settings.html').then(settingsFilePath => {
+      const settingsPath = `file://${settingsFilePath}`;
+      
+      // If there's an anchor in the URL, append it to the settings path
+      const anchorIndex = url.indexOf('#');
+      const finalUrl = anchorIndex !== -1 ? settingsPath + url.substring(anchorIndex) : settingsPath;
+      
+      console.log('[Settings] Resource path:', settingsFilePath);
+      console.log('[Settings] Settings URL:', finalUrl);
+      webview.setAttribute('src', finalUrl);
+    }).catch(error => {
+      console.error('[Settings] Failed to get resource path:', error);
+      // Fallback to development path
+      const cwd = window.electronAPI.cwd();
+      const settingsPath = `file://${window.electronAPI.path.join(cwd, 'src/renderer/settings.html')}`;
+      const anchorIndex = url.indexOf('#');
+      const finalUrl = anchorIndex !== -1 ? settingsPath + url.substring(anchorIndex) : settingsPath;
+      console.log('[Settings] Fallback to CWD path:', finalUrl);
+      webview.setAttribute('src', finalUrl);
+    });
     
     // Set up settings page communication after it loads
     webview.addEventListener('dom-ready', () => {
@@ -2566,10 +2579,13 @@ function showHistoryPage(): void {
     console.log('Active webview found:', !!webview);
     
     if (webview) {
-      const historyURL = `file://${window.electronAPI.path.join(window.electronAPI.cwd(), 'src/renderer/history.html')}`;
-      console.log('Loading history URL:', historyURL);
-      
-      const historyLoadHandler = () => {
+      // For packaged apps, use getResourcePath instead of cwd
+      window.electronAPI.getResourcePath('src/renderer/history.html').then(historyFilePath => {
+        const historyURL = `file://${historyFilePath}`;
+        console.log('[History] Resource path:', historyFilePath);
+        console.log('[History] Loading history URL:', historyURL);
+        
+        const historyLoadHandler = () => {
         console.log('History page loaded, injecting data...');
         
         try {
@@ -2601,16 +2617,73 @@ function showHistoryPage(): void {
         
         webview.removeEventListener('did-finish-load', historyLoadHandler);
       };
-      
-      webview.addEventListener('did-finish-load', historyLoadHandler);
-      webview.loadURL(historyURL);
-      console.log('History URL loaded successfully');
+        
+        webview.addEventListener('did-finish-load', historyLoadHandler);
+        webview.loadURL(historyURL);
+        console.log('History URL loaded successfully');
+      }).catch(error => {
+        console.error('[History] Failed to get resource path:', error);
+        // Fallback to development path
+        const cwd = window.electronAPI.cwd();
+        const historyURL = `file://${window.electronAPI.path.join(cwd, 'src/renderer/history.html')}`;
+        console.log('[History] Fallback to CWD path:', historyURL);
+        
+        const historyLoadHandler = () => {
+          console.log('History page loaded, injecting data...');
+          
+          try {
+            const historyData = localStorage.getItem(HISTORY_STORAGE_KEY) || '[]';
+            const parsedHistory = JSON.parse(historyData);
+            console.log('Injecting history data:', parsedHistory.length, 'items');
+            
+            webview.executeJavaScript(`
+              if (window.receiveHistoryData) {
+                window.receiveHistoryData(${historyData});
+              } else {
+                window.__pendingHistoryData = ${historyData};
+                setTimeout(() => {
+                  if (window.receiveHistoryData && window.__pendingHistoryData) {
+                    window.receiveHistoryData(window.__pendingHistoryData);
+                    delete window.__pendingHistoryData;
+                  }
+                }, 500);
+              }
+            `).then(() => {
+              console.log('History data injected successfully');
+            }).catch((err: any) => {
+              console.error('Error injecting history data:', err);
+            });
+            
+          } catch (error) {
+            console.error('Error preparing history data:', error);
+          }
+          
+          webview.removeEventListener('did-finish-load', historyLoadHandler);
+        };
+        
+        webview.addEventListener('did-finish-load', historyLoadHandler);
+        webview.loadURL(historyURL);
+        console.log('History URL loaded successfully (fallback)');
+      });
       
     } else {
       console.log('No active webview, creating new tab...');
-      const historyURL = `file://${window.electronAPI.path.join(window.electronAPI.cwd(), 'src/renderer/history.html')}`;
-      const newTabId = createNewTab(historyURL);
-      console.log('New history tab created:', newTabId);
+      // For packaged apps, use getResourcePath instead of cwd
+      window.electronAPI.getResourcePath('src/renderer/history.html').then(historyFilePath => {
+        const historyURL = `file://${historyFilePath}`;
+        console.log('[History] Resource path:', historyFilePath);
+        console.log('[History] Creating new history tab with URL:', historyURL);
+        const newTabId = createNewTab(historyURL);
+        console.log('New history tab created:', newTabId);
+      }).catch(error => {
+        console.error('[History] Failed to get resource path:', error);
+        // Fallback to development path
+        const cwd = window.electronAPI.cwd();
+        const historyURL = `file://${window.electronAPI.path.join(cwd, 'src/renderer/history.html')}`;
+        console.log('[History] Fallback to CWD path:', historyURL);
+        const newTabId = createNewTab(historyURL);
+        console.log('New history tab created (fallback):', newTabId);
+      });
     }
   } catch (error) {
     console.error('Error in showHistoryPage:', error);
@@ -2632,14 +2705,17 @@ function getExtensionDisplayName(extensionId: string): string {
 }
 
 // Helper function to get the currently selected AI provider
+// Model selection commented out - always return 'anthropic'
 function getSelectedProvider(): string {
-  const modelSelector = document.getElementById('modelSelector') as HTMLSelectElement;
-  return modelSelector ? modelSelector.value : 'anthropic'; // Default to anthropic
+  // const modelSelector = document.getElementById('modelSelector') as HTMLSelectElement;
+  // return modelSelector ? modelSelector.value : 'anthropic'; // Default to anthropic
+  return 'anthropic'; // Always use Anthropic Claude
 }
 
 // Helper function to gather all browser API keys
 function getBrowserApiKeys(): Record<string, string> {
-  const providers = ['openai', 'anthropic', 'perplexity', 'chutes'];
+  // Only include Anthropic API key - other providers commented out
+  const providers = ['anthropic']; // ['openai', 'anthropic', 'perplexity', 'chutes'];
   const apiKeys: Record<string, string> = {};
   
   console.log('[DEBUG] Reading API keys from localStorage...');
@@ -2709,13 +2785,14 @@ async function executeAgent(): Promise<void> {
       return;
     }
     
-    if (!modelSelector) {
-      console.error('Model selector not found');
-      showToast('Model selector not found', 'error');
-      return;
-    }
+    // Model selector commented out - always use 'anthropic'
+    // if (!modelSelector) {
+    //   console.error('Model selector not found');
+    //   showToast('Model selector not found', 'error');
+    //   return;
+    // }
     
-    const provider = modelSelector.value;
+    const provider = 'anthropic'; // Always use Anthropic Claude
     const apiKey = localStorage.getItem(`${provider}_api_key`);
     
     if (!apiKey) {
@@ -2844,7 +2921,7 @@ async function executeAgent(): Promise<void> {
           pageContent,
           browserApiKeys: getBrowserApiKeys(),
           selectedProvider: provider,
-          selectedModel: modelSelector.selectedOptions[0]?.dataset.model || 'claude-3-7-sonnet-latest',
+          selectedModel: 'claude-3-5-sonnet-20241022', // Always use Claude 3.5 Sonnet
           isQuestion: false,
           conversationHistory: await buildConversationHistoryWithMemories(url, query)
         };
@@ -3353,14 +3430,15 @@ async function processFollowupQuestion(question: string): Promise<void> {
   try {
     addMessageToChat('assistant', '<div class="loading">Processing your question...</div>');
     
-    if (!modelSelector) {
-      clearLoadingIndicators();
-      addMessageToChat('assistant', 'Error: Model selector not found.');
-      isWorkflowExecuting = false; // Clear flag if not proceeding
-      return;
-    }
+    // Model selector commented out - always use 'anthropic'
+    // if (!modelSelector) {
+    //   clearLoadingIndicators();
+    //   addMessageToChat('assistant', 'Error: Model selector not found.');
+    //   isWorkflowExecuting = false; // Clear flag if not proceeding
+    //   return;
+    // }
     
-    const provider = modelSelector.value;
+    const provider = 'anthropic'; // Always use Anthropic Claude
     const apiKey = localStorage.getItem(`${provider}_api_key`);
     
     if (!apiKey) {
@@ -3416,7 +3494,7 @@ async function processFollowupQuestion(question: string): Promise<void> {
           pageContent,
           browserApiKeys: getBrowserApiKeys(),
           selectedProvider: provider,
-          selectedModel: modelSelector.selectedOptions[0]?.dataset.model || 'claude-3-7-sonnet-latest',
+          selectedModel: 'claude-3-5-sonnet-20241022', // Always use Claude 3.5 Sonnet
           isQuestion: true,
           conversationHistory: await buildConversationHistoryWithMemories(currentUrl, question)
         };
@@ -3608,14 +3686,15 @@ async function processFollowupQuestionWithContexts(question: string, contexts: W
   try {
     addMessageToChat('assistant', '<div class="loading">Processing your question with webpage contexts...</div>');
     
-    if (!modelSelector) {
-      clearLoadingIndicators();
-      addMessageToChat('assistant', 'Error: Model selector not found.');
-      isWorkflowExecuting = false;
-      return;
-    }
+    // Model selector commented out - always use 'anthropic'
+    // if (!modelSelector) {
+    //   clearLoadingIndicators();
+    //   addMessageToChat('assistant', 'Error: Model selector not found.');
+    //   isWorkflowExecuting = false;
+    //   return;
+    // }
     
-    const provider = modelSelector.value;
+    const provider = 'anthropic'; // Always use Anthropic Claude
     const apiKey = localStorage.getItem(`${provider}_api_key`);
     
     if (!apiKey) {
@@ -3700,7 +3779,7 @@ async function processFollowupQuestionWithContexts(question: string, contexts: W
           pageContent: enhancedPageContent,
           browserApiKeys: getBrowserApiKeys(),
           selectedProvider: provider,
-          selectedModel: modelSelector.selectedOptions[0]?.dataset.model || 'claude-3-7-sonnet-latest',
+          selectedModel: 'claude-3-5-sonnet-20241022', // Always use Claude 3.5 Sonnet
           isQuestion: true,
           conversationHistory: await buildConversationHistoryWithMemories(currentUrl, question)
         };
@@ -5296,9 +5375,11 @@ async function loadAdBlockerStatus(): Promise<void> {
 }
 
 function getModelProvider(): string {
-  const modelSelector = document.getElementById('modelSelector') as HTMLSelectElement;
-  if (!modelSelector) return 'unknown';
-  return modelSelector.value || 'unknown';
+  // Model selector commented out - always return 'anthropic'
+  // const modelSelector = document.getElementById('modelSelector') as HTMLSelectElement;
+  // if (!modelSelector) return 'unknown';
+  // return modelSelector.value || 'unknown';
+  return 'anthropic'; // Always use Anthropic Claude
 }
 
 // ============ TAB SEARCH FUNCTIONALITY ============

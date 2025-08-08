@@ -4,10 +4,10 @@
   "version": "1.0.0",
   "description": "AI-powered browser with agent-based capabilities",
   "main": "dist/src/main/main.js",
-  "homepage": "https://github.com/your-username/browzer",
+  "homepage": "https://github.com/BrowzerLabs/Browzer",
   "author": {
-    "name": "Your Name",
-    "email": "your.email@example.com"
+    "name": "Browzer Labs",
+    "email": "contact@browzerlabs.com"
   },
   "scripts": {
     "dev": "npx webpack --config webpack.renderer.config.js && npx tsc && node scripts/copy-python-files.js && electron .",
@@ -17,12 +17,16 @@
     "postinstall": "echo \"Run 'npm run setup' to set up Python agents\"",
     "prepare-python": "./scripts/prepare-python-bundle.sh",
     "copy-python": "node scripts/copy-python-files.js",
+    "clean": "rm -rf dist releases",
     "prebuild": "npm run prepare-python",
     "build": "electron-builder",
     "build:mac": "electron-builder --mac",
     "build:linux": "electron-builder --linux",
     "build:win": "electron-builder --win",
     "build:all": "electron-builder --mac --linux --win",
+    "build:prod:mac": "NODE_ENV=production node scripts/build-production.js --mac",
+    "build:prod:linux": "NODE_ENV=production node scripts/build-production.js --linux",
+    "build:prod:win": "NODE_ENV=production node scripts/build-production.js --win",
     "dist": "npm run build",
     "pack": "electron-builder --dir",
     "rebuild": "electron-rebuild"
@@ -31,22 +35,31 @@
     "appId": "com.browzer.app",
     "productName": "Browzer",
     "directories": {
-      "output": "dist"
+      "output": "releases"
     },
     "files": [
-      "main.js",
-      "renderer.js",
-      "preload.js",
-      "index.html",
-      "styles.css",
-      "history.html",
+      "dist/**/*",
+      "src/renderer/settings.html",
+      "src/renderer/styles.css",
+      "extensions/**/*",
+      "extensions-framework/**/*",
+      "python-bundle/**/*",
       "agents/**/*",
+      "assets/**/*",
       "node_modules/**/*",
       "!node_modules/*/{README.md,readme.md,CHANGELOG.md,changelog.md}",
-      "!agents/venv/**/*",
       "!**/*.pyc",
       "!**/__pycache__",
-      "!agents/.env"
+      "!**/.env",
+      "!**/.DS_Store"
+    ],
+    "asarUnpack": [
+      "extensions/**/*",
+      "extensions-framework/**/*",
+      "python-bundle/**/*",
+      "agents/**/*",
+      "src/renderer/*.html",
+      "src/renderer/*.css"
     ],
     "extraFiles": [
       {
@@ -72,6 +85,13 @@
       "category": "public.app-category.productivity",
       "icon": "assets/icon.icns",
       "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
         {
           "target": "zip",
           "arch": [

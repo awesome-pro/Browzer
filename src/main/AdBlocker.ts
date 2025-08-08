@@ -1,4 +1,4 @@
-import { session, Session } from 'electron';
+import { session, Session, app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as https from 'https';
@@ -20,7 +20,8 @@ export class AdBlocker {
   private customRulesPath: string;
 
   constructor() {
-    this.filtersPath = path.join(process.cwd(), 'adblock-filters');
+    // Use userData directory for filter storage in packaged apps
+    this.filtersPath = path.join(app.getPath('userData'), 'adblock-filters');
     this.customRulesPath = path.join(this.filtersPath, 'custom-rules.json');
     
     // Ensure filters directory exists

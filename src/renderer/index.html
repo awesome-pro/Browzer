@@ -109,7 +109,8 @@
 
                 <!-- Controls -->
                 <div class="agent-controls">
-                    <div class="model-section">
+                    <!-- Model selection commented out - only using Anthropic Claude -->
+                    <!-- <div class="model-section">
                         <label for="modelSelector" class="model-label">AI Model</label>
                         <select id="modelSelector" class="model-selector">
                             <option value="anthropic">Claude (Anthropic)</option>
@@ -117,7 +118,7 @@
                             <option value="perplexity">Perplexity</option>
                             <option value="chutes">Chutes</option>
                         </select>
-                    </div>
+                    </div> -->
                     <button id="runAgentBtn" class="analyze-btn">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                             <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
@@ -159,26 +160,29 @@
                 <div class="api-keys-section">
                     <h4>API Keys</h4>
                     <div class="api-key-inputs">
-                        <div class="api-key-input">
+                        <!-- OpenAI API Key input commented out -->
+                        <!-- <div class="api-key-input">
                             <label>OpenAI API Key</label>
                             <input type="password" id="openaiApiKey" placeholder="sk-...">
                             <button class="save-api-key" data-provider="openai">Save</button>
-                        </div>
+                        </div> -->
                         <div class="api-key-input">
                             <label>Anthropic API Key</label>
                             <input type="password" id="anthropicApiKey" placeholder="sk-ant-...">
                             <button class="save-api-key" data-provider="anthropic">Save</button>
                         </div>
-                        <div class="api-key-input">
+                        <!-- Perplexity API Key input commented out -->
+                        <!-- <div class="api-key-input">
                             <label>Perplexity API Key</label>
                             <input type="password" id="perplexityApiKey" placeholder="pplx-...">
                             <button class="save-api-key" data-provider="perplexity">Save</button>
-                        </div>
-                        <div class="api-key-input">
+                        </div> -->
+                        <!-- Chutes API Key input commented out -->
+                        <!-- <div class="api-key-input">
                             <label>Chutes API Key</label>
                             <input type="password" id="chutesApiKey" placeholder="ch-...">
                             <button class="save-api-key" data-provider="chutes">Save</button>
-                        </div>
+                        </div> -->
                     </div>
                 </div>
                 
