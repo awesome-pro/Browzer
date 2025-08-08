@@ -76,29 +76,44 @@
                         <p class="settings-card-description">Add your API keys to enable AI-powered features</p>
                     </div>
                     <div class="settings-card-content">
-                        <div class="chrome-form-group">
+                        <!-- OpenAI API Key input commented out -->
+                        <!-- <div class="chrome-form-group">
                             <label class="chrome-form-label" for="openaiApiKey">OpenAI API Key</label>
-                            <input type="password" id="openaiApiKey" class="chrome-form-input" placeholder="sk-...">
+                            <div class="chrome-input-with-button">
+                                <input type="password" id="openaiApiKey" class="chrome-form-input" placeholder="sk-...">
+                                <button class="chrome-btn chrome-btn-primary chrome-btn-small" id="saveOpenaiBtn">Save</button>
+                            </div>
                             <p class="chrome-form-description">Used for GPT models and chat assistance</p>
-                        </div>
+                        </div> -->
                         
                         <div class="chrome-form-group">
                             <label class="chrome-form-label" for="anthropicApiKey">Anthropic API Key</label>
-                            <input type="password" id="anthropicApiKey" class="chrome-form-input" placeholder="sk-ant-...">
+                            <div class="chrome-input-with-button">
+                                <input type="password" id="anthropicApiKey" class="chrome-form-input" placeholder="sk-ant-...">
+                                <button class="chrome-btn chrome-btn-primary chrome-btn-small" id="saveAnthropicBtn">Save</button>
+                            </div>
                             <p class="chrome-form-description">Used for Claude models</p>
                         </div>
                         
-                        <div class="chrome-form-group">
+                        <!-- Perplexity API Key input commented out -->
+                        <!-- <div class="chrome-form-group">
                             <label class="chrome-form-label" for="perplexityApiKey">Perplexity API Key</label>
-                            <input type="password" id="perplexityApiKey" class="chrome-form-input" placeholder="pplx-...">
+                            <div class="chrome-input-with-button">
+                                <input type="password" id="perplexityApiKey" class="chrome-form-input" placeholder="pplx-...">
+                                <button class="chrome-btn chrome-btn-primary chrome-btn-small" id="savePerplexityBtn">Save</button>
+                            </div>
                             <p class="chrome-form-description">Used for web search and research</p>
-                        </div>
+                        </div> -->
                         
-                        <div class="chrome-form-group">
+                        <!-- Chutes API Key input commented out -->
+                        <!-- <div class="chrome-form-group">
                             <label class="chrome-form-label" for="chutesApiKey">Chutes API Key</label>
-                            <input type="password" id="chutesApiKey" class="chrome-form-input" placeholder="ch-...">
+                            <div class="chrome-input-with-button">
+                                <input type="password" id="chutesApiKey" class="chrome-form-input" placeholder="ch-...">
+                                <button class="chrome-btn chrome-btn-primary chrome-btn-small" id="saveChutesBtn">Save</button>
+                            </div>
                             <p class="chrome-form-description">Used for specialized AI services</p>
-                        </div>
+                        </div> -->
                     </div>
                 </div>
             </section>
@@ -452,16 +467,50 @@
                 });
             });
 
-            // API Key inputs - auto-save on blur
-            const apiKeyInputs = ['openai', 'anthropic', 'perplexity', 'chutes'];
-            apiKeyInputs.forEach(provider => {
+            // API Key save buttons - only Anthropic enabled
+            const apiKeyProviders = ['anthropic']; // ['openai', 'anthropic', 'perplexity', 'chutes'];
+            apiKeyProviders.forEach(provider => {
+                const saveBtn = document.getElementById(`save${provider.charAt(0).toUpperCase() + provider.slice(1)}Btn`);
                 const input = document.getElementById(`${provider}ApiKey`);
-                if (input) {
-                    input.addEventListener('blur', () => {
+                
+                if (saveBtn && input) {
+                    saveBtn.addEventListener('click', () => {
                         const apiKey = input.value.trim();
                         if (apiKey) {
+                            // Show saving state
+                            const originalText = saveBtn.textContent;
+                            saveBtn.textContent = 'Saving...';
+                            saveBtn.disabled = true;
+                            
+                            // Save the API key
                             window.sendToMainRenderer('save-api-key', { provider, apiKey });
+                            
+                            // Show success feedback
+                            setTimeout(() => {
+                                saveBtn.textContent = 'Saved!';
+                                saveBtn.style.background = '#34a853';
+                                
+                                // Reset button after 2 seconds
+                                setTimeout(() => {
+                                    saveBtn.textContent = originalText;
+                                    saveBtn.disabled = false;
+                                    saveBtn.style.background = '';
+                                }, 2000);
+                            }, 500);
+                        } else {
+                            // Show error if no API key entered
+                            input.style.borderColor = '#ea4335';
+                            input.focus();
+                            
+                            setTimeout(() => {
+                                input.style.borderColor = '';
+                            }, 3000);
                         }
+                    });
+                    
+                    // Clear error styling when user starts typing
+                    input.addEventListener('input', () => {
+                        input.style.borderColor = '';
                     });
                 }
             });

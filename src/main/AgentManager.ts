@@ -1,4 +1,4 @@
-import { ipcMain, IpcMainInvokeEvent, BrowserWindow } from 'electron';
+import { ipcMain, IpcMainInvokeEvent, BrowserWindow, app } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -15,12 +15,32 @@ export class AgentManager {
   private readonly agentLogFile: string;
   private readonly rendererLogFile: string;
   private readonly workflowLogFile: string;
+  private readonly appPath: string;
+  private readonly extensionsDir: string;
+  private readonly frameworkDir: string;
   private mainWindow: BrowserWindow | null = null;
 
   constructor() {
-    this.agentLogFile = path.join(process.cwd(), 'agent-execution.log');
-    this.rendererLogFile = path.join(process.cwd(), 'renderer_agent.log');
-    this.workflowLogFile = path.join(process.cwd(), 'workflow-execution.log');
+    // Proper path resolution for both development and packaged apps
+    if (app.isPackaged) {
+      // In packaged app, use app.asar.unpacked for Python files
+      this.appPath = path.dirname(app.getAppPath());
+      this.extensionsDir = path.join(this.appPath, 'app.asar.unpacked', 'extensions');
+      this.frameworkDir = path.join(this.appPath, 'app.asar.unpacked', 'extensions-framework');
+    } else {
+      // In development, use current working directory
+      this.appPath = process.cwd();
+      this.extensionsDir = path.join(this.appPath, 'extensions');
+      this.frameworkDir = path.join(this.appPath, 'extensions-framework');
+    }
+    
+    console.log('[AgentManager] App path:', this.appPath);
+    console.log('[AgentManager] Extensions directory:', this.extensionsDir);
+    console.log('[AgentManager] Framework directory:', this.frameworkDir);
+    
+    this.agentLogFile = path.join(this.appPath, 'agent-execution.log');
+    this.rendererLogFile = path.join(this.appPath, 'renderer_agent.log');
+    this.workflowLogFile = path.join(this.appPath, 'workflow-execution.log');
   }
 
   initialize(mainWindow?: BrowserWindow): void {
@@ -57,7 +77,7 @@ export class AgentManager {
 
     try {
       const pythonPath = this.getPythonPath();
-      const routerPath = path.join(process.cwd(), 'extensions-framework/core/smart_extension_router.py');
+      const routerPath = path.join(this.frameworkDir, 'core/smart_extension_router.py');
       
       if (!fs.existsSync(routerPath)) {
         const error = `Smart router not found at: ${routerPath}`;
@@ -91,19 +111,28 @@ export class AgentManager {
   }
 
   private async runWorkflowProcess(pythonPath: string, routerPath: string, params: any, sender: Electron.WebContents): Promise<AgentResult> {
-    const extensionsDir = path.join(process.cwd(), 'extensions');
-    const pythonArgs = [routerPath, extensionsDir, params.query];
+    const pythonArgs = [routerPath, this.extensionsDir, params.query];
     
     console.log(`Starting workflow process: ${pythonPath} ${pythonArgs.join(' ')}`);
     this.logWorkflowEvent(`Starting workflow process: ${pythonPath} ${pythonArgs.join(' ')}`);
     
     return new Promise((resolve) => {
-      const pythonProcess: ChildProcess = spawn(pythonPath, pythonArgs, {
-        env: {
-          ...process.env,
-          WORKFLOW_DATA: JSON.stringify(params)
-        }
-      });
+      let pythonProcess: ChildProcess;
+      
+      try {
+        pythonProcess = spawn(pythonPath, pythonArgs, {
+          env: {
+            ...process.env,
+            WORKFLOW_DATA: JSON.stringify(params)
+          },
+          stdio: ['pipe', 'pipe', 'pipe']
+        });
+      } catch (spawnError) {
+        console.error(`Failed to spawn Python process: ${spawnError}`);
+        this.logWorkflowEvent(`Failed to spawn Python process: ${spawnError}`);
+        resolve({ success: false, error: `Failed to spawn Python process: ${(spawnError as Error).message}` });
+        return;
+      }
       
       let result = '';
       let error = '';
@@ -354,7 +383,7 @@ export class AgentManager {
   }
 
   private async runPythonProcessWithNotifications(pythonPath: string, agentPath: string, params: any, sender: Electron.WebContents): Promise<AgentResult> {
-    const pythonArgs = [agentPath, JSON.stringify(params)];
+    const pythonArgs = [agentPath];
     
     console.log(`Starting Python process: ${pythonPath} ${pythonArgs.join(' ')}`);
     this.logAgentEvent(`Starting Python process: ${pythonPath} ${pythonArgs.join(' ')}`);
@@ -382,7 +411,19 @@ export class AgentManager {
     }
     
     return new Promise((resolve) => {
-      const pythonProcess: ChildProcess = spawn(pythonPath, pythonArgs);
+      let pythonProcess: ChildProcess;
+      
+      try {
+        pythonProcess = spawn(pythonPath, pythonArgs, {
+          stdio: ['pipe', 'pipe', 'pipe']
+        });
+      } catch (spawnError) {
+        console.error(`Failed to spawn Python process: ${spawnError}`);
+        this.logAgentEvent(`Failed to spawn Python process: ${spawnError}`);
+        resolve({ success: false, error: `Failed to spawn Python process: ${(spawnError as Error).message}` });
+        return;
+      }
+      
       let result = '';
       let error = '';
 
@@ -399,6 +440,55 @@ export class AgentManager {
         console.error(`Python stderr: ${dataStr}`);
         this.logAgentEvent(`Python stderr: ${dataStr}`);
       });
+
+      // Send data to Python process stdin with proper error handling
+      const inputData = JSON.stringify({
+        context: {
+          browser_api_keys: params.browserApiKeys || {},
+          selected_provider: params.selectedProvider || 'openai',
+          selected_model: params.selectedModel || 'gpt-3.5-turbo'
+        },
+        action: 'process_page',
+        data: {
+          query: params.query || '',
+          pageContent: params.pageContent,
+          isQuestion: params.isQuestion || false,
+          conversationHistory: params.conversationHistory || []
+        }
+      });
+      
+      console.log(`Sending data to Python stdin: ${inputData.substring(0, 200)}...`);
+      this.logAgentEvent(`Sending data to Python stdin (${inputData.length} chars)`);
+      
+      // Add error handler for stdin before writing
+      if (pythonProcess.stdin) {
+        pythonProcess.stdin.on('error', (stdinError: any) => {
+          // Handle EPIPE and other stdin errors gracefully
+          const errorCode = stdinError?.code || '';
+          const errorMessage = stdinError?.message || String(stdinError);
+          console.warn(`Python stdin error (${errorCode}): ${errorMessage}`);
+          this.logAgentEvent(`Python stdin error (${errorCode}): ${errorMessage}`);
+          // Don't crash the app, just log the error
+        });
+        
+        try {
+          // Check if process is still alive before writing
+          if (!pythonProcess.killed) {
+            pythonProcess.stdin.write(inputData);
+            pythonProcess.stdin.end();
+          } else {
+            console.warn('Python process already killed, cannot send stdin data');
+            this.logAgentEvent('Python process already killed, cannot send stdin data');
+          }
+        } catch (writeError) {
+          // Handle any synchronous write errors
+          console.warn(`Failed to write to Python stdin: ${writeError}`);
+          this.logAgentEvent(`Failed to write to Python stdin: ${writeError}`);
+        }
+      } else {
+        console.warn('Python process stdin is not available');
+        this.logAgentEvent('Python process stdin is not available');
+      }
 
       // Set timeout
       const timeout = setTimeout(() => {
@@ -526,11 +616,43 @@ export class AgentManager {
   }
 
   private getPythonPath(): string {
-    if (os.platform() === 'win32') {
-      return path.join(process.cwd(), 'agents/venv/Scripts/python.exe');
+    // Try bundled Python first
+    let pythonBundlePath: string;
+    
+    if (app.isPackaged) {
+      // In packaged app, use app.asar.unpacked for Python files
+      pythonBundlePath = path.join(this.appPath, 'app.asar.unpacked', 'python-bundle', 'python-runtime', 'bin', 'python');
     } else {
-      return path.join(process.cwd(), 'agents/venv/bin/python');
+      // In development, use the python-bundle
+      pythonBundlePath = path.join(this.appPath, 'python-bundle', 'python-runtime', 'bin', 'python');
     }
+    
+    console.log('[AgentManager] Checking bundled Python path:', pythonBundlePath);
+    
+    // Check if bundled Python exists
+    if (fs.existsSync(pythonBundlePath)) {
+      console.log('[AgentManager] Using bundled Python');
+      return pythonBundlePath;
+    }
+    
+    // Fallback to old venv approach
+    let venvPythonPath: string;
+    if (app.isPackaged) {
+      venvPythonPath = path.join(this.appPath, 'app.asar.unpacked', 'agents', 'venv', 'bin', 'python');
+    } else {
+      venvPythonPath = path.join(this.appPath, 'agents', 'venv', 'bin', 'python');
+    }
+    
+    console.log('[AgentManager] Checking venv Python path:', venvPythonPath);
+    
+    if (fs.existsSync(venvPythonPath)) {
+      console.log('[AgentManager] Using venv Python');
+      return venvPythonPath;
+    }
+    
+    // Final fallback to system Python
+    console.warn('[AgentManager] No bundled or venv Python found, falling back to system Python');
+    return this.getFallbackPython();
   }
 
   private getFallbackPython(): string {

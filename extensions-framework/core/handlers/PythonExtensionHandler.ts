@@ -3,6 +3,7 @@ import { ExtensionLogger } from '../ExtensionLogger';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { spawn, ChildProcess } from 'child_process';
+import { app } from 'electron';
 
 /**
  * Handler for Python Extensions (AI agents and scripts)
@@ -269,15 +270,29 @@ export class PythonExtensionHandler {
   }
 
   private findPythonExecutable(): string {
+    // Proper path resolution for both development and packaged apps
+    let pythonBundlePath: string;
+    
+    if (app.isPackaged) {
+      // In packaged app, use app.asar.unpacked for Python files
+      const appPath = path.dirname(app.getAppPath());
+      pythonBundlePath = path.join(appPath, 'app.asar.unpacked', 'python-bundle', 'python-runtime', 'bin', 'python');
+    } else {
+      // In development, use current working directory
+      pythonBundlePath = path.join(process.cwd(), 'python-bundle', 'python-runtime', 'bin', 'python');
+    }
+    
     // Try to find Python executable in order of preference
     const candidates = [
-      path.join(process.cwd(), 'python-bundle', 'python-runtime', 'bin', 'python'),
+      pythonBundlePath,
       'python3',
       'python',
       '/usr/bin/python3',
       '/usr/local/bin/python3'
     ];
 
+    console.log('[PythonExtensionHandler] Python bundle path:', pythonBundlePath);
+    
     // For now, return the bundled Python path
     return candidates[0];
   }

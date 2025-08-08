@@ -34,18 +34,30 @@ echo "⬇️  Downloading Python $PYTHON_VERSION for $PYTHON_ARCH..."
 # Create a minimal Python environment using the system Python
 echo "🔧 Creating portable Python environment..."
 
-# Use Python's venv to create a relocatable environment
-python3 -m venv "$PYTHON_BUNDLE_DIR/python-runtime" --copies
+# Create directory structure manually
+mkdir -p "$PYTHON_BUNDLE_DIR/python-runtime/lib/python3.11/site-packages"
+mkdir -p "$PYTHON_BUNDLE_DIR/python-runtime/bin"
 
-# Activate the environment
-source "$PYTHON_BUNDLE_DIR/python-runtime/bin/activate"
+# Create a Python wrapper script instead of copying the binary
+cat > "$PYTHON_BUNDLE_DIR/python-runtime/bin/python" << 'EOF'
+#!/bin/bash
+# Python wrapper for Browzer bundle
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUNDLE_DIR="$(dirname "$SCRIPT_DIR")"
+export PYTHONPATH="$BUNDLE_DIR/lib/python3.11/site-packages:$PYTHONPATH"
+exec python3 "$@"
+EOF
+chmod +x "$PYTHON_BUNDLE_DIR/python-runtime/bin/python"
 
-# Upgrade pip
-pip install --upgrade pip
+# Set PYTHONPATH for installations
+export PYTHONPATH="$PYTHON_BUNDLE_DIR/python-runtime/lib/python3.11/site-packages:$PYTHONPATH"
+
+# Install pip to our custom location
+python3 -m pip install --target "$PYTHON_BUNDLE_DIR/python-runtime/lib/python3.11/site-packages" --upgrade pip
 
 echo "📦 Installing required packages..."
-# Install all required packages
-pip install \
+# Install all required packages to our custom location
+python3 -m pip install --target "$PYTHON_BUNDLE_DIR/python-runtime/lib/python3.11/site-packages" \
     requests==2.32.3 \
     beautifulsoup4==4.13.4 \
     python-dotenv==1.1.0 \
@@ -56,7 +68,7 @@ pip install \
 
 # Download NLTK data needed by the agents
 echo "📚 Downloading NLTK data..."
-python -c "
+PYTHONPATH="$PYTHON_BUNDLE_DIR/python-runtime/lib/python3.11/site-packages:$PYTHONPATH" python3 -c "
 import nltk
 import ssl
 try:
@@ -114,18 +126,18 @@ except Exception as e:
 print("🎉 Python bundle verification complete!")
 EOF
 
-deactivate
-
 echo "✅ Testing the Python bundle..."
 "$PYTHON_BUNDLE_DIR/python-runtime/bin/python" "$PYTHON_BUNDLE_DIR/python-runtime/verify.py"
 
-# Make the bundle more portable by removing absolute paths
+# Make the bundle more portable
 echo "🔄 Making bundle portable..."
 
-# Find and replace absolute paths in pyvenv.cfg
-if [ -f "$PYTHON_BUNDLE_DIR/python-runtime/pyvenv.cfg" ]; then
-    sed -i '' 's|home = .*|home = .|' "$PYTHON_BUNDLE_DIR/python-runtime/pyvenv.cfg"
-fi
+# Create a simple pyvenv.cfg for compatibility
+cat > "$PYTHON_BUNDLE_DIR/python-runtime/pyvenv.cfg" << EOF
+home = .
+include-system-site-packages = false
+version = 3.11.7
+EOF
 
 # Create bundle info
 cat > "$PYTHON_BUNDLE_DIR/bundle-info.json" << EOF

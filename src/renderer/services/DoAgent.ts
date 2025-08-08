@@ -519,13 +519,13 @@ export class DoAgent {
                 
                 // Dispatch mouse events
                 const mouseDown = new MouseEvent('mousedown', {
-                  view: window,
-                  bubbles: true,
-                  cancelable: true,
-                  clientX: centerX,
-                  clientY: centerY,
-                  button: 0
-                });
+                    view: window,
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: centerX,
+                    clientY: centerY,
+                    button: 0
+                  });
                 element.dispatchEvent(mouseDown);
                 
                 const mouseUp = new MouseEvent('mouseup', {
@@ -733,6 +733,10 @@ export class DoAgent {
           },
           waitFor: async (options?: any) => {
             return await this.playwrightPage!.waitForSelector(selector, options);
+          },
+          count: async () => {
+            const script = `document.querySelectorAll('${selector.replace(/'/g, "\\'")}').length`;
+            return await this.webview.executeJavaScript(script);
           }
         }),
 
@@ -1530,16 +1534,16 @@ export class DoAgent {
       // Log the prompt using window.electronAPI (context isolation compatible)
       try {
         await window.electronAPI.ipcInvoke('log-llm-request', {
-          provider: provider,
-          instruction: instruction,
-          prompt: prompt,
-          promptLength: prompt.length,
-          context: {
-            currentUrl: pageState.url,
-            stepNumber: this.stepCount,
-            previousActions: previousSteps.slice(-3).map(step => step.action)
-          }
-        });
+        provider: provider,
+        instruction: instruction,
+        prompt: prompt,
+        promptLength: prompt.length,
+        context: {
+          currentUrl: pageState.url,
+          stepNumber: this.stepCount,
+          previousActions: previousSteps.slice(-3).map(step => step.action)
+        }
+      });
       } catch (error) {
         console.warn('[DoAgent] Failed to log LLM request:', error);
       }
@@ -1562,20 +1566,20 @@ export class DoAgent {
       // Log the response using window.electronAPI
       try {
         await window.electronAPI.ipcInvoke('log-llm-response', {
-          provider: provider,
-          instruction: instruction,
-          promptLength: prompt.length,
-          response: response.response || '',
-          responseLength: (response.response || '').length,
-          success: response.success,
-          error: response.error,
-          executionTime: executionTime,
-          context: {
-            currentUrl: pageState.url,
-            stepNumber: this.stepCount,
-            previousActions: previousSteps.slice(-3).map(step => step.action)
-          }
-        });
+        provider: provider,
+        instruction: instruction,
+        promptLength: prompt.length,
+        response: response.response || '',
+        responseLength: (response.response || '').length,
+        success: response.success,
+        error: response.error,
+        executionTime: executionTime,
+        context: {
+          currentUrl: pageState.url,
+          stepNumber: this.stepCount,
+          previousActions: previousSteps.slice(-3).map(step => step.action)
+        }
+      });
       } catch (error) {
         console.warn('[DoAgent] Failed to log LLM response:', error);
       }
@@ -1593,20 +1597,20 @@ export class DoAgent {
       // Log the error using window.electronAPI
       try {
         await window.electronAPI.ipcInvoke('log-llm-response', {
-          provider: this.getSelectedProvider(),
-          instruction: instruction,
-          promptLength: 0,
-          response: '',
-          responseLength: 0,
-          success: false,
-          error: (error as Error).message,
-          executionTime: 0,
-          context: {
-            currentUrl: pageState.url,
-            stepNumber: this.stepCount,
-            previousActions: previousSteps.slice(-3).map(step => step.action)
-          }
-        });
+        provider: this.getSelectedProvider(),
+        instruction: instruction,
+        promptLength: 0,
+        response: '',
+        responseLength: 0,
+        success: false,
+        error: (error as Error).message,
+        executionTime: 0,
+        context: {
+          currentUrl: pageState.url,
+          stepNumber: this.stepCount,
+          previousActions: previousSteps.slice(-3).map(step => step.action)
+        }
+      });
       } catch (logError) {
         console.warn('[DoAgent] Failed to log LLM error:', logError);
       }
@@ -1845,24 +1849,43 @@ What is the NEXT SINGLE ACTION? Respond with JSON only.`;
     return result;
   }
 
+  private cleanSelector(selector: string): string {
+    // Fix common invalid selector patterns
+    let cleaned = selector;
+    
+    // Fix [#id] pattern to #id
+    cleaned = cleaned.replace(/\[#([a-zA-Z][\w-]*)\]/g, '#$1');
+    
+    // Fix [.class] pattern to .class
+    cleaned = cleaned.replace(/\[\.([a-zA-Z][\w-]*)\]/g, '.$1');
+    
+    console.log(`[DoAgent] Cleaned selector: "${selector}" -> "${cleaned}"`);
+    return cleaned;
+  }
+
   private parseSelector(selector: string): any {
+    // First clean the selector
+    const cleanedSelector = this.cleanSelector(selector);
+    
     const result: any = {
       element: '',
       id: '',
       classes: [] as string[],
       dataTestId: '',
       text: '',
-      attributes: {} as Record<string, string>
+      attributes: {} as Record<string, string>,
+      originalSelector: selector,
+      cleanedSelector: cleanedSelector
     };
 
-    // Extract element type
-    const elementMatch = selector.match(/^([a-zA-Z]+)/);
+    // Extract element type from cleaned selector
+    const elementMatch = cleanedSelector.match(/^([a-zA-Z]+)/);
     if (elementMatch) {
       result.element = elementMatch[1];
     }
 
-    // Extract ID
-    const idMatch = selector.match(/\[id[*^$~|]?=['"]([^'"]+)['"]\]|#([a-zA-Z][\w-]*)/);
+    // Extract ID from cleaned selector
+    const idMatch = cleanedSelector.match(/\[id[*^$~|]?=['"]([^'"]+)['"]\]|#([a-zA-Z][\w-]*)/);
     if (idMatch) {
       result.id = idMatch[1] || idMatch[2];
     }
@@ -1911,14 +1934,18 @@ What is the NEXT SINGLE ACTION? Respond with JSON only.`;
     
     console.log('[DoAgent] Attempting to click on:', selector);
     
+    // Clean the selector first
+    const cleanedSelectorString = this.cleanSelector(selector);
+    let actualSelector = cleanedSelectorString;
+    
     try {
-      // First, try to wait for the exact selector with a shorter timeout
-      await this.playwrightPage.waitForSelector(selector, { timeout: 2000 });
-      console.log('[DoAgent] Exact selector found:', selector);
+      // First, try to wait for the cleaned selector with a shorter timeout
+      await this.playwrightPage.waitForSelector(cleanedSelectorString, { timeout: 2000 });
+      console.log('[DoAgent] Cleaned selector found:', cleanedSelectorString);
     } catch (timeoutError) {
-      console.warn('[DoAgent] Exact selector not found, trying intelligent element discovery:', selector);
+      console.warn('[DoAgent] Cleaned selector not found, trying intelligent element discovery:', cleanedSelectorString);
       
-      // Parse the original selector to understand what we're looking for
+      // Parse the selector to understand what we're looking for
       const originalSelector = selector;
       const cleanedSelector = this.parseSelector(selector);
       
@@ -2162,8 +2189,8 @@ What is the NEXT SINGLE ACTION? Respond with JSON only.`;
          for (const match of discoveryResult.bestMatches) {
            try {
              console.log(`[DoAgent] Trying match: ${match.selector} (${match.reason}, score: ${match.score})`);
-             await this.playwrightPage.waitForSelector(match.selector, { timeout: 1000 });
-             selector = match.selector;
+                           await this.playwrightPage.waitForSelector(match.selector, { timeout: 1000 });
+              actualSelector = match.selector;
              console.log(`[DoAgent] SUCCESS! Using selector: ${match.selector}`);
              break;
            } catch (matchError) {
@@ -2190,8 +2217,8 @@ What is the NEXT SINGLE ACTION? Respond with JSON only.`;
                console.log(`[DoAgent] Trying simple fallback: ${fallback}`);
                                const elements = await this.playwrightPage.locator(fallback).count();
                if (elements > 0) {
-                 await this.playwrightPage.waitForSelector(fallback, { timeout: 500 });
-                 selector = fallback;
+                                 await this.playwrightPage.waitForSelector(fallback, { timeout: 500 });
+                actualSelector = fallback;
                  console.log(`[DoAgent] Simple fallback SUCCESS: ${fallback}`);
                  break;
                }
@@ -2214,8 +2241,8 @@ What is the NEXT SINGLE ACTION? Respond with JSON only.`;
          console.log('[DoAgent] Discovery system found no elements, trying basic fallback...');
          const basicElement = cleanedSelector.element || 'button';
          try {
-           await this.playwrightPage.waitForSelector(basicElement, { timeout: 2000 });
-           selector = basicElement;
+                     await this.playwrightPage.waitForSelector(basicElement, { timeout: 2000 });
+          actualSelector = basicElement;
            console.log(`[DoAgent] Basic fallback SUCCESS: ${basicElement}`);
          } catch (basicError) {
            throw new Error(`Cannot find element: ${originalSelector}. No similar elements found after trying ${discoveryResult.totalStrategies} search strategies. Even basic fallback failed.`);
@@ -2230,8 +2257,8 @@ What is the NEXT SINGLE ACTION? Respond with JSON only.`;
     if (options?.delay) clickOptions.delay = options.delay;
     
     try {
-      await this.playwrightPage.click(selector, clickOptions);
-      console.log('[DoAgent] Click operation completed successfully on:', selector);
+    await this.playwrightPage.click(actualSelector, clickOptions);
+      console.log('[DoAgent] Click operation completed successfully on:', actualSelector);
     } catch (clickError) {
       // If click fails, try using our JavaScript-based click as fallback
       console.warn('[DoAgent] Playwright click failed, trying JavaScript click:', clickError);

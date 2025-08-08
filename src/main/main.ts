@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path from 'path';
+import * as fs from 'fs';
 import { AppManager } from '../main/AppManager';
 import { WindowManager } from '../main/WindowManager';
 import { ExtensionManager } from '../main/ExtensionManager';
@@ -11,6 +12,62 @@ import { LLMLogger } from '../main/LLMLogger';
 // Set the application name early
 app.setName('Browzer');
 process.title = 'Browzer';
+
+// Startup logging for debugging
+function logStartup(message: string) {
+  const timestamp = new Date().toISOString();
+  const logMessage = `[${timestamp}] ${message}\n`;
+  
+  // Log to console
+  console.log(message);
+  
+  // Log to file for debugging packaged apps
+  try {
+    const logFile = path.join(app.getPath('userData'), 'startup-debug.log');
+    fs.appendFileSync(logFile, logMessage);
+  } catch (error) {
+    // Ignore file write errors during startup
+  }
+}
+
+// Global error handlers for packaged apps
+process.on('uncaughtException', (error) => {
+  logStartup(`FATAL ERROR - Uncaught Exception: ${error.message}`);
+  logStartup(`Stack: ${error.stack}`);
+  
+  // Don't crash the app for EPIPE errors (broken pipe) - these are common with subprocess communication
+  if (error.message && error.message.includes('EPIPE') || (error as any).code === 'EPIPE') {
+    logStartup('EPIPE error detected - continuing without crash (subprocess communication issue)');
+    console.warn('EPIPE error handled gracefully - subprocess pipe closed:', error.message);
+    return; // Don't quit the app
+  }
+  
+  dialog.showErrorBox(
+    'Browzer - Fatal Error',
+    `An unexpected error occurred:\n\n${error.message}\n\nThe application will now close.`
+  );
+  
+  app.quit();
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logStartup(`FATAL ERROR - Unhandled Promise Rejection: ${reason}`);
+  
+  dialog.showErrorBox(
+    'Browzer - Fatal Error', 
+    `An unexpected error occurred:\n\n${reason}\n\nThe application will now close.`
+  );
+  
+  app.quit();
+});
+
+logStartup('=== Browzer Application Starting ===');
+logStartup(`App Version: ${app.getVersion()}`);
+logStartup(`Electron Version: ${process.versions.electron}`);
+logStartup(`Node Version: ${process.versions.node}`);
+logStartup(`Platform: ${process.platform} ${process.arch}`);
+logStartup(`App Path: ${app.getAppPath()}`);
+logStartup(`Is Packaged: ${app.isPackaged}`);
 
 // Proper certificate handling for production
 app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
@@ -173,6 +230,20 @@ class BrowzerApp {
       }
     });
 
+    // Path resolution handlers for packaged apps
+    ipcMain.handle('get-app-path', async () => {
+      return app.getAppPath();
+    });
+
+    ipcMain.handle('get-resource-path', async (event, relativePath: string) => {
+      if (app.isPackaged) {
+        // For packaged apps, HTML/CSS files are in app.asar.unpacked
+        return path.join(process.resourcesPath, 'app.asar.unpacked', relativePath);
+      } else {
+        return path.join(process.cwd(), relativePath);
+      }
+    });
+
     console.log('[Main] IPC handlers set up for LLM service');
   }
 }
@@ -180,10 +251,20 @@ class BrowzerApp {
 // Handle app lifecycle
 app.whenReady().then(async () => {
   try {
+    logStartup('App ready event fired');
     const browzerApp = new BrowzerApp();
+    logStartup('BrowzerApp instance created');
     await browzerApp.initialize();
+    logStartup('BrowzerApp initialization completed successfully');
   } catch (error) {
+    logStartup(`FATAL ERROR - Failed to initialize application: ${error}`);
     console.error('Failed to initialize application:', error);
+    
+    dialog.showErrorBox(
+      'Browzer - Startup Error',
+      `Failed to start Browzer:\n\n${error}\n\nPlease check the logs for more details.`
+    );
+    
     app.quit();
   }
 });

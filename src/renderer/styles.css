@@ -2385,6 +2385,27 @@ select:focus-visible {
     pointer-events: none;
 }
 
+/* Small button variant */
+.chrome-btn-small {
+    padding: 8px 16px;
+    font-size: 13px;
+}
+
+/* Input with button layout */
+.chrome-input-with-button {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.chrome-input-with-button .chrome-form-input {
+    flex: 1;
+}
+
+.chrome-input-with-button .chrome-btn {
+    flex-shrink: 0;
+}
+
 /* Button groups */
 .chrome-button-group {
     display: flex;

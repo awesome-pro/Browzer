@@ -1,4 +1,4 @@
-import { session, ipcMain, IpcMainInvokeEvent } from 'electron';
+import { session, ipcMain, IpcMainInvokeEvent, app } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as https from 'https';
@@ -22,9 +22,19 @@ export class ExtensionManager {
   private currentSelectedProvider: string = 'openai';
 
   constructor() {
-    // Use process.cwd() to get the correct path in both dev and built versions
-    this.extensionsDir = path.join(process.cwd(), 'extensions');
-    console.log('Extensions directory set to:', this.extensionsDir);
+    // Proper path resolution for both development and packaged apps
+    let appPath: string;
+    if (app.isPackaged) {
+      // In packaged app, use app.asar.unpacked for Python files
+      appPath = path.dirname(app.getAppPath());
+      this.extensionsDir = path.join(appPath, 'app.asar.unpacked', 'extensions');
+    } else {
+      // In development, use current working directory
+      appPath = process.cwd();
+      this.extensionsDir = path.join(appPath, 'extensions');
+    }
+    console.log('[ExtensionManager] App path:', appPath);
+    console.log('[ExtensionManager] Extensions directory set to:', this.extensionsDir);
     
     // Initialize the new extension framework
     const frameworkConfig: ExtensionFrameworkConfig = {
@@ -34,7 +44,7 @@ export class ExtensionManager {
       storageQuota: 200,
       securityLevel: SecurityLevel.MODERATE,
       pythonExecutable: process.platform === 'win32' ? 'python' : 'python3',
-      pythonVirtualEnv: path.join(process.cwd(), '.venv'),
+      pythonVirtualEnv: path.join(appPath, '.venv'),
       trustedSources: ['browzer-store.com', 'localhost']
     };
     
@@ -154,9 +164,45 @@ export class ExtensionManager {
   // Route request to appropriate extension based on user intent
   async routeRequest(userRequest: string): Promise<{extensionId: string, confidence: number, reason: string, matchedKeywords: string[]} & {type?: string, success?: boolean, error?: string, data?: any, workflow_info?: any}> {
     try {
-      // Use the smart router for better semantic understanding
-      const routerPath = path.join(__dirname, '../../extensions-framework/core/smart_extension_router.py');
-      const pythonExecutable = process.platform === 'win32' ? 'python' : 'python3';
+      // Use proper path resolution for the smart router
+      let routerPath: string;
+      let pythonExecutable: string;
+      
+      if (app.isPackaged) {
+        // In packaged app, use app.asar.unpacked for Python files
+        const appPath = path.dirname(app.getAppPath());
+        routerPath = path.join(appPath, 'app.asar.unpacked', 'extensions-framework', 'core', 'smart_extension_router.py');
+        pythonExecutable = path.join(appPath, 'app.asar.unpacked', 'python-bundle', 'python-runtime', 'bin', 'python');
+      } else {
+        // In development
+        routerPath = path.join(process.cwd(), 'extensions-framework', 'core', 'smart_extension_router.py');
+        pythonExecutable = path.join(process.cwd(), 'python-bundle', 'python-runtime', 'bin', 'python');
+      }
+      
+      console.log('[ExtensionManager] Router path:', routerPath);
+      console.log('[ExtensionManager] Python executable:', pythonExecutable);
+      
+      // Fallback to system Python if bundled Python doesn't exist
+      if (!fs.existsSync(pythonExecutable)) {
+        console.warn('[ExtensionManager] Bundled Python not found, trying venv Python');
+        
+        // Try old venv approach
+        let venvPythonPath: string;
+        if (app.isPackaged) {
+          const appPath = path.dirname(app.getAppPath());
+          venvPythonPath = path.join(appPath, 'app.asar.unpacked', 'agents', 'venv', 'bin', 'python');
+        } else {
+          venvPythonPath = path.join(process.cwd(), 'agents', 'venv', 'bin', 'python');
+        }
+        
+        if (fs.existsSync(venvPythonPath)) {
+          console.log('[ExtensionManager] Using venv Python');
+          pythonExecutable = venvPythonPath;
+        } else {
+          console.warn('[ExtensionManager] No Python found, using system Python');
+          pythonExecutable = process.platform === 'win32' ? 'python' : 'python3';
+        }
+      }
       
       console.log(`[ExtensionManager] Routing request: "${userRequest}"`);
       

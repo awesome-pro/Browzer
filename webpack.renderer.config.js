@@ -1,9 +1,14 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
+const webpack = require('webpack');
 
-module.exports = {
-  target: 'electron-renderer',
-  entry: './src/renderer/index.ts',
+module.exports = (env, argv) => {
+  const isProduction = process.env.NODE_ENV === 'production' || argv.mode === 'production';
+  
+  return {
+    target: 'electron-renderer',
+    entry: './src/renderer/index.ts',
+    mode: isProduction ? 'production' : 'development',
   module: {
     rules: [
       {
@@ -34,10 +39,17 @@ module.exports = {
       template: './src/renderer/index.html',
       filename: 'index.html',
     }),
+    new webpack.DefinePlugin({
+      'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
+    }),
+    new webpack.EnvironmentPlugin({
+      NODE_ENV: 'development',
+    }),
   ],
-  devtool: 'source-map',
+  devtool: isProduction ? 'source-map' : 'eval-source-map',
   node: {
     __dirname: false,
     __filename: false,
   },
+  };
 }; 

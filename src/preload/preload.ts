@@ -80,6 +80,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   versions: process.versions,
   cwd: () => process.cwd(),
+  
+  // App path resolution for packaged apps
+  getAppPath: (): Promise<string> => ipcRenderer.invoke('get-app-path'),
+  getResourcePath: (relativePath: string): Promise<string> => ipcRenderer.invoke('get-resource-path', relativePath),
 
   // Path utilities
   path: {
@@ -121,6 +125,8 @@ declare global {
       platform: string;
       versions: any;
       cwd: () => string;
+      getAppPath: () => Promise<string>;
+      getResourcePath: (relativePath: string) => Promise<string>;
       path: {
         join: (...segments: string[]) => string;
         dirname: (p: string) => string;
