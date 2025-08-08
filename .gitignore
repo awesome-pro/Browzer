@@ -72,4 +72,6 @@ tmp/
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
+*.so# Environment files
+.env
+agents/.env
