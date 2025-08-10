@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, IpcMainInvokeEvent } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { AppManager } from '../main/AppManager';
@@ -8,6 +8,9 @@ import { AgentManager } from '../main/AgentManager';
 import { MenuManager } from '../main/MenuManager';
 import { LLMService, LLMRequest } from '../main/LLMService';
 import { LLMLogger } from '../main/LLMLogger';
+import { EmailService } from './services/EmailService';
+import { UserService } from './services/UserService';
+import { BrowserImportService } from './services/BrowserImportService';
 
 // Set the application name early
 app.setName('Browzer');
@@ -92,6 +95,9 @@ class BrowzerApp {
   private agentManager: AgentManager;
   private menuManager: MenuManager;
   private llmService: LLMService;
+  private emailService: EmailService;
+  private userService: UserService;
+  private browserImportService: BrowserImportService;
 
   constructor() {
     this.appManager = new AppManager();
@@ -100,6 +106,9 @@ class BrowzerApp {
     this.agentManager = new AgentManager();
     this.menuManager = new MenuManager();
     this.llmService = new LLMService();
+    this.emailService = new EmailService();
+    this.userService = new UserService();
+    this.browserImportService = new BrowserImportService();
   }
 
   async initialize(): Promise<void> {
@@ -119,6 +128,10 @@ class BrowzerApp {
     
     // Load extensions
     await this.extensionManager.loadExtensions();
+  }
+
+  async createMainWindow(): Promise<BrowserWindow> {
+    return await this.windowManager.createMainWindow();
   }
 
   private setupIpcHandlers(): void {
@@ -244,15 +257,263 @@ class BrowzerApp {
       }
     });
 
-    console.log('[Main] IPC handlers set up for LLM service');
+    // Onboarding handlers - delegate to WindowManager
+    ipcMain.handle('onboarding-completed', async (event, data) => {
+      try {
+        // console.log('🎉 Onboarding completed from renderer:', data);
+        // Call WindowManager method
+        await this.windowManager.handleOnboardingComplete(data);
+        return { success: true };
+      } catch (error: any) {
+        console.error('Error handling onboarding completion:', error);
+        return { success: false, error: error.message };
+      }
+    });
+
+    ipcMain.handle('close-onboarding', async (event) => {
+      try {
+        // console.log('🚪 IPC close-onboarding received');
+        // Call WindowManager method
+        await this.windowManager.handleCloseOnboarding();
+        return { success: true };
+      } catch (error: any) {
+        console.error('Error closing onboarding:', error);
+        return { success: false, error: error.message };
+      }
+    });
+
+    ipcMain.handle('save-api-key', async (event, data: { provider: string; key: string }) => {
+      try {
+        // console.log(`🔑 Saving API key for ${data.provider}`);
+        
+        // Save to user data directory
+        const userDataPath = app.getPath('userData');
+        const apiKeysFile = path.join(userDataPath, 'api-keys.json');
+        
+        let apiKeys = {};
+        if (fs.existsSync(apiKeysFile)) {
+          try {
+            apiKeys = JSON.parse(fs.readFileSync(apiKeysFile, 'utf8'));
+          } catch (error) {
+            console.warn('Failed to read existing API keys:', error);
+          }
+        }
+        
+        (apiKeys as any)[data.provider] = data.key;
+        fs.writeFileSync(apiKeysFile, JSON.stringify(apiKeys, null, 2));
+        
+        // Also update the extension manager with the new key
+        this.extensionManager.updateBrowserApiKeys(apiKeys as Record<string, string>);
+        
+        return { success: true };
+      } catch (error: any) {
+        console.error('Error saving API key:', error);
+        return { success: false, error: error.message };
+      }
+    });
+
+    ipcMain.handle('open-settings', async (event) => {
+      try {
+        console.log('⚙️ Opening settings from onboarding');
+        // This will be handled by the main window once it's created
+        return { success: true };
+      } catch (error: any) {
+        console.error('Error opening settings:', error);
+        return { success: false, error: error.message };
+      }
+    });
+
+    // Path utility handlers (for preload script)
+    ipcMain.handle('path-join', async (event: IpcMainInvokeEvent, segments: string[]) => {
+      return path.join(...segments);
+    });
+    
+    ipcMain.handle('path-dirname', async (event: IpcMainInvokeEvent, p: string) => {
+      return path.dirname(p);
+    });
+    
+    ipcMain.handle('path-basename', async (event: IpcMainInvokeEvent, p: string, ext?: string) => {
+      return path.basename(p, ext);
+    });
+    
+    ipcMain.handle('path-extname', async (event: IpcMainInvokeEvent, p: string) => {
+      return path.extname(p);
+    });
+    
+    ipcMain.handle('path-resolve', async (event: IpcMainInvokeEvent, segments: string[]) => {
+      return path.resolve(...segments);
+    });
+    
+    ipcMain.handle('path-relative', async (event: IpcMainInvokeEvent, from: string, to: string) => {
+      return path.relative(from, to);
+    });
+    
+    ipcMain.handle('path-isAbsolute', async (event: IpcMainInvokeEvent, p: string) => {
+      return path.isAbsolute(p);
+    });
+    
+    ipcMain.handle('path-normalize', async (event: IpcMainInvokeEvent, p: string) => {
+      return path.normalize(p);
+    });
+
+    // Email Service handlers
+    ipcMain.handle('send-otp', async (event, email: string) => {
+      try {
+        return await this.emailService.sendOTP(email);
+      } catch (error: any) {
+        console.error('Error sending OTP:', error);
+        return { success: false, message: 'Failed to send OTP' };
+      }
+    });
+
+    ipcMain.handle('verify-otp', async (event, data: { email: string; otp: string }) => {
+      try {
+        const result = await this.emailService.verifyOTP(data.email, data.otp);
+        
+        // If verification successful, also verify user in UserService
+        if (result.success) {
+          await this.userService.verifyUser(data.email);
+        }
+        
+        return result;
+      } catch (error: any) {
+        console.error('Error verifying OTP:', error);
+        return { success: false, message: 'Failed to verify OTP' };
+      }
+    });
+
+    ipcMain.handle('configure-email-service', async (event, config: any) => {
+      try {
+        await this.emailService.saveConfig(config);
+        return { success: true, message: 'Email service configured successfully' };
+      } catch (error: any) {
+        console.error('Error configuring email service:', error);
+        return { success: false, message: 'Failed to configure email service' };
+      }
+    });
+
+    ipcMain.handle('test-email-config', async (event) => {
+      try {
+        return await this.emailService.testConfiguration();
+      } catch (error: any) {
+        console.error('Error testing email configuration:', error);
+        return { success: false, message: 'Failed to test email configuration' };
+      }
+    });
+
+    // User Service handlers
+    ipcMain.handle('create-user', async (event, email: string) => {
+      try {
+        return await this.userService.createUser(email);
+      } catch (error: any) {
+        console.error('Error creating user:', error);
+        return { success: false, message: 'Failed to create user' };
+      }
+    });
+
+    ipcMain.handle('login-user', async (event, email: string) => {
+      try {
+        return await this.userService.loginUser(email);
+      } catch (error: any) {
+        console.error('Error logging in user:', error);
+        return { success: false, message: 'Failed to login user' };
+      }
+    });
+
+    ipcMain.handle('validate-session', async (event, sessionId: string) => {
+      try {
+        return await this.userService.validateSession(sessionId);
+      } catch (error: any) {
+        console.error('Error validating session:', error);
+        return { valid: false, message: 'Failed to validate session' };
+      }
+    });
+
+    ipcMain.handle('update-user-preferences', async (event, data: { userId: string; preferences: any }) => {
+      try {
+        return await this.userService.updateUserPreferences(data.userId, data.preferences);
+      } catch (error: any) {
+        console.error('Error updating user preferences:', error);
+        return { success: false, message: 'Failed to update preferences' };
+      }
+    });
+
+    ipcMain.handle('get-current-user', async (event) => {
+      try {
+        const user = this.userService.getCurrentUser();
+        return { success: true, user };
+      } catch (error: any) {
+        console.error('Error getting current user:', error);
+        return { success: false, message: 'Failed to get current user' };
+      }
+    });
+
+    ipcMain.handle('logout-user', async (event, sessionId: string) => {
+      try {
+        return await this.userService.logout(sessionId);
+      } catch (error: any) {
+        console.error('Error logging out user:', error);
+        return { success: false, message: 'Failed to logout user' };
+      }
+    });
+
+    ipcMain.handle('save-user-email', async (event, email: string) => {
+      try {
+        // Create user if doesn't exist, or update existing
+        const result = await this.userService.createUser(email);
+        if (!result.success && result.message.includes('already exists')) {
+          // User exists, that's fine
+          return { success: true, message: 'Email saved' };
+        }
+        return result;
+      } catch (error: any) {
+        console.error('Error saving user email:', error);
+        return { success: false, message: 'Failed to save email' };
+      }
+    });
+
+    // Browser Import Service handlers
+    ipcMain.handle('import-browser-data', async (event, data: { browser: string }) => {
+      try {
+        console.log(`[Main] Importing browser data from: ${data.browser}`);
+        return await this.browserImportService.importBrowserData(data.browser);
+      } catch (error: any) {
+        console.error('Error importing browser data:', error);
+        return { success: false, message: 'Failed to import browser data' };
+      }
+    });
+
+    ipcMain.handle('get-imported-data', async (event) => {
+      try {
+        const importedData = await this.browserImportService.getImportedData();
+        return { success: true, data: importedData };
+      } catch (error: any) {
+        console.error('Error getting imported data:', error);
+        return { success: false, message: 'Failed to get imported data' };
+      }
+    });
+
+    ipcMain.handle('clear-imported-data', async (event, browser?: string) => {
+      try {
+        return await this.browserImportService.clearImportedData(browser);
+      } catch (error: any) {
+        console.error('Error clearing imported data:', error);
+        return { success: false, message: 'Failed to clear imported data' };
+      }
+    });
+
+    console.log('[Main] IPC handlers set up for LLM service, onboarding, email, user services, and browser import');
   }
 }
+
+// Global BrowzerApp instance to prevent duplicate initialization
+let browzerApp: BrowzerApp | null = null;
 
 // Handle app lifecycle
 app.whenReady().then(async () => {
   try {
     logStartup('App ready event fired');
-    const browzerApp = new BrowzerApp();
+    browzerApp = new BrowzerApp();
     logStartup('BrowzerApp instance created');
     await browzerApp.initialize();
     logStartup('BrowzerApp initialization completed successfully');
@@ -335,7 +596,13 @@ app.on('window-all-closed', () => {
 
 app.on('activate', async () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    const browzerApp = new BrowzerApp();
-    await browzerApp.initialize();
+    // Reuse existing BrowzerApp instance or create new one if needed
+    if (!browzerApp) {
+      browzerApp = new BrowzerApp();
+      await browzerApp.initialize();
+    } else {
+      // Just create a new window using existing app instance
+      await browzerApp.createMainWindow();
+    }
   }
 }); 

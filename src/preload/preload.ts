@@ -1,10 +1,11 @@
 import { contextBridge, ipcRenderer, shell } from 'electron';
-import * as path from 'path';
 import { AgentParams, AgentResult, Extension } from '../shared/types';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
-contextBridge.exposeInMainWorld('electronAPI', {
+// Check if electronAPI already exists to avoid binding conflicts
+if (!window.electronAPI) {
+  contextBridge.exposeInMainWorld('electronAPI', {
   // Agent execution
   executeAgent: (agentPath: string, agentParams: AgentParams): Promise<AgentResult> =>
     ipcRenderer.invoke('execute-agent', { agentPath, agentParams }),
@@ -85,20 +86,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppPath: (): Promise<string> => ipcRenderer.invoke('get-app-path'),
   getResourcePath: (relativePath: string): Promise<string> => ipcRenderer.invoke('get-resource-path', relativePath),
 
-  // Path utilities
+  // Path utilities (via IPC to avoid Node.js module imports in preload)
   path: {
-    join: (...segments: string[]) => path.join(...segments),
-    dirname: (p: string) => path.dirname(p),
-    basename: (p: string, ext?: string) => path.basename(p, ext),
-    extname: (p: string) => path.extname(p),
-    resolve: (...segments: string[]) => path.resolve(...segments),
-    relative: (from: string, to: string) => path.relative(from, to),
-    isAbsolute: (p: string) => path.isAbsolute(p),
-    normalize: (p: string) => path.normalize(p),
-    sep: path.sep,
-    delimiter: path.delimiter
+    join: (...segments: string[]) => ipcRenderer.invoke('path-join', segments),
+    dirname: (p: string) => ipcRenderer.invoke('path-dirname', p),
+    basename: (p: string, ext?: string) => ipcRenderer.invoke('path-basename', p, ext),
+    extname: (p: string) => ipcRenderer.invoke('path-extname', p),
+    resolve: (...segments: string[]) => ipcRenderer.invoke('path-resolve', segments),
+    relative: (from: string, to: string) => ipcRenderer.invoke('path-relative', from, to),
+    isAbsolute: (p: string) => ipcRenderer.invoke('path-isAbsolute', p),
+    normalize: (p: string) => ipcRenderer.invoke('path-normalize', p),
+    sep: '/', // Default, can be made dynamic via IPC if needed
+    delimiter: ':' // Default, can be made dynamic via IPC if needed
   }
-});
+  });
+} else {
+  // console.log('electronAPI already exists, skipping preload setup');
+}
 
 // Type declarations for the exposed API
 declare global {

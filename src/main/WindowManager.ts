@@ -5,8 +5,18 @@ import { IPC_CHANNELS } from '../shared/types';
 
 export class WindowManager {
   private mainWindow: BrowserWindow | null = null;
+  private onboardingWindow: BrowserWindow | null = null;
+  private isCreatingMainWindow: boolean = false;
 
   async createMainWindow(): Promise<BrowserWindow> {
+    // Check if this is the first run
+    const isFirstRun = await this.checkFirstRun();
+    
+    if (isFirstRun) {
+      // Show onboarding first
+      await this.createOnboardingWindow();
+      return this.onboardingWindow!;
+    }
     this.mainWindow = new BrowserWindow({
       width: 1200,
       height: 800,
@@ -37,6 +47,248 @@ export class WindowManager {
   }
 
   getMainWindow(): BrowserWindow | null {
+    return this.mainWindow;
+  }
+
+  async createOnboardingWindow(): Promise<BrowserWindow> {
+    this.onboardingWindow = new BrowserWindow({
+      width: 1000,
+      height: 700,
+      title: 'Welcome to Browzer',
+      resizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        webSecurity: true,
+        preload: path.join(__dirname, '../preload/preload.js')
+      }
+    });
+
+    // Load the onboarding HTML file
+    const onboardingPath = path.join(__dirname, '../../renderer/onboarding.html');
+    await this.onboardingWindow.loadFile(onboardingPath);
+
+    // Setup onboarding event handlers
+    this.setupOnboardingHandlers();
+
+    return this.onboardingWindow;
+  }
+
+  private async checkFirstRun(): Promise<boolean> {
+    try {
+      const userDataPath = app.getPath('userData');
+      const firstRunFile = path.join(userDataPath, '.browzer-first-run');
+      
+      // Check if first run file exists
+      if (fs.existsSync(firstRunFile)) {
+        return false; // Not first run
+      }
+      
+      // Also check localStorage equivalent (settings file)
+      const settingsFile = path.join(userDataPath, 'settings.json');
+      if (fs.existsSync(settingsFile)) {
+        try {
+          const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+          return !settings.onboarding_completed;
+        } catch (error) {
+          console.warn('Failed to read settings file:', error);
+        }
+      }
+      
+      return true; // First run
+    } catch (error) {
+      console.error('Error checking first run:', error);
+      return false; // Default to not showing onboarding on error
+    }
+  }
+
+  private markFirstRunComplete(): void {
+    try {
+      const userDataPath = app.getPath('userData');
+      const firstRunFile = path.join(userDataPath, '.browzer-first-run');
+      
+      // Create first run marker file
+      fs.writeFileSync(firstRunFile, new Date().toISOString());
+      
+      // Also update settings file
+      const settingsFile = path.join(userDataPath, 'settings.json');
+      let settings = {};
+      
+      if (fs.existsSync(settingsFile)) {
+        try {
+          settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+        } catch (error) {
+          console.warn('Failed to read existing settings:', error);
+        }
+      }
+      
+      (settings as any).onboarding_completed = true;
+      (settings as any).onboarding_completed_at = new Date().toISOString();
+      
+      fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
+      
+      console.log('✅ First run marked as complete');
+    } catch (error) {
+      console.error('Failed to mark first run complete:', error);
+    }
+  }
+
+  private setupOnboardingHandlers(): void {
+    if (!this.onboardingWindow) return;
+
+    // Onboarding IPC handlers are set up in main.ts, not here
+    // The main.ts handlers will call the appropriate WindowManager methods
+
+    // Handle window close
+    this.onboardingWindow.on('closed', () => {
+      this.onboardingWindow = null;
+    });
+  }
+
+  async handleOnboardingComplete(data: any): Promise<void> {
+    // console.log('🎉 Onboarding completed:', data);
+    
+    // Mark first run as complete
+    this.markFirstRunComplete();
+    
+    // Save any user preferences
+    if (data && data.preferences) {
+      await this.saveOnboardingPreferences(data.preferences);
+    }
+    
+    // Close onboarding and create main window
+    setTimeout(() => {
+      this.handleCloseOnboarding();
+    }, 1000);
+  }
+
+  async handleCloseOnboarding(): Promise<void> {
+    // console.log('🔄 handleCloseOnboarding called');
+    
+    // Prevent double creation
+    if (this.isCreatingMainWindow) {
+      // console.log('⚠️ Main window creation already in progress, skipping...');
+      return;
+    }
+    
+    if (this.mainWindow) {
+      // console.log('⚠️ Main window already exists, skipping creation...');
+      return;
+    }
+    
+    if (this.onboardingWindow) {
+      // console.log('🗑️ Closing onboarding window');
+      this.onboardingWindow.close();
+      this.onboardingWindow = null;
+    }
+    
+    // Create the main browser window
+    // console.log('🚀 Creating main browser window...');
+    this.isCreatingMainWindow = true;
+    
+    try {
+      const mainWindow = await this.createMainBrowserWindow();
+      // console.log('✅ Main browser window created successfully:', !!mainWindow);
+    } catch (error) {
+      console.error('❌ Failed to create main browser window:', error);
+    } finally {
+      this.isCreatingMainWindow = false;
+    }
+  }
+
+  private async handleSaveApiKey(data: { provider: string; key: string }): Promise<void> {
+    try {
+      const userDataPath = app.getPath('userData');
+      const apiKeysFile = path.join(userDataPath, 'api-keys.json');
+      
+      let apiKeys = {};
+      if (fs.existsSync(apiKeysFile)) {
+        try {
+          apiKeys = JSON.parse(fs.readFileSync(apiKeysFile, 'utf8'));
+        } catch (error) {
+          console.warn('Failed to read existing API keys:', error);
+        }
+      }
+      
+      (apiKeys as any)[data.provider] = data.key;
+      fs.writeFileSync(apiKeysFile, JSON.stringify(apiKeys, null, 2));
+      
+      console.log(`✅ API key saved for ${data.provider}`);
+    } catch (error) {
+      console.error('Failed to save API key:', error);
+    }
+  }
+
+  private handleOpenSettings(): void {
+    // This will be handled after main window is created
+    console.log('📋 Settings requested from onboarding');
+  }
+
+  private async saveOnboardingPreferences(preferences: any): Promise<void> {
+    try {
+      const userDataPath = app.getPath('userData');
+      const preferencesFile = path.join(userDataPath, 'onboarding-preferences.json');
+      
+      fs.writeFileSync(preferencesFile, JSON.stringify(preferences, null, 2));
+      console.log('✅ Onboarding preferences saved');
+    } catch (error) {
+      console.error('Failed to save onboarding preferences:', error);
+    }
+  }
+
+  private async createMainBrowserWindow(): Promise<BrowserWindow> {
+    // console.log('🏗️ Creating new BrowserWindow...');
+    
+    const preloadPath = path.join(__dirname, '../preload/preload.js');
+    // console.log('🔧 Preload path:', preloadPath);
+    // console.log('📁 __dirname:', __dirname);
+    
+    // Check if preload file exists
+    if (!fs.existsSync(preloadPath)) {
+      console.error('❌ Preload file does not exist at:', preloadPath);
+    } else {
+      // console.log('✅ Preload file exists');
+    }
+    
+    this.mainWindow = new BrowserWindow({
+      width: 1200,
+      height: 800,
+      title: 'Browzer',
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: true,
+        webviewTag: true,
+        webSecurity: true,
+        preload: preloadPath
+      }
+    });
+
+    // console.log('📱 BrowserWindow created, loading HTML...');
+
+    // Enable DevTools for the main window in development
+    if (process.env.NODE_ENV === 'development' || process.env.DEBUG) {
+      this.mainWindow.webContents.openDevTools();
+    }
+
+    // Load the main HTML file
+    const htmlPath = path.join(__dirname, '../../renderer/index.html');
+    // console.log('📄 Loading HTML from:', htmlPath);
+    
+    try {
+      await this.mainWindow.loadFile(htmlPath);
+      // console.log('✅ HTML loaded successfully');
+    } catch (error) {
+      console.error('❌ Failed to load HTML:', error);
+      throw error;
+    }
+
+    // Setup event handlers
+    this.setupWindowEventHandlers();
+    this.setupDevToolsShortcuts();
+
+    // console.log('🎯 Main window setup complete');
     return this.mainWindow;
   }
 
