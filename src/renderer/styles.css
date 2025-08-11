@@ -24,6 +24,53 @@ html, body {
     overflow: hidden;
 }
 
+/* ============ MCP SERVERS STYLES ============ */
+.mcp-server-list {
+    margin: 16px 0;
+}
+
+.mcp-row {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    background: #fafafa;
+}
+
+.mcp-name {
+    font-weight: 500;
+    min-width: 120px;
+    color: #1a73e8;
+}
+
+.mcp-url {
+    flex: 1;
+    font-family: monospace;
+    font-size: 12px;
+    color: #5f6368;
+    margin: 0 16px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mcp-toggle {
+    display: flex;
+    align-items: center;
+    margin-right: 12px;
+    font-size: 12px;
+}
+
+.mcp-toggle input[type="checkbox"] {
+    margin-right: 6px;
+}
+
+.mcp-remove {
+    min-width: 80px;
+}
+
 /* ============ CHROME-LIKE BROWSER CONTAINER ============ */
 .browser-container {
     display: flex;
