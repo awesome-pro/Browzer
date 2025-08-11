@@ -621,7 +621,7 @@ class OnboardingManager {
         document.getElementById('emailButtons').style.display = 'flex';
         sendOtpBtn.style.display = 'none';
         
-        this.showStatus('emailStatus', result.message || 'Verification code sent to your email!', 'success');
+        this.showStatus('emailStatus', result.message || 'Verification code sent to your email! Please check your spam or promotions folder if you don\'t see it in your primary inbox.', 'success');
         
         // Auto-focus OTP input
         document.getElementById('otpCode').focus();
