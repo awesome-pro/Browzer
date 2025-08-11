@@ -21,6 +21,10 @@
     "prebuild": "npm run prepare-python",
     "build": "electron-builder",
     "build:mac": "electron-builder --mac",
+    "build:mac:signed": "electron-builder --mac --publish=never",
+    "build:mac:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",
+    "build:mac:fast": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --config.mac.target=dir",
+    "build:mac:single-arch": "electron-builder --mac --config.mac.target.arch=arm64",
     "build:linux": "electron-builder --linux",
     "build:win": "electron-builder --win",
     "build:all": "electron-builder --mac --linux --win",
@@ -48,10 +52,17 @@
       "assets/**/*",
       "node_modules/**/*",
       "!node_modules/*/{README.md,readme.md,CHANGELOG.md,changelog.md}",
+      "!node_modules/**/*.md",
+      "!node_modules/**/*.txt",
+      "!node_modules/**/docs/**",
+      "!node_modules/**/test/**",
+      "!node_modules/**/tests/**",
+      "!node_modules/**/*.map",
       "!**/*.pyc",
       "!**/__pycache__",
       "!**/.env",
-      "!**/.DS_Store"
+      "!**/.DS_Store",
+      "!agents/venv/**/*"
     ],
     "asarUnpack": [
       "extensions/**/*",
@@ -103,9 +114,11 @@
       "darkModeSupport": true,
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
+      "type": "distribution",
       "entitlements": "assets/entitlements.mac.plist",
       "entitlementsInherit": "assets/entitlements.mac.plist"
     },
+    "afterSign": "scripts/notarize.js",
     "linux": {
       "category": "Network",
       "icon": "assets/icon.png",
@@ -172,6 +185,7 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@electron/notarize": "^3.0.2",
     "@types/node": "^20.0.0",
     "copy-webpack-plugin": "^13.0.0",
     "css-loader": "^6.8.1",
