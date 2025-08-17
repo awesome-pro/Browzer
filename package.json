@@ -12,13 +12,9 @@
   "scripts": {
     "dev": "npx webpack --config webpack.renderer.config.js && npx tsc && node scripts/copy-python-files.js && electron .",
     "start": "electron .",
-    "setup": "cd agents && chmod +x setup.sh && ./setup.sh",
-    "setup-win": "cd agents && .\\setup.bat",
-    "postinstall": "echo \"Run 'npm run setup' to set up Python agents\"",
     "prepare-python": "./scripts/prepare-python-bundle.sh",
     "copy-python": "node scripts/copy-python-files.js",
     "clean": "rm -rf dist releases",
-    "prebuild": "npm run prepare-python",
     "build": "electron-builder",
     "build:mac": "electron-builder --mac",
     "build:mac:signed": "electron-builder --mac --publish=never",
@@ -47,8 +43,7 @@
       "src/renderer/styles.css",
       "extensions/**/*",
       "extensions-framework/**/*",
-      "python-bundle/**/*",
-      "agents/**/*",
+      "scripts/prepare-python-bundle.sh",
       "assets/**/*",
       "node_modules/**/*",
       "!node_modules/*/{README.md,readme.md,CHANGELOG.md,changelog.md}",
@@ -61,37 +56,16 @@
       "!**/*.pyc",
       "!**/__pycache__",
       "!**/.env",
-      "!**/.DS_Store",
-      "!agents/venv/**/*"
+      "!**/.DS_Store"
     ],
     "asarUnpack": [
       "extensions/**/*",
       "extensions-framework/**/*",
-      "python-bundle/**/*",
-      "agents/**/*",
       "src/renderer/*.html",
-      "src/renderer/*.css"
+      "src/renderer/*.css",
+      "scripts/prepare-python-bundle.sh"
     ],
-    "extraFiles": [
-      {
-        "from": "agents",
-        "to": "Resources/agents",
-        "filter": [
-          "**/*",
-          "!venv/**/*",
-          "!.env",
-          "!**/*.pyc",
-          "!**/__pycache__"
-        ]
-      },
-      {
-        "from": "python-bundle/python-runtime",
-        "to": "Resources/python-runtime",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
+    "extraFiles": [],
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "assets/icon.icns",
@@ -118,7 +92,7 @@
       "entitlements": "assets/entitlements.mac.plist",
       "entitlementsInherit": "assets/entitlements.mac.plist"
     },
-    "afterSign": "scripts/notarize.js",
+    "afterSign": "scripts/post-sign.js",
     "linux": {
       "category": "Network",
       "icon": "assets/icon.png",
@@ -192,6 +166,7 @@
     "electron": "^28.0.0",
     "electron-builder": "^26.0.12",
     "electron-icon-builder": "^2.0.1",
+    "glob": "^11.0.3",
     "html-webpack-plugin": "^5.5.0",
     "style-loader": "^3.3.3",
     "ts-loader": "^9.5.0",

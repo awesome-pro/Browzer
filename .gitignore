@@ -18,6 +18,7 @@ crash-log.txt
 # Python virtual environments
 venv/
 agents/venv/
+agents/venv-backup
 .venv
 env/
 ENV/
@@ -31,6 +32,7 @@ out/
 
 # Python bundle (generated during build)
 python-bundle/
+python-bundle*/
 
 # Electron distribution files (generated during build)
 *.dmg

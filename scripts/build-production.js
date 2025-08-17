@@ -28,11 +28,6 @@ const steps = [
   {
     name: 'Copy Python files',
     command: 'node scripts/copy-python-files.js'
-  },
-  {
-    name: 'Prepare Python bundle',
-    command: './scripts/prepare-python-bundle.sh',
-    optional: true
   }
 ];
 

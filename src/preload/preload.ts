@@ -43,6 +43,14 @@ if (!window.electronAPI) {
   log: (message: string): void =>
     ipcRenderer.send('renderer-log', message),
   
+  // Python setup
+  setupPython: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('setup-python'),
+  
+  onPythonSetupProgress: (callback: (event: any, data: any) => void) => {
+    ipcRenderer.on('python-setup-progress', callback);
+  },
+  
   // Menu actions - listen to menu events from main process
   onMenuAction: (callback: (channel: string) => void) => {
     const channels = [

@@ -513,6 +513,12 @@ let browzerApp: BrowzerApp | null = null;
 app.whenReady().then(async () => {
   try {
     logStartup('App ready event fired');
+    
+    // Register Python setup handlers for onboarding
+    const { registerPythonSetupHandlers } = require('./setupPython');
+    registerPythonSetupHandlers();
+    logStartup('Python setup handlers registered');
+    
     browzerApp = new BrowzerApp();
     logStartup('BrowzerApp instance created');
     await browzerApp.initialize();

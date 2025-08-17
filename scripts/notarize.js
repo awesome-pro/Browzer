@@ -8,6 +8,12 @@ exports.default = async function (context) {
     return;
   }
 
+  // Skip notarization for unsigned builds
+  if (process.env.CSC_IDENTITY_AUTO_DISCOVERY === 'false') {
+    console.log('Skipping notarization - unsigned build (CSC_IDENTITY_AUTO_DISCOVERY=false)');
+    return;
+  }
+
   if (!process.env.APPLE_ID || !process.env.APPLE_APP_SPECIFIC_PASSWORD || !process.env.APPLE_TEAM_ID) {
     console.log('Skipping notarization - missing environment variables');
     console.log('Required: APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID');

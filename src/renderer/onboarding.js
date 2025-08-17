@@ -3,8 +3,9 @@
 class OnboardingManager {
   constructor() {
     this.currentStep = 0;
-    this.totalSteps = 8;
+    this.totalSteps = 9; // Updated to include Python setup step
     this.isAnimating = false;
+    this.pythonSetupStarted = false;
     this.userPreferences = {
       email: '',
       verified: false,
@@ -116,6 +117,11 @@ class OnboardingManager {
       this.updateProgressBar();
       this.updateStepDots();
       this.triggerStepAnimations();
+      
+      // Start Python setup if we're on step 7
+      if (newStep === 7 && !this.pythonSetupStarted) {
+        this.startPythonSetup();
+      }
       
       // Re-enable interactions
       setTimeout(() => {
@@ -952,6 +958,94 @@ class OnboardingManager {
     // Mark onboarding as completed
     localStorage.setItem('onboardingCompleted', 'true');
     console.log('[Onboarding] Settings finalized and onboarding marked as completed');
+  }
+
+  async startPythonSetup() {
+    this.pythonSetupStarted = true;
+    console.log('[Onboarding] Starting Python setup...');
+    
+    const progressFill = document.getElementById('setup-progress');
+    const statusText = document.getElementById('setup-status');
+    const detailItems = document.querySelectorAll('.detail-item');
+    
+    // Update UI elements
+    const updateProgress = (percent, status) => {
+      progressFill.style.width = `${percent}%`;
+      statusText.textContent = status;
+    };
+    
+    const markStepComplete = (index) => {
+      if (detailItems[index]) {
+        detailItems[index].classList.add('completed');
+        detailItems[index].innerHTML = detailItems[index].innerHTML.replace('⏳', '✓');
+      }
+    };
+    
+    try {
+      // Step 1: Creating environment
+      updateProgress(10, 'Creating Python environment...');
+      markStepComplete(0);
+      
+      // Call the main process to setup Python
+      if (window.electronAPI && window.electronAPI.setupPython) {
+        // Listen for progress updates from main process
+        window.electronAPI.onPythonSetupProgress((event, data) => {
+          const { progress, message, step } = data;
+          updateProgress(progress, message);
+          if (step) {
+            markStepComplete(step);
+          }
+        });
+        
+        // Start the actual setup
+        const result = await window.electronAPI.setupPython();
+        
+        if (result.success) {
+          // Setup completed successfully
+          updateProgress(100, 'Setup complete!');
+          markStepComplete(1);
+          markStepComplete(2);
+          markStepComplete(3);
+          
+          // Auto-advance to completion step after a short delay
+          setTimeout(() => {
+            this.nextStep();
+          }, 1500);
+        } else {
+          throw new Error(result.error || 'Setup failed');
+        }
+      } else {
+        // Fallback for development/testing
+        console.log('[Onboarding] Running mock Python setup...');
+        
+        // Simulate setup steps
+        const steps = [
+          { progress: 25, status: 'Installing AI models...', step: 1 },
+          { progress: 50, status: 'Configuring language processing...', step: 2 },
+          { progress: 75, status: 'Optimizing performance...', step: 3 },
+          { progress: 100, status: 'Setup complete!', step: 3 }
+        ];
+        
+        for (const step of steps) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          updateProgress(step.progress, step.status);
+          if (step.step) markStepComplete(step.step);
+        }
+        
+        // Auto-advance after completion
+        setTimeout(() => {
+          this.nextStep();
+        }, 1500);
+      }
+    } catch (error) {
+      console.error('[Onboarding] Python setup failed:', error);
+      statusText.textContent = 'Setup failed. Don\'t worry, you can still use Browzer!';
+      
+      // Still advance to next step after error
+      setTimeout(() => {
+        this.nextStep();
+      }, 3000);
+    }
   }
 }
 

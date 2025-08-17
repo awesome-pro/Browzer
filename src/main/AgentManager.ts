@@ -120,9 +120,12 @@ export class AgentManager {
       let pythonProcess: ChildProcess;
       
       try {
+        // Set up Python environment with proper PYTHONPATH
+        const pythonEnv = this.getPythonEnvironment(pythonPath);
+        
         pythonProcess = spawn(pythonPath, pythonArgs, {
           env: {
-            ...process.env,
+            ...pythonEnv,
             WORKFLOW_DATA: JSON.stringify(params)
           },
           stdio: ['pipe', 'pipe', 'pipe']
@@ -414,8 +417,12 @@ export class AgentManager {
       let pythonProcess: ChildProcess;
       
       try {
+        // Set up Python environment with proper PYTHONPATH
+        const pythonEnv = this.getPythonEnvironment(pythonPath);
+        
         pythonProcess = spawn(pythonPath, pythonArgs, {
-          stdio: ['pipe', 'pipe', 'pipe']
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: pythonEnv
         });
       } catch (spawnError) {
         console.error(`Failed to spawn Python process: ${spawnError}`);
@@ -616,42 +623,30 @@ export class AgentManager {
   }
 
   private getPythonPath(): string {
-    // Try bundled Python first
-    let pythonBundlePath: string;
+    // First, try Application Support Python bundle
+    const appSupportPath = app.getPath('userData');
+    const appSupportPythonPath = path.join(appSupportPath, 'python-bundle', 'python-runtime', 'bin', 'python');
     
-    if (app.isPackaged) {
-      // In packaged app, use app.asar.unpacked for Python files
-      pythonBundlePath = path.join(this.appPath, 'app.asar.unpacked', 'python-bundle', 'python-runtime', 'bin', 'python');
-    } else {
-      // In development, use the python-bundle
-      pythonBundlePath = path.join(this.appPath, 'python-bundle', 'python-runtime', 'bin', 'python');
+    console.log('[AgentManager] Checking Application Support Python path:', appSupportPythonPath);
+    
+    if (fs.existsSync(appSupportPythonPath)) {
+      console.log('[AgentManager] Using Application Support Python bundle');
+      return appSupportPythonPath;
     }
     
-    console.log('[AgentManager] Checking bundled Python path:', pythonBundlePath);
-    
-    // Check if bundled Python exists
-    if (fs.existsSync(pythonBundlePath)) {
-      console.log('[AgentManager] Using bundled Python');
-      return pythonBundlePath;
-    }
-    
-    // Fallback to old venv approach
-    let venvPythonPath: string;
-    if (app.isPackaged) {
-      venvPythonPath = path.join(this.appPath, 'app.asar.unpacked', 'agents', 'venv', 'bin', 'python');
-    } else {
-      venvPythonPath = path.join(this.appPath, 'agents', 'venv', 'bin', 'python');
-    }
-    
-    console.log('[AgentManager] Checking venv Python path:', venvPythonPath);
-    
-    if (fs.existsSync(venvPythonPath)) {
-      console.log('[AgentManager] Using venv Python');
-      return venvPythonPath;
+    // In development, check for local venv
+    if (!app.isPackaged) {
+      const venvPythonPath = path.join(this.appPath, 'agents', 'venv', 'bin', 'python');
+      console.log('[AgentManager] Checking development venv path:', venvPythonPath);
+      
+      if (fs.existsSync(venvPythonPath)) {
+        console.log('[AgentManager] Using development venv Python');
+        return venvPythonPath;
+      }
     }
     
     // Final fallback to system Python
-    console.warn('[AgentManager] No bundled or venv Python found, falling back to system Python');
+    console.warn('[AgentManager] No Python bundle found, falling back to system Python');
     return this.getFallbackPython();
   }
 
@@ -661,6 +656,34 @@ export class AgentManager {
 
   private isSystemPython(pythonPath: string): boolean {
     return pythonPath === 'python.exe' || pythonPath === 'python3' || pythonPath === 'python';
+  }
+
+  private getPythonEnvironment(pythonPath: string): NodeJS.ProcessEnv {
+    const env = { ...process.env };
+    
+    // If using Application Support Python bundle
+    if (pythonPath.includes(app.getPath('userData'))) {
+      const appSupportPath = app.getPath('userData');
+      const sitePackagesPath = path.join(appSupportPath, 'python-bundle', 'python-runtime', 'lib', 'python3.13', 'site-packages');
+      
+      // Set PYTHONPATH to include the bundled site-packages
+      const existingPythonPath = env.PYTHONPATH || '';
+      env.PYTHONPATH = existingPythonPath ? `${sitePackagesPath}:${existingPythonPath}` : sitePackagesPath;
+      
+      console.log('[AgentManager] Set PYTHONPATH for Application Support Python:', env.PYTHONPATH);
+    } else if (pythonPath.includes('venv')) {
+      // If using development venv
+      const venvSitePackagesPath = path.join(this.appPath, 'agents', 'venv', 'lib', 'python3.9', 'site-packages');
+      
+      const existingPythonPath = env.PYTHONPATH || '';
+      env.PYTHONPATH = existingPythonPath ? `${venvSitePackagesPath}:${existingPythonPath}` : venvSitePackagesPath;
+      
+      console.log('[AgentManager] Set PYTHONPATH for venv Python:', env.PYTHONPATH);
+    } else {
+      console.log('[AgentManager] Using system Python, no PYTHONPATH modification needed');
+    }
+    
+    return env;
   }
 
   private prepareAgentParams(agentParams: AgentParams, cleanedQuery: string): any {

@@ -51,6 +51,34 @@ export class ExtensionManager {
     this.extensionFramework = new ExtensionFramework(frameworkConfig, this.extensionsDir);
   }
 
+  private getPythonEnvironment(pythonPath: string): NodeJS.ProcessEnv {
+    const env = { ...process.env };
+    
+    // If using Application Support Python bundle
+    if (pythonPath.includes(app.getPath('userData'))) {
+      const appSupportPath = app.getPath('userData');
+      const sitePackagesPath = path.join(appSupportPath, 'python-bundle', 'python-runtime', 'lib', 'python3.13', 'site-packages');
+      
+      // Set PYTHONPATH to include the bundled site-packages
+      const existingPythonPath = env.PYTHONPATH || '';
+      env.PYTHONPATH = existingPythonPath ? `${sitePackagesPath}:${existingPythonPath}` : sitePackagesPath;
+      
+      console.log('[ExtensionManager] Set PYTHONPATH for Application Support Python:', env.PYTHONPATH);
+    } else if (pythonPath.includes('venv')) {
+      // If using development venv
+      const venvSitePackagesPath = path.join(process.cwd(), 'agents', 'venv', 'lib', 'python3.9', 'site-packages');
+      
+      const existingPythonPath = env.PYTHONPATH || '';
+      env.PYTHONPATH = existingPythonPath ? `${venvSitePackagesPath}:${existingPythonPath}` : venvSitePackagesPath;
+      
+      console.log('[ExtensionManager] Set PYTHONPATH for venv Python:', env.PYTHONPATH);
+    } else {
+      console.log('[ExtensionManager] Using system Python, no PYTHONPATH modification needed');
+    }
+    
+    return env;
+  }
+
   async initialize(): Promise<void> {
     this.setupIpcHandlers();
     this.ensureExtensionsDirectory();
@@ -172,36 +200,38 @@ export class ExtensionManager {
         // In packaged app, use app.asar.unpacked for Python files
         const appPath = path.dirname(app.getAppPath());
         routerPath = path.join(appPath, 'app.asar.unpacked', 'extensions-framework', 'core', 'smart_extension_router.py');
-        pythonExecutable = path.join(appPath, 'app.asar.unpacked', 'python-bundle', 'python-runtime', 'bin', 'python');
       } else {
         // In development
         routerPath = path.join(process.cwd(), 'extensions-framework', 'core', 'smart_extension_router.py');
-        pythonExecutable = path.join(process.cwd(), 'python-bundle', 'python-runtime', 'bin', 'python');
       }
       
-      console.log('[ExtensionManager] Router path:', routerPath);
-      console.log('[ExtensionManager] Python executable:', pythonExecutable);
+      // First try Application Support Python
+      const appSupportPath = app.getPath('userData');
+      pythonExecutable = path.join(appSupportPath, 'python-bundle', 'python-runtime', 'bin', 'python');
       
-      // Fallback to system Python if bundled Python doesn't exist
+      console.log('[ExtensionManager] Router path:', routerPath);
+      console.log('[ExtensionManager] Checking Application Support Python:', pythonExecutable);
+      
+      // Fallback logic
       if (!fs.existsSync(pythonExecutable)) {
-        console.warn('[ExtensionManager] Bundled Python not found, trying venv Python');
+        console.warn('[ExtensionManager] Application Support Python not found');
         
-        // Try old venv approach
-        let venvPythonPath: string;
-        if (app.isPackaged) {
-          const appPath = path.dirname(app.getAppPath());
-          venvPythonPath = path.join(appPath, 'app.asar.unpacked', 'agents', 'venv', 'bin', 'python');
+        // In development, try local venv
+        if (!app.isPackaged) {
+          const venvPythonPath = path.join(process.cwd(), 'agents', 'venv', 'bin', 'python');
+          if (fs.existsSync(venvPythonPath)) {
+            console.log('[ExtensionManager] Using development venv Python');
+            pythonExecutable = venvPythonPath;
+          } else {
+            console.warn('[ExtensionManager] No Python found, using system Python');
+            pythonExecutable = process.platform === 'win32' ? 'python' : 'python3';
+          }
         } else {
-          venvPythonPath = path.join(process.cwd(), 'agents', 'venv', 'bin', 'python');
-        }
-        
-        if (fs.existsSync(venvPythonPath)) {
-          console.log('[ExtensionManager] Using venv Python');
-          pythonExecutable = venvPythonPath;
-        } else {
-          console.warn('[ExtensionManager] No Python found, using system Python');
+          console.warn('[ExtensionManager] Using system Python as fallback');
           pythonExecutable = process.platform === 'win32' ? 'python' : 'python3';
         }
+      } else {
+        console.log('[ExtensionManager] Using Application Support Python bundle');
       }
       
       console.log(`[ExtensionManager] Routing request: "${userRequest}"`);
@@ -222,9 +252,12 @@ export class ExtensionManager {
       return new Promise((resolve, reject) => {
         const { spawn } = require('child_process');
         // Add --routing-only flag to ensure the smart router only does routing, not execution
+        // Set up Python environment with proper PYTHONPATH
+        const pythonEnv = this.getPythonEnvironment(pythonExecutable);
+        
         const python = spawn(pythonExecutable, [routerPath, this.extensionsDir, userRequest, '--routing-only'], {
           env: {
-            ...process.env,
+            ...pythonEnv,
             WORKFLOW_DATA: JSON.stringify(workflowData)
           }
         });
