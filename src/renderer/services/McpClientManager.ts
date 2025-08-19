@@ -27,6 +27,7 @@ class BrowserSSETransport {
 
   async send(message: any, options?: any): Promise<void> {
     try {
+      console.log(`[BrowserSSETransport] Sending message to ${this.url.toString()}:`, message);
       const response = await fetch(this.url.toString(), {
         method: 'POST',
         headers: {
@@ -35,6 +36,8 @@ class BrowserSSETransport {
         },
         body: JSON.stringify(message)
       });
+      
+      console.log(`[BrowserSSETransport] Response status: ${response.status} ${response.statusText}`);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -214,16 +217,22 @@ export class McpClientManager {
         }
       );
 
+      console.log(`[MCP] Attempting connection to ${config.name}...`);
       await client.connect(transport);
       this.clients.set(config.name, client);
       
-      console.log(`[MCP] Connected to ${config.name} using ${transportType}`);
+      console.log(`[MCP] Successfully connected to ${config.name} using ${transportType}`);
       
       // Discover and register tools
       await this.discoverTools(config.name, client);
       
     } catch (error) {
       console.error(`[MCP] Failed to connect to ${config.name}:`, error);
+      console.error(`[MCP] Error details:`, {
+        name: error instanceof Error ? error.name : 'Unknown',
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
     }
   }
 
@@ -272,7 +281,9 @@ export class McpClientManager {
 
   private async discoverTools(serverName: string, client: Client) {
     try {
+      console.log(`[MCP] Discovering tools from ${serverName}...`);
       const response = await client.listTools();
+      console.log(`[MCP] Raw listTools response from ${serverName}:`, response);
       const tools = response.tools || [];
       
       for (const tool of tools) {
@@ -283,11 +294,17 @@ export class McpClientManager {
           inputSchema: tool.inputSchema,
           serverName
         });
+        console.log(`[MCP] Registered tool: ${fullName}`, tool);
       }
       
-      console.log(`[MCP] Registered ${tools.length} tools from ${serverName}:`, tools.map(t => t.name));
+      console.log(`[MCP] Successfully registered ${tools.length} tools from ${serverName}:`, tools.map((t: any) => t.name));
     } catch (error) {
       console.warn(`[MCP] Failed to discover tools from ${serverName}:`, error);
+      console.warn(`[MCP] Tool discovery error details:`, {
+        name: error instanceof Error ? error.name : 'Unknown',
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
     }
   }
 
@@ -298,6 +315,196 @@ export class McpClientManager {
 
   getToolInfo(fullName: string): McpTool | undefined {
     return this.toolIndex.get(fullName);
+  }
+
+  async getToolsForServer(serverName: string): Promise<any[]> {
+    console.log(`[MCP] Requesting tools from ${serverName}...`);
+    
+    // For SSE servers like Zapier, use direct approach that matches the working test
+    const config = this.loadConfigs().find(c => c.name === serverName);
+    if (config && this.detectTransportType(config.url) === 'sse') {
+      console.log(`[MCP] Using direct SSE approach for ${serverName} (SSE server detected)`);
+      return await this.getToolsDirectSSE(config);
+    }
+    
+    // For WebSocket servers, use the SDK client
+    const client = this.clients.get(serverName);
+    if (!client) {
+      console.error(`[MCP] Server ${serverName} is not connected. Available servers:`, Array.from(this.clients.keys()));
+      throw new Error(`Server ${serverName} is not connected`);
+    }
+    
+    try {
+      const response = await client.listTools();
+      console.log(`[MCP] Tools response from ${serverName}:`, response);
+      const tools = response.tools || [];
+      console.log(`[MCP] Found ${tools.length} tools from ${serverName}:`, tools.map((t: any) => t.name));
+      return tools;
+    } catch (error) {
+      console.error(`[MCP] Failed to get tools from ${serverName}:`, error);
+      throw error;
+    }
+  }
+
+  private async getToolsDirectSSE(config: McpServerConfig): Promise<any[]> {
+    try {
+      console.log(`[MCP] Using direct SSE approach for ${config.name}`);
+      console.log(`[MCP] Target URL: ${config.url}`);
+      console.log(`[MCP] Working test URL: https://mcp.zapier.com/api/mcp/s/ZjgwOGM1ZjctYjBkZC00ZWM4LWFiOGEtMGE2ZTA0NmJhNzgzOjdjNDEwOTc0LTIzNTctNGYyYy1hZTBiLWU4Mjg2OTA2MzZlZQ==/mcp`);
+      console.log(`[MCP] URLs match: ${config.url === 'https://mcp.zapier.com/api/mcp/s/ZjgwOGM1ZjctYjBkZC00ZWM4LWFiOGEtMGE2ZTA0NmJhNzgzOjdjNDEwOTc0LTIzNTctNGYyYy1hZTBiLWU4Mjg2OTA2MzZlZQ==/mcp'}`);
+      
+      // First, we need to initialize the session (like the working test does)
+      const initPayload = {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2024-11-05',
+          capabilities: { tools: {} },
+          clientInfo: { name: 'browzer-assistant', version: '1.0.0' }
+        }
+      };
+      
+      console.log(`[MCP] Sending initialize request to ${config.name}...`);
+      console.log(`[MCP] Initialize payload:`, JSON.stringify(initPayload, null, 2));
+      const initResponse = await fetch(config.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, text/event-stream'
+        },
+        body: JSON.stringify(initPayload)
+      });
+      
+      console.log(`[MCP] Initialize response: ${initResponse.status} ${initResponse.statusText}`);
+      
+      if (!initResponse.ok) {
+        throw new Error(`Initialize failed: HTTP ${initResponse.status}: ${initResponse.statusText}`);
+      }
+      
+      // Process initialize response
+      let initialized = false;
+      if (initResponse.headers.get('content-type')?.includes('text/event-stream')) {
+        const reader = initResponse.body?.getReader();
+        if (!reader) throw new Error('No response body');
+        
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          let currentEvent: any = {};
+          
+          for (const line of lines) {
+            if (line.startsWith('data:')) {
+              currentEvent.data = line.substring(5).trim();
+            } else if (line === '') {
+              if (currentEvent.data) {
+                try {
+                  const eventData = JSON.parse(currentEvent.data);
+                  if (eventData.result && eventData.result.serverInfo) {
+                    console.log(`[MCP] Server initialized:`, eventData.result.serverInfo);
+                    initialized = true;
+                    break;
+                  }
+                } catch (parseError) {
+                  console.warn(`[MCP] Parse error in initialize:`, parseError);
+                }
+              }
+              currentEvent = {};
+            }
+          }
+          if (initialized) break;
+        }
+      }
+      
+      if (!initialized) {
+        throw new Error('Failed to initialize MCP session');
+      }
+      
+      // Now send tools/list request
+      const toolsPayload = {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/list',
+        params: {}
+      };
+      
+      console.log(`[MCP] Sending tools/list request to ${config.name}...`);
+      const toolsResponse = await fetch(config.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, text/event-stream'
+        },
+        body: JSON.stringify(toolsPayload)
+      });
+      
+      console.log(`[MCP] Tools response: ${toolsResponse.status} ${toolsResponse.statusText}`);
+      
+      if (!toolsResponse.ok) {
+        throw new Error(`Tools request failed: HTTP ${toolsResponse.status}: ${toolsResponse.statusText}`);
+      }
+      
+      // Handle tools response
+      if (toolsResponse.headers.get('content-type')?.includes('text/event-stream')) {
+        const reader = toolsResponse.body?.getReader();
+        if (!reader) throw new Error('No response body');
+        
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let tools: any[] = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          let currentEvent: any = {};
+          
+          for (const line of lines) {
+            if (line.startsWith('data:')) {
+              currentEvent.data = line.substring(5).trim();
+            } else if (line === '') {
+              if (currentEvent.data) {
+                try {
+                  const eventData = JSON.parse(currentEvent.data);
+                  if (eventData.result && eventData.result.tools) {
+                    tools = eventData.result.tools;
+                    console.log(`[MCP] Found ${tools.length} tools via direct SSE:`, tools.map((t: any) => t.name));
+                    return tools;
+                  }
+                } catch (parseError) {
+                  console.warn(`[MCP] Parse error in tools response:`, parseError);
+                }
+              }
+              currentEvent = {};
+            }
+          }
+        }
+        
+        return tools;
+      } else {
+        // JSON response
+        const data = await toolsResponse.json();
+        if (data.result && data.result.tools) {
+          return data.result.tools;
+        }
+        return [];
+      }
+    } catch (error) {
+      console.error(`[MCP] Direct SSE tools request failed:`, error);
+      throw error;
+    }
   }
 
   async callTool(fullName: string, args: any): Promise<any> {
@@ -327,6 +534,10 @@ export class McpClientManager {
   }
 
   /* ---------- Status and debugging ---------- */
+  isServerConnected(serverName: string): boolean {
+    return this.clients.has(serverName);
+  }
+
   getStatus() {
     const configs = this.loadConfigs();
     return {

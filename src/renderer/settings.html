@@ -515,8 +515,10 @@
                                     <input type="checkbox" data-index="${i}" ${c.enabled ? 'checked' : ''}>
                                     <span>Enabled</span>
                                 </label>
+                                <button class="chrome-btn chrome-btn-secondary chrome-btn-small mcp-test" data-index="${i}" ${!c.enabled ? 'disabled' : ''}>Test Tools</button>
                                 <button class="chrome-btn chrome-btn-danger chrome-btn-small mcp-remove" data-index="${i}">Remove</button>
                             </div>
+                            <div id="tools-list-${i}" class="mcp-tools-list" style="display: none;"></div>
                         `).join('')}
                     </div>
                     <button id="mcp-add-btn" class="chrome-btn chrome-btn-primary" onclick="window.mcpAddServer && window.mcpAddServer()">Add Server</button>
@@ -550,6 +552,20 @@
                         const list = loadConfigs();
                         list[index].enabled = e.target.checked;
                         saveConfigs(list);
+                        
+                        // Update test button state
+                        const testBtn = root.querySelector(`.mcp-test[data-index="${index}"]`);
+                        if (testBtn) {
+                            testBtn.disabled = !list[index].enabled;
+                        }
+                    });
+                });
+
+                root.querySelectorAll('.mcp-test').forEach(button => {
+                    button.addEventListener('click', async (e) => {
+                        const index = parseInt(e.target.dataset.index);
+                        const config = loadConfigs()[index];
+                        await testServerTools(config, index);
                     });
                 });
 
@@ -562,6 +578,490 @@
                         renderPanel();
                     });
                 });
+            }
+
+            // Test server tools function
+            async function testServerTools(config, index) {
+                const toolsListElement = root.querySelector(`#tools-list-${index}`);
+                const testBtn = root.querySelector(`.mcp-test[data-index="${index}"]`);
+                
+                if (!toolsListElement || !testBtn) return;
+                
+                // Toggle visibility
+                const isVisible = toolsListElement.style.display !== 'none';
+                if (isVisible) {
+                    toolsListElement.style.display = 'none';
+                    testBtn.textContent = 'Test Tools';
+                    return;
+                }
+                
+                // Show loading state
+                testBtn.textContent = 'Testing...';
+                testBtn.disabled = true;
+                toolsListElement.style.display = 'block';
+                toolsListElement.innerHTML = '<div class="mcp-tools-loading">🔄 Discovering tools...</div>';
+                
+                try {
+                    console.log(`Testing MCP server: ${config.name} at ${config.url}`);
+                    
+                    // Actually connect to the MCP server and get tools
+                    const tools = await getToolsFromServer(config);
+                    
+                    if (tools && tools.length > 0) {
+                        toolsListElement.innerHTML = `
+                            <div class="mcp-tools-header">
+                                <h4>🛠️ Available Tools from ${config.name} (${tools.length})</h4>
+                            </div>
+                            <div class="mcp-tools-grid">
+                                ${tools.map(tool => `
+                                    <div class="mcp-tool-card">
+                                        <div class="mcp-tool-name">${tool.name}</div>
+                                        <div class="mcp-tool-description">${tool.description || 'No description provided'}</div>
+                                        <div class="mcp-tool-schema">
+                                            <details>
+                                                <summary>Input Schema</summary>
+                                                <pre>${JSON.stringify(tool.inputSchema, null, 2)}</pre>
+                                            </details>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        `;
+                    } else {
+                        toolsListElement.innerHTML = `
+                            <div class="mcp-tools-empty">
+                                ❌ No tools found from ${config.name}
+                                <br><small>Server may not be running or may not support tool listing</small>
+                            </div>
+                        `;
+                    }
+                    
+                    testBtn.textContent = 'Hide Tools';
+                    testBtn.disabled = false;
+                    
+                } catch (error) {
+                    console.error('Failed to test server:', error);
+                    toolsListElement.innerHTML = `<div class="mcp-tools-error">❌ Failed to test server: ${error.message}</div>`;
+                    testBtn.textContent = 'Test Tools';
+                    testBtn.disabled = false;
+                }
+            }
+
+            // Function to actually connect to MCP server and get tools
+            async function getToolsFromServer(config) {
+                console.log(`🔌 Connecting to MCP server: ${config.name} at ${config.url}`);
+                
+                if (config.url.startsWith('ws://') || config.url.startsWith('wss://')) {
+                    // WebSocket connection
+                    console.log(`📡 Using WebSocket for ${config.name}`);
+                    return await getToolsViaWebSocket(config);
+                } else if (config.url.startsWith('http://') || config.url.startsWith('https://')) {
+                    // HTTP/SSE connection
+                    console.log(`📡 Using HTTP/SSE for ${config.name}`);
+                    return await getToolsViaHTTP(config);
+                } else {
+                    throw new Error('Unsupported URL scheme. Use ws://, wss://, http://, or https://');
+                }
+            }
+
+            async function getToolsViaWebSocket(config) {
+                return new Promise((resolve, reject) => {
+                    const ws = new WebSocket(config.url);
+                    let resolved = false;
+                    
+                    const timeout = setTimeout(() => {
+                        if (!resolved) {
+                            resolved = true;
+                            ws.close();
+                            reject(new Error('Connection timeout'));
+                        }
+                    }, 10000);
+                    
+                    ws.onopen = () => {
+                        console.log(`✅ WebSocket connected to ${config.name}`);
+                        
+                        // Send initialize request
+                        ws.send(JSON.stringify({
+                            jsonrpc: '2.0',
+                            id: 1,
+                            method: 'initialize',
+                            params: {
+                                protocolVersion: '2024-11-05',
+                                capabilities: { tools: {} },
+                                clientInfo: { name: 'browzer-settings-test', version: '1.0.0' }
+                            }
+                        }));
+                    };
+                    
+                    ws.onmessage = (event) => {
+                        try {
+                            const response = JSON.parse(event.data);
+                            
+                            if (response.id === 1 && response.result) {
+                                // Initialize successful, now request tools
+                                ws.send(JSON.stringify({
+                                    jsonrpc: '2.0',
+                                    id: 2,
+                                    method: 'tools/list',
+                                    params: {}
+                                }));
+                            } else if (response.id === 2) {
+                                clearTimeout(timeout);
+                                if (!resolved) {
+                                    resolved = true;
+                                    ws.close();
+                                    resolve(response.result?.tools || []);
+                                }
+                            }
+                        } catch (error) {
+                            clearTimeout(timeout);
+                            if (!resolved) {
+                                resolved = true;
+                                ws.close();
+                                reject(new Error('Failed to parse server response'));
+                            }
+                        }
+                    };
+                    
+                    ws.onerror = (error) => {
+                        clearTimeout(timeout);
+                        if (!resolved) {
+                            resolved = true;
+                            reject(new Error('WebSocket connection failed'));
+                        }
+                    };
+                    
+                    ws.onclose = () => {
+                        clearTimeout(timeout);
+                        if (!resolved) {
+                            resolved = true;
+                            reject(new Error('Connection closed unexpectedly'));
+                        }
+                    };
+                });
+            }
+
+            async function getToolsViaHTTP(config) {
+                console.log(`📤 Starting HTTP/SSE test for ${config.name}`);
+                
+                // Check if this is invideo server (uses different format)
+                if (config.url.includes('mcp.invideo.io')) {
+                    console.log(`📡 Detected invideo server - using special handling`);
+                    return await getToolsFromInvideo(config);
+                }
+                
+                // Standard MCP over HTTP/SSE (for Zapier etc.)
+                const initPayload = {
+                    jsonrpc: '2.0',
+                    id: 1,
+                    method: 'initialize',
+                    params: {
+                        protocolVersion: '2024-11-05',
+                        capabilities: { tools: {} },
+                        clientInfo: { name: 'browzer-electron-test', version: '1.0.0' }
+                    }
+                };
+                
+                console.log(`📤 Sending initialize to ${config.url}:`, initPayload);
+                const initResponse = await fetch(config.url, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json, text/event-stream'
+                    },
+                    body: JSON.stringify(initPayload)
+                });
+                
+                console.log(`📥 Initialize response: ${initResponse.status} ${initResponse.statusText}`);
+                
+                if (!initResponse.ok) {
+                    if (initResponse.status === 401) {
+                        throw new Error(`Authentication required for ${config.name}. Please check if you need to sign in to your ${config.name} account first.`);
+                    }
+                    throw new Error(`HTTP ${initResponse.status}: ${initResponse.statusText}`);
+                }
+                
+                // Handle SSE response for initialization
+                if (initResponse.headers.get('content-type')?.includes('text/event-stream')) {
+                    const reader = initResponse.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+                    let initialized = false;
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+
+                        let currentEvent = {};
+                        
+                        for (const line of lines) {
+                            if (line.startsWith('data:')) {
+                                currentEvent.data = line.substring(5).trim();
+                            } else if (line === '') {
+                                if (currentEvent.data) {
+                                    try {
+                                        const eventData = JSON.parse(currentEvent.data);
+                                        if (eventData.result && eventData.result.serverInfo) {
+                                            initialized = true;
+                                            break;
+                                        }
+                                    } catch (parseError) {
+                                        // Continue processing
+                                    }
+                                }
+                                currentEvent = {};
+                            }
+                        }
+                        
+                        if (initialized) break;
+                    }
+                }
+                
+                // Now request tools
+                const toolsResponse = await fetch(config.url, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json, text/event-stream'
+                    },
+                    body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        id: 2,
+                        method: 'tools/list',
+                        params: {}
+                    })
+                });
+                
+                if (!toolsResponse.ok) {
+                    throw new Error(`HTTP ${toolsResponse.status}: ${toolsResponse.statusText}`);
+                }
+                
+                // Handle SSE response for tools
+                if (toolsResponse.headers.get('content-type')?.includes('text/event-stream')) {
+                    const reader = toolsResponse.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+                    let tools = [];
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+
+                        let currentEvent = {};
+                        
+                        for (const line of lines) {
+                            if (line.startsWith('data:')) {
+                                currentEvent.data = line.substring(5).trim();
+                            } else if (line === '') {
+                                if (currentEvent.data) {
+                                    try {
+                                        const eventData = JSON.parse(currentEvent.data);
+                                        if (eventData.result && eventData.result.tools) {
+                                            tools = eventData.result.tools;
+                                            break;
+                                        }
+                                    } catch (parseError) {
+                                        // Continue processing
+                                    }
+                                }
+                                currentEvent = {};
+                            }
+                        }
+                        
+                        if (tools.length > 0) break;
+                    }
+                    
+                    return tools;
+                } else {
+                    const result = await toolsResponse.json();
+                    return result.result?.tools || [];
+                }
+            }
+
+            async function getToolsFromInvideo(config) {
+                console.log(`📡 Getting session endpoint from invideo...`);
+                
+                // First, get the session endpoint
+                const response = await fetch(config.url, {
+                    method: 'GET',
+                    headers: { 
+                        'Accept': 'text/event-stream'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                let sessionUrl = null;
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (line.startsWith('event: endpoint')) {
+                            continue;
+                        } else if (line.startsWith('data: ')) {
+                            const endpoint = line.substring(6).trim();
+                            if (endpoint.startsWith('/sse/message')) {
+                                sessionUrl = `https://mcp.invideo.io${endpoint}`;
+                                console.log(`📡 Got session URL: ${sessionUrl}`);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (sessionUrl) break;
+                }
+                
+                if (!sessionUrl) {
+                    throw new Error('Failed to get session URL from invideo');
+                }
+                
+                // Now use the session URL for MCP communication
+                const initPayload = {
+                    jsonrpc: '2.0',
+                    id: 1,
+                    method: 'initialize',
+                    params: {
+                        protocolVersion: '2024-11-05',
+                        capabilities: { tools: {} },
+                        clientInfo: { name: 'browzer-electron-test', version: '1.0.0' }
+                    }
+                };
+                
+                const initResponse = await fetch(sessionUrl, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json, text/event-stream'
+                    },
+                    body: JSON.stringify(initPayload)
+                });
+                
+                if (!initResponse.ok) {
+                    throw new Error(`Session init failed: HTTP ${initResponse.status}: ${initResponse.statusText}`);
+                }
+                
+                // Handle session initialization
+                if (initResponse.headers.get('content-type')?.includes('text/event-stream')) {
+                    const reader = initResponse.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+                    let initialized = false;
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+
+                        let currentEvent = {};
+                        
+                        for (const line of lines) {
+                            if (line.startsWith('data:')) {
+                                currentEvent.data = line.substring(5).trim();
+                            } else if (line === '') {
+                                if (currentEvent.data) {
+                                    try {
+                                        const eventData = JSON.parse(currentEvent.data);
+                                        if (eventData.result && eventData.result.serverInfo) {
+                                            initialized = true;
+                                            break;
+                                        }
+                                    } catch (parseError) {
+                                        // Continue processing
+                                    }
+                                }
+                                currentEvent = {};
+                            }
+                        }
+                        
+                        if (initialized) break;
+                    }
+                }
+                
+                // Now get tools using session URL
+                const toolsResponse = await fetch(sessionUrl, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json, text/event-stream'
+                    },
+                    body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        id: 2,
+                        method: 'tools/list',
+                        params: {}
+                    })
+                });
+                
+                if (!toolsResponse.ok) {
+                    throw new Error(`Tools request failed: HTTP ${toolsResponse.status}: ${toolsResponse.statusText}`);
+                }
+                
+                // Handle tools response
+                if (toolsResponse.headers.get('content-type')?.includes('text/event-stream')) {
+                    const reader = toolsResponse.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+                    let tools = [];
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+
+                        let currentEvent = {};
+                        
+                        for (const line of lines) {
+                            if (line.startsWith('data:')) {
+                                currentEvent.data = line.substring(5).trim();
+                            } else if (line === '') {
+                                if (currentEvent.data) {
+                                    try {
+                                        const eventData = JSON.parse(currentEvent.data);
+                                        if (eventData.result && eventData.result.tools) {
+                                            tools = eventData.result.tools;
+                                            break;
+                                        }
+                                    } catch (parseError) {
+                                        // Continue processing
+                                    }
+                                }
+                                currentEvent = {};
+                            }
+                        }
+                        
+                        if (tools.length > 0) break;
+                    }
+                    
+                    return tools;
+                } else {
+                    const result = await toolsResponse.json();
+                    return result.result?.tools || [];
+                }
             }
 
             console.log('🎨 Rendering MCP panel...');
