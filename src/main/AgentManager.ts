@@ -111,7 +111,7 @@ export class AgentManager {
   }
 
   private async runWorkflowProcess(pythonPath: string, routerPath: string, params: any, sender: Electron.WebContents): Promise<AgentResult> {
-    const pythonArgs = [routerPath, this.extensionsDir, params.query];
+    const pythonArgs = [routerPath, this.extensionsDir];
     
     console.log(`Starting workflow process: ${pythonPath} ${pythonArgs.join(' ')}`);
     this.logWorkflowEvent(`Starting workflow process: ${pythonPath} ${pythonArgs.join(' ')}`);
@@ -130,6 +130,12 @@ export class AgentManager {
           },
           stdio: ['pipe', 'pipe', 'pipe']
         });
+        
+        // Pass query via stdin to avoid E2BIG error
+        if (pythonProcess.stdin) {
+          pythonProcess.stdin.write(params.query);
+          pythonProcess.stdin.end();
+        }
       } catch (spawnError) {
         console.error(`Failed to spawn Python process: ${spawnError}`);
         this.logWorkflowEvent(`Failed to spawn Python process: ${spawnError}`);

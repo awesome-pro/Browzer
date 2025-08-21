@@ -522,9 +522,10 @@ class SmartExtensionRouter:
 
 def main():
     """CLI interface for the enhanced smart router"""
-    if len(sys.argv) < 3:
-        print("Usage: python smart_extension_router.py <extensions_dir> <user_request> [--routing-only|analyze]", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print("Usage: python smart_extension_router.py <extensions_dir> [user_request] [--routing-only|analyze]", file=sys.stderr)
         print("Flags: --routing-only (for routing without execution), analyze (for analysis)", file=sys.stderr)
+        print("Note: If user_request is not provided as argument, it will be read from stdin", file=sys.stderr)
         sys.exit(1)
     
     extensions_dir = sys.argv[1]
@@ -539,6 +540,13 @@ def main():
         if arg not in ['--routing-only', 'analyze']:
             user_request_parts.append(arg)
     user_request = " ".join(user_request_parts)
+    
+    # If no user request from args, read from stdin to avoid E2BIG error
+    if not user_request.strip():
+        try:
+            user_request = sys.stdin.read().strip()
+        except:
+            user_request = ""
     
     print(f"[SmartRouter] Routing only mode: {routing_only}", file=sys.stderr)
     print(f"[SmartRouter] User request: {user_request}", file=sys.stderr)

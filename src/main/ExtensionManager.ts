@@ -255,12 +255,19 @@ export class ExtensionManager {
         // Set up Python environment with proper PYTHONPATH
         const pythonEnv = this.getPythonEnvironment(pythonExecutable);
         
-        const python = spawn(pythonExecutable, [routerPath, this.extensionsDir, userRequest, '--routing-only'], {
+        const python = spawn(pythonExecutable, [routerPath, this.extensionsDir, '--routing-only'], {
           env: {
             ...pythonEnv,
             WORKFLOW_DATA: JSON.stringify(workflowData)
-          }
+          },
+          stdio: ['pipe', 'pipe', 'pipe']
         });
+        
+        // Pass user request via stdin to avoid E2BIG error with long queries
+        if (python.stdin) {
+          python.stdin.write(userRequest);
+          python.stdin.end();
+        }
         
         let output = '';
         let errorOutput = '';
