@@ -3,77 +3,80 @@
   "productName": "Browzer",
   "version": "1.0.0",
   "description": "AI-powered browser with agent-based capabilities",
-  "main": "dist/main/main/main.js",
-  "homepage": "https://github.com/your-username/browzer",
+  "main": "dist/src/main/main.js",
+  "homepage": "https://github.com/BrowzerLabs/Browzer",
   "author": {
-    "name": "Your Name",
-    "email": "your.email@example.com"
+    "name": "Browzer Labs",
+    "email": "contact@browzerlabs.com"
   },
   "scripts": {
-    "dev": "concurrently \"npm run build:watch\" \"npm run electron:dev\"",
-    "build": "npm run build:clean && npm run build:main && npm run build:renderer && npm run build:preload",
-    "build:clean": "rimraf dist",
-    "build:main": "tsc -p src/main/tsconfig.json",
-    "build:renderer": "webpack --config webpack.renderer.config.js --mode production",
-    "build:preload": "tsc -p src/preload/tsconfig.json",
-    "build:watch": "concurrently \"npm run build:main -- --watch\" \"npm run build:renderer -- --watch\" \"npm run build:preload -- --watch\"",
-    "electron:dev": "wait-on dist/main/main/main.js && electron .",
-    "electron:pack": "npm run build && electron-builder --dir",
-    "electron:dist": "npm run build && electron-builder",
-    "lint": "eslint src --ext .ts,.js",
-    "lint:fix": "eslint src --ext .ts,.js --fix",
-    "type-check": "tsc --noEmit",
-    "setup": "cd agents && chmod +x setup.sh && ./setup.sh",
-    "setup-win": "cd agents && .\\setup.bat",
-    "postinstall": "echo \"Run 'npm run setup' to set up Python agents\"",
+    "dev": "npx webpack --config webpack.renderer.config.js && npx tsc && node scripts/copy-python-files.js && electron .",
+    "start": "electron .",
     "prepare-python": "./scripts/prepare-python-bundle.sh",
-    "prebuild": "npm run prepare-python"
+    "copy-python": "node scripts/copy-python-files.js",
+    "clean": "rm -rf dist releases",
+    "build": "electron-builder",
+    "build:mac": "electron-builder --mac",
+    "build:mac:signed": "electron-builder --mac --publish=never",
+    "build:mac:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",
+    "build:mac:fast": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --config.mac.target=dir",
+    "build:mac:single-arch": "electron-builder --mac --config.mac.target.arch=arm64",
+    "build:linux": "electron-builder --linux",
+    "build:win": "electron-builder --win",
+    "build:all": "electron-builder --mac --linux --win",
+    "build:prod:mac": "NODE_ENV=production node scripts/build-production.js --mac",
+    "build:prod:linux": "NODE_ENV=production node scripts/build-production.js --linux",
+    "build:prod:win": "NODE_ENV=production node scripts/build-production.js --win",
+    "dist": "npm run build",
+    "pack": "electron-builder --dir",
+    "rebuild": "electron-rebuild"
   },
   "build": {
     "appId": "com.browzer.app",
     "productName": "Browzer",
     "directories": {
-      "output": "dist"
+      "output": "releases"
     },
     "files": [
-      "main.js",
-      "renderer.js",
-      "preload.js",
-      "index.html",
-      "styles.css",
-      "history.html",
-      "agents/**/*",
+      "dist/**/*",
+      "src/renderer/settings.html",
+      "src/renderer/styles.css",
+      "extensions/**/*",
+      "extensions-framework/**/*",
+      "scripts/prepare-python-bundle.sh",
+      "assets/**/*",
       "node_modules/**/*",
       "!node_modules/*/{README.md,readme.md,CHANGELOG.md,changelog.md}",
-      "!agents/venv/**/*",
+      "!node_modules/**/*.md",
+      "!node_modules/**/*.txt",
+      "!node_modules/**/docs/**",
+      "!node_modules/**/test/**",
+      "!node_modules/**/tests/**",
+      "!node_modules/**/*.map",
       "!**/*.pyc",
       "!**/__pycache__",
-      "!agents/.env"
+      "!**/.env",
+      "!**/.DS_Store"
     ],
-    "extraFiles": [
-      {
-        "from": "agents",
-        "to": "Resources/agents",
-        "filter": [
-          "**/*",
-          "!venv/**/*",
-          "!.env",
-          "!**/*.pyc",
-          "!**/__pycache__"
-        ]
-      },
-      {
-        "from": "python-bundle/python-runtime",
-        "to": "Resources/python-runtime",
-        "filter": [
-          "**/*"
-        ]
-      }
+    "asarUnpack": [
+      "extensions/**/*",
+      "extensions-framework/**/*",
+      "src/renderer/*.html",
+      "src/renderer/*.css",
+      "scripts/prepare-python-bundle.sh"
     ],
+    "extraFiles": [],
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "assets/icon.icns",
       "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
         {
           "target": "zip",
           "arch": [
@@ -85,9 +88,11 @@
       "darkModeSupport": true,
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
+      "type": "distribution",
       "entitlements": "assets/entitlements.mac.plist",
       "entitlementsInherit": "assets/entitlements.mac.plist"
     },
+    "afterSign": "scripts/post-sign.js",
     "linux": {
       "category": "Network",
       "icon": "assets/icon.png",
@@ -146,25 +151,28 @@
     }
   },
   "dependencies": {
-    "@electron/remote": "^2.0.10"
+    "@electron/remote": "^2.0.10",
+    "@modelcontextprotocol/sdk": "^1.17.3",
+    "@types/nodemailer": "^6.4.17",
+    "axios": "^1.6.0",
+    "nodemailer": "^7.0.5",
+    "playwright-core": "^1.54.1",
+    "ws": "^8.18.3"
   },
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^20.10.0",
-    "@typescript-eslint/eslint-plugin": "^6.13.0",
-    "@typescript-eslint/parser": "^6.13.0",
-    "concurrently": "^8.2.2",
+    "@electron/notarize": "^3.0.2",
+    "@types/node": "^20.0.0",
+    "copy-webpack-plugin": "^13.0.0",
+    "css-loader": "^6.8.1",
     "electron": "^28.0.0",
     "electron-builder": "^26.0.12",
     "electron-icon-builder": "^2.0.1",
-    "eslint": "^8.54.0",
-    "html-webpack-plugin": "^5.5.3",
-    "rimraf": "^5.0.5",
+    "glob": "^11.0.3",
+    "html-webpack-plugin": "^5.5.0",
     "style-loader": "^3.3.3",
-    "css-loader": "^6.8.1",
-    "ts-loader": "^9.5.1",
-    "typescript": "^5.3.2",
-    "wait-on": "^7.2.0",
+    "ts-loader": "^9.5.0",
+    "typescript": "^5.3.0",
     "webpack": "^5.89.0",
     "webpack-cli": "^5.1.4"
   }
