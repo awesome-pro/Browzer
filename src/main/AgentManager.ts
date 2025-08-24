@@ -1,4 +1,4 @@
-import { ipcMain, IpcMainInvokeEvent, BrowserWindow } from 'electron';
+import { ipcMain, IpcMainInvokeEvent, BrowserWindow, app } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -15,12 +15,32 @@ export class AgentManager {
   private readonly agentLogFile: string;
   private readonly rendererLogFile: string;
   private readonly workflowLogFile: string;
+  private readonly appPath: string;
+  private readonly extensionsDir: string;
+  private readonly frameworkDir: string;
   private mainWindow: BrowserWindow | null = null;
 
   constructor() {
-    this.agentLogFile = path.join(process.cwd(), 'agent-execution.log');
-    this.rendererLogFile = path.join(process.cwd(), 'renderer_agent.log');
-    this.workflowLogFile = path.join(process.cwd(), 'workflow-execution.log');
+    // Proper path resolution for both development and packaged apps
+    if (app.isPackaged) {
+      // In packaged app, use app.asar.unpacked for Python files
+      this.appPath = path.dirname(app.getAppPath());
+      this.extensionsDir = path.join(this.appPath, 'app.asar.unpacked', 'extensions');
+      this.frameworkDir = path.join(this.appPath, 'app.asar.unpacked', 'extensions-framework');
+    } else {
+      // In development, use current working directory
+      this.appPath = process.cwd();
+      this.extensionsDir = path.join(this.appPath, 'extensions');
+      this.frameworkDir = path.join(this.appPath, 'extensions-framework');
+    }
+    
+    console.log('[AgentManager] App path:', this.appPath);
+    console.log('[AgentManager] Extensions directory:', this.extensionsDir);
+    console.log('[AgentManager] Framework directory:', this.frameworkDir);
+    
+    this.agentLogFile = path.join(this.appPath, 'agent-execution.log');
+    this.rendererLogFile = path.join(this.appPath, 'renderer_agent.log');
+    this.workflowLogFile = path.join(this.appPath, 'workflow-execution.log');
   }
 
   initialize(mainWindow?: BrowserWindow): void {
@@ -57,7 +77,7 @@ export class AgentManager {
 
     try {
       const pythonPath = this.getPythonPath();
-      const routerPath = path.join(process.cwd(), 'extensions-framework/core/smart_extension_router.py');
+      const routerPath = path.join(this.frameworkDir, 'core/smart_extension_router.py');
       
       if (!fs.existsSync(routerPath)) {
         const error = `Smart router not found at: ${routerPath}`;
@@ -74,7 +94,8 @@ export class AgentManager {
         selectedProvider: data.selectedProvider || 'anthropic',
         selectedModel: data.selectedModel || 'claude-3-7-sonnet-latest',
         isQuestion: data.isQuestion || false,
-        conversationHistory: data.conversationHistory || []
+        conversationHistory: data.conversationHistory || [],
+        mcpTools: data.mcpTools || [] // Pass MCP tools to Python workflow
       };
 
       // Execute the workflow with progress monitoring
@@ -91,23 +112,42 @@ export class AgentManager {
   }
 
   private async runWorkflowProcess(pythonPath: string, routerPath: string, params: any, sender: Electron.WebContents): Promise<AgentResult> {
-    const extensionsDir = path.join(process.cwd(), 'extensions');
-    const pythonArgs = [routerPath, extensionsDir, params.query];
+    const pythonArgs = [routerPath, this.extensionsDir];
     
     console.log(`Starting workflow process: ${pythonPath} ${pythonArgs.join(' ')}`);
     this.logWorkflowEvent(`Starting workflow process: ${pythonPath} ${pythonArgs.join(' ')}`);
     
     return new Promise((resolve) => {
-      const pythonProcess: ChildProcess = spawn(pythonPath, pythonArgs, {
-        env: {
-          ...process.env,
-          WORKFLOW_DATA: JSON.stringify(params)
+      let pythonProcess: ChildProcess;
+      
+      try {
+        // Set up Python environment with proper PYTHONPATH
+        const pythonEnv = this.getPythonEnvironment(pythonPath);
+        
+        pythonProcess = spawn(pythonPath, pythonArgs, {
+          env: {
+            ...pythonEnv,
+            WORKFLOW_DATA: JSON.stringify(params)
+          },
+          stdio: ['pipe', 'pipe', 'pipe']
+        });
+        
+        // Pass query via stdin to avoid E2BIG error
+        if (pythonProcess.stdin) {
+          pythonProcess.stdin.write(params.query);
+          pythonProcess.stdin.end();
         }
-      });
+      } catch (spawnError) {
+        console.error(`Failed to spawn Python process: ${spawnError}`);
+        this.logWorkflowEvent(`Failed to spawn Python process: ${spawnError}`);
+        resolve({ success: false, error: `Failed to spawn Python process: ${(spawnError as Error).message}` });
+        return;
+      }
       
       let result = '';
       let error = '';
       let workflowStarted = false;
+      let stderrBuffer = ''; // Buffer for incomplete stderr lines
 
       pythonProcess.stdout?.on('data', (data) => {
         const dataStr = data.toString();
@@ -119,42 +159,47 @@ export class AgentManager {
       pythonProcess.stderr?.on('data', (data) => {
         const dataStr = data.toString();
         
-        // Check for workflow progress events
-        if (dataStr.includes('WORKFLOW_PROGRESS:')) {
-          // Split by newlines to handle multiple lines in one chunk
-          const lines = dataStr.split('\n');
-          
-          for (const line of lines) {
-            if (line.includes('WORKFLOW_PROGRESS:')) {
-              try {
-                // Extract just the JSON part after WORKFLOW_PROGRESS:
-                const progressStart = line.indexOf('WORKFLOW_PROGRESS:') + 'WORKFLOW_PROGRESS:'.length;
-                const progressLine = line.substring(progressStart).trim();
+        // Add to buffer and process complete lines only
+        stderrBuffer += dataStr;
+        
+        // Process complete lines (ending with \n)
+        const lines = stderrBuffer.split('\n');
+        
+        // Keep the last line in buffer (might be incomplete)
+        stderrBuffer = lines.pop() || '';
+        
+        // Process complete lines
+        for (const line of lines) {
+          if (line.includes('WORKFLOW_PROGRESS:')) {
+            try {
+              // Extract just the JSON part after WORKFLOW_PROGRESS:
+              const progressStart = line.indexOf('WORKFLOW_PROGRESS:') + 'WORKFLOW_PROGRESS:'.length;
+              const progressLine = line.substring(progressStart).trim();
+              
+              // Only try to parse if we have actual JSON content
+              if (progressLine && progressLine.startsWith('{')) {
+                const progressEvent: WorkflowProgressEvent = JSON.parse(progressLine);
                 
-                // Only try to parse if we have actual JSON content
-                if (progressLine && progressLine.startsWith('{')) {
-                  const progressEvent: WorkflowProgressEvent = JSON.parse(progressLine);
-                  
-                  console.log(`Workflow progress event: ${progressEvent.type}`, progressEvent.data);
-                  this.logWorkflowEvent(`Progress event: ${progressEvent.type} - ${JSON.stringify(progressEvent.data)}`);
-                  
-                  // Send progress event to renderer
-                  this.sendWorkflowProgressToRenderer(progressEvent, sender);
-                  
-                  if (progressEvent.type === 'workflow_start') {
-                    workflowStarted = true;
-                  }
+                console.log(`Workflow progress event: ${progressEvent.type}`, progressEvent.data);
+                this.logWorkflowEvent(`Progress event: ${progressEvent.type} - ${JSON.stringify(progressEvent.data)}`);
+                
+                // Send progress event to renderer
+                this.sendWorkflowProgressToRenderer(progressEvent, sender);
+                
+                if (progressEvent.type === 'workflow_start') {
+                  workflowStarted = true;
                 }
-              } catch (e) {
-                console.error('Failed to parse workflow progress event:', e);
-                this.logWorkflowEvent(`Failed to parse progress event: ${e} - Line was: ${line}`);
               }
+            } catch (e) {
+              console.error('Failed to parse workflow progress event:', e);
+              this.logWorkflowEvent(`Failed to parse progress event: ${e} - Line was: ${line}`);
             }
+          } else if (line.trim()) {
+            // Only log non-empty lines as stderr
+            error += line + '\n';
+            console.error(`Workflow stderr: ${line}`);
+            this.logWorkflowEvent(`Workflow stderr: ${line}`);
           }
-        } else {
-          error += dataStr;
-          console.error(`Workflow stderr: ${dataStr}`);
-          this.logWorkflowEvent(`Workflow stderr: ${dataStr}`);
         }
       });
 
@@ -175,6 +220,32 @@ export class AgentManager {
 
       pythonProcess.on('close', (code) => {
         clearTimeout(timeout);
+        
+        // Process any remaining data in stderr buffer
+        if (stderrBuffer.trim()) {
+          if (stderrBuffer.includes('WORKFLOW_PROGRESS:')) {
+            try {
+              const progressStart = stderrBuffer.indexOf('WORKFLOW_PROGRESS:') + 'WORKFLOW_PROGRESS:'.length;
+              const progressLine = stderrBuffer.substring(progressStart).trim();
+              
+              if (progressLine && progressLine.startsWith('{')) {
+                const progressEvent: WorkflowProgressEvent = JSON.parse(progressLine);
+                
+                console.log(`Final workflow progress event: ${progressEvent.type}`, progressEvent.data);
+                this.logWorkflowEvent(`Final progress event: ${progressEvent.type} - ${JSON.stringify(progressEvent.data)}`);
+                
+                this.sendWorkflowProgressToRenderer(progressEvent, sender);
+              }
+            } catch (e) {
+              console.error('Failed to parse final workflow progress event:', e);
+              this.logWorkflowEvent(`Failed to parse final progress event: ${e} - Buffer was: ${stderrBuffer}`);
+            }
+          } else {
+            error += stderrBuffer + '\n';
+            console.error(`Final workflow stderr: ${stderrBuffer}`);
+            this.logWorkflowEvent(`Final workflow stderr: ${stderrBuffer}`);
+          }
+        }
         
         console.log(`Workflow process exited with code ${code}`);
         this.logWorkflowEvent(`Workflow process exited with code ${code}`);
@@ -242,25 +313,22 @@ export class AgentManager {
     }
 
     try {
-      switch (progressEvent.type) {
-        case 'workflow_start':
-          sender.send('workflow-start', progressEvent.data);
-          break;
-        case 'step_start':
-          sender.send('workflow-step-start', progressEvent.data);
-          break;
-        case 'step_complete':
-          sender.send('workflow-step-complete', progressEvent.data);
-          break;
-        case 'workflow_complete':
-          sender.send('workflow-complete', progressEvent.data);
-          break;
-        case 'workflow_error':
-          sender.send('workflow-error', progressEvent.data);
-          break;
-        default:
-          sender.send('workflow-progress', progressEvent);
-          break;
+      // Send all progress events through workflow-progress channel for context isolation compatibility
+      // The renderer will handle different types based on progressEvent.type
+      if (progressEvent.type === 'workflow_complete') {
+        // Send completion events through dedicated channel
+        sender.send('workflow-complete', progressEvent.data);
+      } else if (progressEvent.type === 'workflow_error') {
+        // Send error events through dedicated channel  
+        sender.send('workflow-error', progressEvent.data);
+      } else {
+        // Send all other progress events (workflow_start, step_start, step_complete) through progress channel
+        // Include the type in the data so renderer can differentiate
+        const progressData = {
+          ...progressEvent.data,
+          type: progressEvent.type
+        };
+        sender.send('workflow-progress', progressData);
       }
     } catch (error) {
       console.error('Failed to send workflow progress to renderer:', error);
@@ -325,7 +393,7 @@ export class AgentManager {
   }
 
   private async runPythonProcessWithNotifications(pythonPath: string, agentPath: string, params: any, sender: Electron.WebContents): Promise<AgentResult> {
-    const pythonArgs = [agentPath, JSON.stringify(params)];
+    const pythonArgs = [agentPath];
     
     console.log(`Starting Python process: ${pythonPath} ${pythonArgs.join(' ')}`);
     this.logAgentEvent(`Starting Python process: ${pythonPath} ${pythonArgs.join(' ')}`);
@@ -353,7 +421,23 @@ export class AgentManager {
     }
     
     return new Promise((resolve) => {
-      const pythonProcess: ChildProcess = spawn(pythonPath, pythonArgs);
+      let pythonProcess: ChildProcess;
+      
+      try {
+        // Set up Python environment with proper PYTHONPATH
+        const pythonEnv = this.getPythonEnvironment(pythonPath);
+        
+        pythonProcess = spawn(pythonPath, pythonArgs, {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: pythonEnv
+        });
+      } catch (spawnError) {
+        console.error(`Failed to spawn Python process: ${spawnError}`);
+        this.logAgentEvent(`Failed to spawn Python process: ${spawnError}`);
+        resolve({ success: false, error: `Failed to spawn Python process: ${(spawnError as Error).message}` });
+        return;
+      }
+      
       let result = '';
       let error = '';
 
@@ -370,6 +454,55 @@ export class AgentManager {
         console.error(`Python stderr: ${dataStr}`);
         this.logAgentEvent(`Python stderr: ${dataStr}`);
       });
+
+      // Send data to Python process stdin with proper error handling
+      const inputData = JSON.stringify({
+        context: {
+          browser_api_keys: params.browserApiKeys || {},
+          selected_provider: params.selectedProvider || 'openai',
+          selected_model: params.selectedModel || 'gpt-3.5-turbo'
+        },
+        action: 'process_page',
+        data: {
+          query: params.query || '',
+          pageContent: params.pageContent,
+          isQuestion: params.isQuestion || false,
+          conversationHistory: params.conversationHistory || []
+        }
+      });
+      
+      console.log(`Sending data to Python stdin: ${inputData.substring(0, 200)}...`);
+      this.logAgentEvent(`Sending data to Python stdin (${inputData.length} chars)`);
+      
+      // Add error handler for stdin before writing
+      if (pythonProcess.stdin) {
+        pythonProcess.stdin.on('error', (stdinError: any) => {
+          // Handle EPIPE and other stdin errors gracefully
+          const errorCode = stdinError?.code || '';
+          const errorMessage = stdinError?.message || String(stdinError);
+          console.warn(`Python stdin error (${errorCode}): ${errorMessage}`);
+          this.logAgentEvent(`Python stdin error (${errorCode}): ${errorMessage}`);
+          // Don't crash the app, just log the error
+        });
+        
+        try {
+          // Check if process is still alive before writing
+          if (!pythonProcess.killed) {
+            pythonProcess.stdin.write(inputData);
+            pythonProcess.stdin.end();
+          } else {
+            console.warn('Python process already killed, cannot send stdin data');
+            this.logAgentEvent('Python process already killed, cannot send stdin data');
+          }
+        } catch (writeError) {
+          // Handle any synchronous write errors
+          console.warn(`Failed to write to Python stdin: ${writeError}`);
+          this.logAgentEvent(`Failed to write to Python stdin: ${writeError}`);
+        }
+      } else {
+        console.warn('Python process stdin is not available');
+        this.logAgentEvent('Python process stdin is not available');
+      }
 
       // Set timeout
       const timeout = setTimeout(() => {
@@ -497,11 +630,31 @@ export class AgentManager {
   }
 
   private getPythonPath(): string {
-    if (os.platform() === 'win32') {
-      return path.join(process.cwd(), 'agents/venv/Scripts/python.exe');
-    } else {
-      return path.join(process.cwd(), 'agents/venv/bin/python');
+    // First, try Application Support Python bundle
+    const appSupportPath = app.getPath('userData');
+    const appSupportPythonPath = path.join(appSupportPath, 'python-bundle', 'python-runtime', 'bin', 'python');
+    
+    console.log('[AgentManager] Checking Application Support Python path:', appSupportPythonPath);
+    
+    if (fs.existsSync(appSupportPythonPath)) {
+      console.log('[AgentManager] Using Application Support Python bundle');
+      return appSupportPythonPath;
     }
+    
+    // In development, check for local venv
+    if (!app.isPackaged) {
+      const venvPythonPath = path.join(this.appPath, 'agents', 'venv', 'bin', 'python');
+      console.log('[AgentManager] Checking development venv path:', venvPythonPath);
+      
+      if (fs.existsSync(venvPythonPath)) {
+        console.log('[AgentManager] Using development venv Python');
+        return venvPythonPath;
+      }
+    }
+    
+    // Final fallback to system Python
+    console.warn('[AgentManager] No Python bundle found, falling back to system Python');
+    return this.getFallbackPython();
   }
 
   private getFallbackPython(): string {
@@ -510,6 +663,34 @@ export class AgentManager {
 
   private isSystemPython(pythonPath: string): boolean {
     return pythonPath === 'python.exe' || pythonPath === 'python3' || pythonPath === 'python';
+  }
+
+  private getPythonEnvironment(pythonPath: string): NodeJS.ProcessEnv {
+    const env = { ...process.env };
+    
+    // If using Application Support Python bundle
+    if (pythonPath.includes(app.getPath('userData'))) {
+      const appSupportPath = app.getPath('userData');
+      const sitePackagesPath = path.join(appSupportPath, 'python-bundle', 'python-runtime', 'lib', 'python3.13', 'site-packages');
+      
+      // Set PYTHONPATH to include the bundled site-packages
+      const existingPythonPath = env.PYTHONPATH || '';
+      env.PYTHONPATH = existingPythonPath ? `${sitePackagesPath}:${existingPythonPath}` : sitePackagesPath;
+      
+      console.log('[AgentManager] Set PYTHONPATH for Application Support Python:', env.PYTHONPATH);
+    } else if (pythonPath.includes('venv')) {
+      // If using development venv
+      const venvSitePackagesPath = path.join(this.appPath, 'agents', 'venv', 'lib', 'python3.9', 'site-packages');
+      
+      const existingPythonPath = env.PYTHONPATH || '';
+      env.PYTHONPATH = existingPythonPath ? `${venvSitePackagesPath}:${existingPythonPath}` : venvSitePackagesPath;
+      
+      console.log('[AgentManager] Set PYTHONPATH for venv Python:', env.PYTHONPATH);
+    } else {
+      console.log('[AgentManager] Using system Python, no PYTHONPATH modification needed');
+    }
+    
+    return env;
   }
 
   private prepareAgentParams(agentParams: AgentParams, cleanedQuery: string): any {

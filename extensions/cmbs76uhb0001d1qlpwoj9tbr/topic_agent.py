@@ -19,11 +19,31 @@ import openai
 from typing import Dict, List, Optional, Tuple
 import traceback
 
-# Set up logging
+# Set up logging with fallback for read-only file systems (App Translocation)
 LOG_FILE = os.path.join(os.path.dirname(__file__), 'topic_agent.log')
+FALLBACK_LOG_FILE = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', 'Browzer', 'topic_agent.log')
+
 def log_event(message):
-    with open(LOG_FILE, 'a') as f:
-        f.write(f"[{datetime.now().isoformat()}] {message}\n")
+    """Log event with fallback for read-only file systems"""
+    timestamp = datetime.now().isoformat()
+    log_message = f"[{timestamp}] {message}\n"
+    
+    # Try primary log file first
+    try:
+        with open(LOG_FILE, 'a') as f:
+            f.write(log_message)
+        return
+    except (OSError, PermissionError) as e:
+        # If primary fails, try fallback location
+        try:
+            # Ensure fallback directory exists
+            os.makedirs(os.path.dirname(FALLBACK_LOG_FILE), exist_ok=True)
+            with open(FALLBACK_LOG_FILE, 'a') as f:
+                f.write(f"[{timestamp}] [FALLBACK LOG] Primary log failed: {str(e)}\n")
+                f.write(log_message)
+        except (OSError, PermissionError):
+            # If all logging fails, just print to stderr (will show in console)
+            print(f"[TOPIC_AGENT] {log_message.strip()}", file=sys.stderr)
 
 # Add token estimation function
 def estimate_tokens(text: str) -> int:

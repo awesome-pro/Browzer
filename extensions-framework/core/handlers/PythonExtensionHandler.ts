@@ -3,6 +3,7 @@ import { ExtensionLogger } from '../ExtensionLogger';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { spawn, ChildProcess } from 'child_process';
+import { app } from 'electron';
 
 /**
  * Handler for Python Extensions (AI agents and scripts)
@@ -12,11 +13,43 @@ export class PythonExtensionHandler {
   private logger: ExtensionLogger;
   private runningProcesses = new Map<string, PythonProcessInfo>();
   private pythonEnvironments = new Map<string, PythonEnvironmentInfo>();
-  private defaultPythonPath: string;
+  private defaultPythonPath: string | null;
 
   constructor(pythonExecutable?: string) {
     this.logger = new ExtensionLogger('PythonExtensionHandler');
     this.defaultPythonPath = pythonExecutable || this.findPythonExecutable();
+  }
+
+  /**
+   * Build proper PYTHONPATH including bundled packages
+   */
+  private buildPythonPath(pythonPath: string, contextPath: string): string {
+    const paths = [contextPath]; // Always include the extension's own path
+    
+    // If using Application Support Python bundle
+    if (pythonPath.includes(app.getPath('userData'))) {
+      const appSupportPath = app.getPath('userData');
+      const sitePackagesPath = path.join(appSupportPath, 'python-bundle', 'python-runtime', 'lib', 'python3.13', 'site-packages');
+      
+      paths.unshift(sitePackagesPath); // Add at beginning for priority
+      this.logger.info(`Added Application Support Python site-packages to PYTHONPATH: ${sitePackagesPath}`);
+    } else if (pythonPath.includes('venv')) {
+      // If using development venv
+      const venvSitePackagesPath = path.join(process.cwd(), 'agents', 'venv', 'lib', 'python3.9', 'site-packages');
+      
+      paths.unshift(venvSitePackagesPath);
+      this.logger.info(`Added venv site-packages to PYTHONPATH: ${venvSitePackagesPath}`);
+    }
+    
+    // Add existing PYTHONPATH if present
+    const existingPythonPath = process.env.PYTHONPATH;
+    if (existingPythonPath) {
+      paths.push(existingPythonPath);
+    }
+    
+    const finalPath = paths.join(':');
+    this.logger.info(`Final PYTHONPATH: ${finalPath}`);
+    return finalPath;
   }
 
   /**
@@ -268,18 +301,32 @@ export class PythonExtensionHandler {
     }
   }
 
-  private findPythonExecutable(): string {
-    // Try to find Python executable in order of preference
-    const candidates = [
-      path.join(process.cwd(), 'python-bundle', 'python-runtime', 'bin', 'python'),
-      'python3',
-      'python',
-      '/usr/bin/python3',
-      '/usr/local/bin/python3'
-    ];
-
-    // For now, return the bundled Python path
-    return candidates[0];
+  private findPythonExecutable(): string | null {
+    // First try Application Support Python bundle
+    const appSupportPath = app.getPath('userData');
+    const appSupportPythonPath = path.join(appSupportPath, 'python-bundle', 'python-runtime', 'bin', 'python');
+    
+    this.logger.info(`[PythonExtensionHandler] Checking Application Support Python path: ${appSupportPythonPath}`);
+    
+    if (require('fs').existsSync(appSupportPythonPath)) {
+      this.logger.info(`[PythonExtensionHandler] Using Application Support Python bundle`);
+      return appSupportPythonPath;
+    }
+    
+    // In development, check for local venv
+    if (!app.isPackaged) {
+      const venvPythonPath = path.join(process.cwd(), 'agents', 'venv', 'bin', 'python');
+      this.logger.info(`[PythonExtensionHandler] Checking development venv path: ${venvPythonPath}`);
+      
+      if (require('fs').existsSync(venvPythonPath)) {
+        this.logger.info(`[PythonExtensionHandler] Using development venv Python`);
+        return venvPythonPath;
+      }
+    }
+    
+    // NO fallback to system Python - return null to indicate missing bundle
+    this.logger.error(`[PythonExtensionHandler] Python bundle not found! Extensions will not work until Python bundle is set up.`);
+    return null;
   }
 
   private async validatePythonExtension(context: ExtensionContext): Promise<void> {
@@ -313,8 +360,37 @@ export class PythonExtensionHandler {
   private async setupPythonEnvironment(context: ExtensionContext): Promise<void> {
     this.logger.info(`Setting up Python environment for extension ID: ${context.id}`);
     
+    // Use the proper bundled Python path instead of defaultPythonPath
+    let bundledPythonPath = this.findPythonExecutable();
+    
+    if (!bundledPythonPath) {
+      this.logger.info(`Python bundle not found, attempting to install it automatically...`);
+      
+      try {
+        await this.installPythonBundle();
+        bundledPythonPath = this.findPythonExecutable();
+        
+        if (!bundledPythonPath) {
+          throw new ExtensionError(
+            'Failed to install Python bundle. Please complete the onboarding process manually.',
+            ExtensionErrorCode.RUNTIME_ERROR,
+            context.id
+          );
+        }
+        
+        this.logger.info(`Python bundle installed successfully`);
+      } catch (error) {
+        this.logger.error(`Failed to install Python bundle automatically: ${error}`);
+        throw new ExtensionError(
+          'Python bundle not found and automatic installation failed. Please complete the onboarding process.',
+          ExtensionErrorCode.RUNTIME_ERROR,
+          context.id
+        );
+      }
+    }
+    
     const envInfo: PythonEnvironmentInfo = {
-      pythonPath: this.defaultPythonPath,
+      pythonPath: bundledPythonPath,
       virtualEnvPath: null,
       requirementsInstalled: false,
       isEnabled: false,
@@ -447,7 +523,7 @@ export class PythonExtensionHandler {
     request: any,
     envInfo: PythonEnvironmentInfo
   ): Promise<any> {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       if (!context.manifest.main) {
         reject(new ExtensionError(
           'No main file specified for SDK agent',
@@ -458,15 +534,44 @@ export class PythonExtensionHandler {
       }
 
       const scriptPath = path.join(context.path, context.manifest.main);
-      this.logger.info(`Executing SDK agent: ${envInfo.pythonPath} ${scriptPath}`);
+      
+      // Always check for the bundled Python at execution time
+      let currentPythonPath = this.findPythonExecutable();
+      
+      if (!currentPythonPath) {
+        this.logger.info(`Python bundle not found during SDK execution, attempting to install...`);
+        
+        try {
+          await this.installPythonBundle();
+          currentPythonPath = this.findPythonExecutable();
+          
+          if (!currentPythonPath) {
+            reject(new ExtensionError(
+              'Failed to install Python bundle. Please complete the onboarding process manually.',
+              ExtensionErrorCode.RUNTIME_ERROR,
+              context.id
+            ));
+            return;
+          }
+        } catch (error) {
+          reject(new ExtensionError(
+            'Python bundle not found and automatic installation failed. Please complete the onboarding process.',
+            ExtensionErrorCode.RUNTIME_ERROR,
+            context.id
+          ));
+          return;
+        }
+      }
+      
+      this.logger.info(`Executing SDK agent: ${currentPythonPath} ${scriptPath}`);
 
       // For SDK agents, we execute the script directly
-      const pythonProcess = spawn(envInfo.pythonPath, [scriptPath], {
+      const pythonProcess = spawn(currentPythonPath, [scriptPath], {
         stdio: ['pipe', 'pipe', 'pipe'],
         cwd: context.path,
         env: {
           ...process.env,
-          PYTHONPATH: context.path
+          PYTHONPATH: this.buildPythonPath(currentPythonPath, context.path)
         }
       });
 
@@ -527,17 +632,45 @@ export class PythonExtensionHandler {
     request: any,
     envInfo: PythonEnvironmentInfo
   ): Promise<any> {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       const scriptPath = path.join(context.path, context.runtime.entrypoint);
 
-      this.logger.info(`Executing legacy agent: ${envInfo.pythonPath} ${scriptPath}`);
+      // Always check for the bundled Python at execution time
+      let currentPythonPath = this.findPythonExecutable();
+      
+      if (!currentPythonPath) {
+        this.logger.info(`Python bundle not found during legacy execution, attempting to install...`);
+        
+        try {
+          await this.installPythonBundle();
+          currentPythonPath = this.findPythonExecutable();
+          
+          if (!currentPythonPath) {
+            reject(new ExtensionError(
+              'Failed to install Python bundle. Please complete the onboarding process manually.',
+              ExtensionErrorCode.RUNTIME_ERROR,
+              context.id
+            ));
+            return;
+          }
+        } catch (error) {
+          reject(new ExtensionError(
+            'Python bundle not found and automatic installation failed. Please complete the onboarding process.',
+            ExtensionErrorCode.RUNTIME_ERROR,
+            context.id
+          ));
+          return;
+        }
+      }
+      
+      this.logger.info(`Executing legacy agent: ${currentPythonPath} ${scriptPath}`);
 
-      const pythonProcess = spawn(envInfo.pythonPath, [scriptPath], {
+      const pythonProcess = spawn(currentPythonPath, [scriptPath], {
         stdio: ['pipe', 'pipe', 'pipe'],
         cwd: context.path,
         env: {
           ...process.env,
-          PYTHONPATH: context.path
+          PYTHONPATH: this.buildPythonPath(currentPythonPath, context.path)
         }
       });
 
@@ -608,7 +741,7 @@ export class PythonExtensionHandler {
         cwd: context.path,
         env: {
           ...process.env,
-          PYTHONPATH: context.path
+          PYTHONPATH: this.buildPythonPath(envInfo.pythonPath, context.path)
         }
       });
 
@@ -703,6 +836,79 @@ export class PythonExtensionHandler {
       // Send the request data to the Python process
       pythonProcess.stdin.write(JSON.stringify(request));
       pythonProcess.stdin.end();
+    });
+  }
+
+  /**
+   * Automatically install Python bundle when missing
+   */
+  private async installPythonBundle(): Promise<void> {
+    const { spawn } = require('child_process');
+    const appSupportPath = app.getPath('userData');
+    const pythonBundlePath = path.join(appSupportPath, 'python-bundle');
+    
+    // Handle different paths for packaged vs development
+    let setupScriptPath: string;
+    if (app.isPackaged) {
+      // In packaged app, script is in app.asar.unpacked
+      setupScriptPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'scripts', 'prepare-python-bundle.sh');
+    } else {
+      // In development, script is in project root
+      setupScriptPath = path.join(process.cwd(), 'scripts', 'prepare-python-bundle.sh');
+    }
+
+    this.logger.info(`Installing Python bundle to: ${pythonBundlePath}`);
+    this.logger.info(`Using setup script: ${setupScriptPath}`);
+    this.logger.info(`App is packaged: ${app.isPackaged}`);
+
+    return new Promise((resolve, reject) => {
+      // Check if setup script exists
+      if (!require('fs').existsSync(setupScriptPath)) {
+        this.logger.error(`Python setup script not found at: ${setupScriptPath}`);
+        this.logger.error(`process.cwd(): ${process.cwd()}`);
+        this.logger.error(`process.resourcesPath: ${process.resourcesPath}`);
+        this.logger.error(`app.getAppPath(): ${app.getAppPath()}`);
+        reject(new Error(`Python setup script not found at: ${setupScriptPath}`));
+        return;
+      }
+
+      // Run the setup script
+      const setupProcess = spawn('bash', [setupScriptPath, pythonBundlePath], {
+        env: {
+          ...process.env,
+          PYTHON_BUNDLE_DIR: pythonBundlePath
+        }
+      });
+
+      let output = '';
+      let errorOutput = '';
+
+      setupProcess.stdout?.on('data', (data: any) => {
+        const text = data.toString();
+        output += text;
+        this.logger.info(`[Python Setup] ${text.trim()}`);
+      });
+
+      setupProcess.stderr?.on('data', (data: any) => {
+        const text = data.toString();
+        errorOutput += text;
+        this.logger.error(`[Python Setup Error] ${text.trim()}`);
+      });
+
+      setupProcess.on('close', (code: any) => {
+        if (code === 0) {
+          this.logger.info('Python bundle installation completed successfully');
+          resolve();
+        } else {
+          this.logger.error(`Python bundle installation failed with code: ${code}`);
+          reject(new Error(`Python setup failed with code ${code}: ${errorOutput}`));
+        }
+      });
+
+      setupProcess.on('error', (error: any) => {
+        this.logger.error('Failed to run Python setup script:', error);
+        reject(error);
+      });
     });
   }
 

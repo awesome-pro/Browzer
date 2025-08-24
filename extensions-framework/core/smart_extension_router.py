@@ -13,7 +13,30 @@ import re
 from typing import Dict, List, Optional, Tuple, Union, Callable
 from dataclasses import dataclass
 from pathlib import Path
-import numpy as np
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+
+class NumpyJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles NumPy data types"""
+    def default(self, obj):
+        if NUMPY_AVAILABLE:
+            if isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif hasattr(obj, 'item'):  # Handle numpy scalars
+                return obj.item()
+        
+        # Handle generic float32 type even without numpy import
+        if hasattr(obj, 'item') and str(type(obj)).find('float32') >= 0:
+            return float(obj.item())
+        
+        return super().default(obj)
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -499,9 +522,10 @@ class SmartExtensionRouter:
 
 def main():
     """CLI interface for the enhanced smart router"""
-    if len(sys.argv) < 3:
-        print("Usage: python smart_extension_router.py <extensions_dir> <user_request> [--routing-only|analyze]", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print("Usage: python smart_extension_router.py <extensions_dir> [user_request] [--routing-only|analyze]", file=sys.stderr)
         print("Flags: --routing-only (for routing without execution), analyze (for analysis)", file=sys.stderr)
+        print("Note: If user_request is not provided as argument, it will be read from stdin", file=sys.stderr)
         sys.exit(1)
     
     extensions_dir = sys.argv[1]
@@ -517,6 +541,13 @@ def main():
             user_request_parts.append(arg)
     user_request = " ".join(user_request_parts)
     
+    # If no user request from args, read from stdin to avoid E2BIG error
+    if not user_request.strip():
+        try:
+            user_request = sys.stdin.read().strip()
+        except:
+            user_request = ""
+    
     print(f"[SmartRouter] Routing only mode: {routing_only}", file=sys.stderr)
     print(f"[SmartRouter] User request: {user_request}", file=sys.stderr)
     
@@ -524,7 +555,7 @@ def main():
     
     if is_analyze:
         result = router.analyze_query_capabilities(user_request)
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2, cls=NumpyJSONEncoder))
         return
     
     # Check if workflow data is provided via environment variable
@@ -582,7 +613,7 @@ def main():
                     }
                 }
             
-            print(json.dumps(output))
+            print(json.dumps(output, cls=NumpyJSONEncoder))
             
         except json.JSONDecodeError as e:
             print(f"[SmartRouter] JSON decode error: {e}", file=sys.stderr)
@@ -591,7 +622,7 @@ def main():
                 'error': f'Failed to parse workflow data: {e}',
                 'type': 'error'
             }
-            print(json.dumps(error_result))
+            print(json.dumps(error_result, cls=NumpyJSONEncoder))
         except Exception as e:
             print(f"[SmartRouter] Workflow execution error: {e}", file=sys.stderr)
             error_result = {
@@ -599,7 +630,7 @@ def main():
                 'error': f'Workflow execution failed: {e}',
                 'type': 'error'
             }
-            print(json.dumps(error_result))
+            print(json.dumps(error_result, cls=NumpyJSONEncoder))
     else:
         # No workflow data - always routing only mode
         print(f"[SmartRouter] No workflow data - using routing-only mode", file=sys.stderr)
@@ -618,7 +649,7 @@ def main():
         
         if isinstance(result, dict) and result.get('type') == 'workflow':
             # Workflow routing result - no execution data
-            print(json.dumps(result, indent=2))
+            print(json.dumps(result, indent=2, cls=NumpyJSONEncoder))
         else:
             # Single extension result
             output = {
@@ -629,7 +660,7 @@ def main():
                 "isWorkflow": result.is_workflow,
                 "workflowInfo": result.workflow_info
             }
-            print(json.dumps(output, indent=2))
+            print(json.dumps(output, indent=2, cls=NumpyJSONEncoder))
 
 if __name__ == "__main__":
     main() 

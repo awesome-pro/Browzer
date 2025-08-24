@@ -4,12 +4,31 @@ import './components/WorkflowProgress.css';
 import { ExtensionStore } from './components/ExtensionStore';
 import WorkflowProgressIndicator from './components/WorkflowProgress';
 import { devToolsManager } from './components/DevToolsManager';
+import { MemoryService } from './services/MemoryService';
+import { TextProcessing } from './utils/textProcessing';
+import { McpClientManager } from './services/McpClientManager';
 
 // Import Electron APIs
-const { ipcRenderer, shell } = require('electron');
-const path = require('path');
+// Use electronAPI from preload script instead of direct electron access
+// const { ipcRenderer, shell } = require('electron'); // Removed for context isolation
+
+// Create compatibility layer for IPC methods
+const ipcRenderer = {
+  invoke: (channel: string, ...args: any[]) => window.electronAPI.ipcInvoke(channel, ...args),
+  send: (channel: string, ...args: any[]) => window.electronAPI.ipcSend(channel, ...args),
+  on: (channel: string, callback: (...args: any[]) => void) => window.electronAPI.ipcOn(channel, callback),
+  off: (channel: string, callback: (...args: any[]) => void) => window.electronAPI.ipcOff(channel, callback),
+  removeAllListeners: (channel: string) => window.electronAPI.removeAllListeners(channel)
+};
+
+const shell = { 
+  openExternal: (url: string) => window.electronAPI.openExternal(url) 
+};
+
+// Path utilities from preload
+const path = window.electronAPI.path;
 // Development feature flag - set to false to disable DoAgent entirely
-const DOAGENT_ENABLED = false;
+const DOAGENT_ENABLED = true;
 
 // Type definitions
 interface TabInfo {
@@ -29,6 +48,90 @@ let activeTabId: string = '';
 let nextTabId = 1;
 let webviewsContainer: HTMLElement | null = null;
 let urlBar: HTMLInputElement | null = null;
+
+// Global MCP Manager instance
+let mcpManager: McpClientManager | null = null;
+
+// Initialize MCP Manager
+function initializeMcpManager(): void {
+  try {
+    if (!mcpManager) {
+      console.log('[MCP] Initializing MCP Manager for Ask queries...');
+      mcpManager = new McpClientManager();
+      console.log('[MCP] MCP Manager initialized successfully');
+    }
+  } catch (error) {
+    console.error('[MCP] Failed to initialize MCP Manager:', error);
+    mcpManager = null;
+  }
+}
+
+// Test MCP integration (global function for debugging)
+(window as any).testMcpIntegration = async function() {
+  console.log('🧪 Testing MCP Integration in Ask Pipeline...');
+  
+  try {
+    const tools = await getMcpToolsForAsk();
+    console.log('✅ MCP Tools Retrieved:', tools.length);
+    
+    if (tools.length > 0) {
+      console.log('📋 Available MCP Tools:');
+      tools.forEach((tool, i) => {
+        console.log(`   ${i + 1}. ${tool.name} (${tool.serverName})`);
+        console.log(`      Description: ${tool.description || 'No description'}`);
+      });
+      
+      console.log('\n💡 To test: Ask a question that could use these tools');
+      console.log('   Example: "Find my latest email" (if gmail tools available)');
+      console.log('   Example: "Create a Trello card" (if trello tools available)');
+    } else {
+      console.log('⚠️ No MCP tools found. Make sure you have:');
+      console.log('   1. Added MCP servers in Settings → MCP Servers');
+      console.log('   2. Enabled the servers');
+      console.log('   3. Servers are connected successfully');
+    }
+    
+    return tools;
+  } catch (error) {
+    console.error('❌ MCP Integration test failed:', error);
+    return [];
+  }
+};
+
+// Get available MCP tools for Ask queries
+async function getMcpToolsForAsk(): Promise<any[]> {
+  if (!mcpManager) {
+    console.log('[MCP] No MCP Manager available, returning empty tools list');
+    return [];
+  }
+
+  try {
+    const toolNames = await mcpManager.listAllTools();
+    const tools = [];
+    
+    for (const toolName of toolNames) {
+      const toolInfo = mcpManager.getToolInfo(toolName);
+      if (toolInfo) {
+        tools.push({
+          name: toolName,
+          description: toolInfo.description || '',
+          inputSchema: toolInfo.inputSchema || {},
+          serverName: toolInfo.serverName
+        });
+      }
+    }
+    
+    console.log(`[MCP] Retrieved ${tools.length} tools for Ask query`);
+    if (tools.length > 0) {
+      console.log('[MCP] Available tools:', tools.map(t => t.name).join(', '));
+    }
+    return tools;
+  } catch (error) {
+    console.error('[MCP] Error getting MCP tools:', error);
+    return [];
+  }
+}
+
 let backBtn: HTMLButtonElement | null = null;
 let forwardBtn: HTMLButtonElement | null = null;
 let reloadBtn: HTMLButtonElement | null = null;
@@ -40,6 +143,13 @@ let lastProcessedQuery = '';
 let lastProcessedTimestamp = 0;
 let workflowProgressIndicator: WorkflowProgressIndicator | null = null;
 let workflowProgressSetup = false; // Prevent duplicate event listener setup
+
+// Initialize services
+let memoryService: MemoryService | null = null;
+
+// Text selection state
+let currentSelection: { text: string; rect: any; webview: any } | null = null;
+let addToChatButton: HTMLElement | null = null;
 
 // Global query execution tracker to prevent duplicates across all paths
 const globalQueryTracker = new Map<string, number>();
@@ -191,29 +301,132 @@ function isProblematicSite(url: string): boolean {
   }
 }
 
+// Function to apply or remove sidebar layout
+function applySidebarLayout(enabled: boolean): void {
+  const browserContainer = document.querySelector('.browser-container');
+  if (browserContainer) {
+    if (enabled) {
+      browserContainer.classList.add('sidebar-enabled');
+      console.log('[Sidebar] Sidebar layout enabled');
+    } else {
+      browserContainer.classList.remove('sidebar-enabled');
+      console.log('[Sidebar] Sidebar layout disabled');
+    }
+  }
+}
+
+// Function to clear any stuck loading states - AGGRESSIVE CLEANUP
+function clearStuckLoadingStates(): void {
+  const loadingTabs = document.querySelectorAll('.tab.loading');
+  
+  if (loadingTabs.length > 0) {
+    console.log(`[Loading Cleanup] Found ${loadingTabs.length} tabs in loading state - clearing ALL`);
+    
+    // FORCE CLEAR all loading states - be aggressive to fix the stuck issue
+    loadingTabs.forEach(tab => {
+      tab.classList.remove('loading');
+      console.log(`[Loading Cleanup] Force cleared loading state for tab: ${tab.id}`);
+    });
+  }
+}
+
+// Function to initialize sidebar layout from saved settings
+function initializeSidebar(): void {
+  console.log('[Sidebar] Initializing sidebar from saved settings...');
+  
+  // Debug localStorage value
+  const rawValue = localStorage.getItem('sidebarEnabled');
+  console.log('[Sidebar] Raw localStorage value:', rawValue);
+  
+  // Load saved sidebar preference and apply layout
+  const savedSidebarEnabled = rawValue === 'true';
+  console.log('[Sidebar] Saved sidebar enabled:', savedSidebarEnabled);
+  
+  // Debug current browser container classes
+  const browserContainer = document.querySelector('.browser-container');
+  console.log('[Sidebar] Browser container classes before applying:', browserContainer?.className);
+  
+  // Apply sidebar layout if enabled
+  applySidebarLayout(savedSidebarEnabled);
+  
+  // Debug classes after applying
+  console.log('[Sidebar] Browser container classes after applying:', browserContainer?.className);
+  
+  // Setup collapse/expand functionality
+  setupCollapseExpandButtons();
+}
+
+// Function to setup collapse/expand buttons
+function setupCollapseExpandButtons(): void {
+  const browserContainer = document.querySelector('.browser-container');
+  
+  // Sidebar collapse/expand - single button handles both
+  const sidebarCollapseBtn = document.getElementById('sidebarCollapseBtn');
+  
+  if (sidebarCollapseBtn && browserContainer) {
+    // Load saved sidebar collapsed state
+    const sidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+    if (sidebarCollapsed) {
+      browserContainer.classList.add('sidebar-collapsed');
+    }
+    
+    sidebarCollapseBtn.addEventListener('click', () => {
+      const isCurrentlyCollapsed = browserContainer.classList.contains('sidebar-collapsed');
+      
+      if (isCurrentlyCollapsed) {
+        // Currently collapsed, so expand
+        browserContainer.classList.remove('sidebar-collapsed');
+        localStorage.setItem('sidebarCollapsed', 'false');
+        console.log('[Sidebar] Expanded');
+      } else {
+        // Currently expanded, so collapse
+        browserContainer.classList.add('sidebar-collapsed');
+        localStorage.setItem('sidebarCollapsed', 'true');
+        console.log('[Sidebar] Collapsed');
+      }
+    });
+  }
+  
+    // Assistant collapse/expand functionality removed per user request
+  // Clear any persisting assistant collapsed state
+  localStorage.removeItem('assistantCollapsed');
+  if (browserContainer) {
+    browserContainer.classList.remove('assistant-collapsed');
+  }
+}
+
 // Initialize the application when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
   console.log('DOM fully loaded, initializing browser...');
   
-  console.log('[Init] Calling initializeUI...');
   initializeUI();
-  console.log('[Init] Calling setupEventListeners...');
   setupEventListeners();
-  console.log('[Init] Calling setupWorkflowEventListeners...');
   setupWorkflowEventListeners();
-  console.log('[Init] Calling setupExtensionsPanel...');
-  setupExtensionsPanel();
-  console.log('[Init] Calling setupAgentControls...');
+  
+  // Initialize MCP Manager for Ask queries
+  initializeMcpManager();
+  // setupExtensionsPanel(); // Deprecated - settings now open in new tab
+  initializeSidebar(); // Initialize sidebar layout from saved settings
   setupAgentControls();
-  console.log('[Init] Calling restoreTabs...');
-  restoreTabs();
-  console.log('[Init] Calling setupGlobalErrorHandler...');
   setupGlobalErrorHandler();
-  console.log('[Init] Initializing DevTools...');
   devToolsManager.addDevToolsButton();
   devToolsManager.enableDevToolsForAllWebviews();
   
-  console.log('Browser initialized successfully');
+  memoryService = new MemoryService();
+  
+  // Expose memory service to window for debugging
+  (window as any).memoryService = memoryService;
+
+  setupTextSelectionListener();
+  setupAdBlocker();
+  initializeTabSearch();
+  initializeAutoSessionManagement();
+  initializeTabPreview();
+  
+  // Restore tabs after initialization is complete
+  setTimeout(() => {
+    enhancedRestoreTabs();
+  }, 1000);
   // DISABLED: Auto-summarize feature commented out
   // console.log('[Init] Final autoSummarizeEnabled state:', autoSummarizeEnabled);
 });
@@ -253,10 +466,9 @@ function initializeUI(): void {
     }
   }
   
-  // If no tabs were restored, create a new one
-  if (tabs.length === 0) {
-    createNewTab();
-  }
+  // NOTE: Tab creation is now handled by the restoration process
+  // The restoration timeout will either restore saved tabs or create a fallback tab
+  // DO NOT create tabs here - this interferes with restoration!
   
   // Sync API keys with backend
   syncApiKeysWithBackend().catch(error => {
@@ -269,87 +481,87 @@ function initializeUI(): void {
 function setupWorkflowEventListeners(): void {
   console.log('Setting up workflow event listeners...');
   
-  // IMPORTANT: Remove any existing listeners first to prevent duplicates
-  ipcRenderer.removeAllListeners('workflow-start');
-  ipcRenderer.removeAllListeners('workflow-step-start');
-  ipcRenderer.removeAllListeners('workflow-step-complete');
-  ipcRenderer.removeAllListeners('workflow-complete');
-  ipcRenderer.removeAllListeners('workflow-error');
-  ipcRenderer.removeAllListeners('workflow-progress');
+  if (!window.electronAPI) {
+    console.error('electronAPI not available, cannot setup workflow listeners');
+    return;
+  }
   
-  console.log('🚨 [DUPLICATE FIX] Cleared all existing workflow event listeners');
+  console.log('🚨 [CONTEXT ISOLATION] Using secure electronAPI for workflow listeners');
 
-  // Set up IPC event listeners for workflow progress
-  ipcRenderer.on('workflow-start', (event: any, data: any) => {
-    console.log('[WorkflowProgress] workflow-start event received:', data);
+  // Set up workflow progress listeners using secure electronAPI
+  window.electronAPI.onWorkflowProgress((data: any) => {
+    console.log('[WorkflowProgress] workflow-progress event received:', data);
     
-    // Convert snake_case to camelCase for compatibility, including step fields
-    const workflowData = {
-      workflowId: data.workflow_id || `workflow-${Date.now()}`,
-      type: data.type || 'workflow',
-      steps: (data.steps || []).map((step: any) => ({
-        extensionId: step.extension_id,
-        extensionName: step.extension_name
-      }))
-    };
-    
-    console.log('[WorkflowProgress] Creating new workflow progress in chat:', workflowData);
-    
-    // Create workflow progress as a chat message instead of using fixed container
-    addWorkflowProgressToChat(workflowData);
-  });
-
-  ipcRenderer.on('workflow-step-start', (event: any, data: any) => {
-    console.log('📡 [IPC DEBUG] workflow-step-start event received:', data);
-    
-    // Find the workflow progress message in chat
-    const workflowMessage = findWorkflowProgressInChat(data.workflow_id);
-    if (workflowMessage && (workflowMessage as any).progressIndicator) {
-      console.log('[WorkflowProgress] Updating progress for step start:', {
-        workflowId: data.workflow_id,
-        currentStep: data.current_step,
-        stepStatus: 'running'
-      });
+    // Handle different types of workflow progress events
+    if (data.type === 'workflow_start') {
+      console.log('[WorkflowProgress] workflow-start event received:', data);
       
-      // Convert snake_case to camelCase
-      (workflowMessage as any).progressIndicator.updateProgress({
-        workflowId: data.workflow_id,
-        currentStep: data.current_step,
-        stepStatus: 'running'
-      });
-    } else {
-      console.warn('[WorkflowProgress] Workflow progress message not found for step-start:', data.workflow_id);
+      // Convert snake_case to camelCase for compatibility, including step fields
+      const workflowData = {
+        workflowId: data.workflow_id || `workflow-${Date.now()}`,
+        type: data.type || 'workflow',
+        steps: (data.steps || []).map((step: any) => ({
+          extensionId: step.extension_id,
+          extensionName: step.extension_name
+        }))
+      };
+      
+      console.log('[WorkflowProgress] Creating new workflow progress in chat:', workflowData);
+      
+      // Create workflow progress as a chat message instead of using fixed container
+      addWorkflowProgressToChat(workflowData);
+      
+    } else if (data.type === 'step_start') {
+      console.log('📡 [IPC DEBUG] step_start event received:', data);
+      
+      // Find the workflow progress message in chat
+      const workflowMessage = findWorkflowProgressInChat(data.workflow_id);
+      if (workflowMessage && (workflowMessage as any).progressIndicator) {
+        console.log('[WorkflowProgress] Updating progress for step start:', {
+          workflowId: data.workflow_id,
+          currentStep: data.current_step,
+          stepStatus: 'running'
+        });
+        
+        // Convert snake_case to camelCase
+        (workflowMessage as any).progressIndicator.updateProgress({
+          workflowId: data.workflow_id,
+          currentStep: data.current_step,
+          stepStatus: 'running'
+        });
+      } else {
+        console.warn('[WorkflowProgress] Workflow progress message not found for step-start:', data.workflow_id);
+      }
+      
+    } else if (data.type === 'step_complete') {
+      console.log('📡 [IPC DEBUG] step_complete event received:', data);
+      
+      // Find the workflow progress message in chat
+      const workflowMessage = findWorkflowProgressInChat(data.workflow_id);
+      if (workflowMessage && (workflowMessage as any).progressIndicator) {
+        console.log('[WorkflowProgress] Calling updateProgress with:', {
+          workflowId: data.workflow_id,
+          currentStep: data.current_step,
+          stepStatus: data.step_status,
+          stepResult: data.step_result,
+          stepError: data.step_error
+        });
+        
+        // Convert snake_case to camelCase  
+        (workflowMessage as any).progressIndicator.updateProgress({
+          workflowId: data.workflow_id,
+          currentStep: data.current_step,
+          stepStatus: data.step_status,
+          stepResult: data.step_result,
+          stepError: data.step_error
+        });
+      } else {
+        console.warn('[WorkflowProgress] Workflow progress message not found for step-complete:', data.workflow_id);
+      }
     }
   });
 
-  ipcRenderer.on('workflow-step-complete', (event: any, data: any) => {
-    console.log('📡 [IPC DEBUG] workflow-step-complete event received:', data);
-    
-    // Find the workflow progress message in chat
-    const workflowMessage = findWorkflowProgressInChat(data.workflow_id);
-    if (workflowMessage && (workflowMessage as any).progressIndicator) {
-      console.log('[WorkflowProgress] Calling updateProgress with:', {
-        workflowId: data.workflow_id,
-        currentStep: data.current_step,
-        stepStatus: data.step_status,
-        stepResult: data.step_result,
-        stepError: data.step_error
-      });
-      
-      // Convert snake_case to camelCase  
-      (workflowMessage as any).progressIndicator.updateProgress({
-        workflowId: data.workflow_id,
-        currentStep: data.current_step,
-        stepStatus: data.step_status,
-        stepResult: data.step_result,
-        stepError: data.step_error
-      });
-    } else {
-      console.warn('[WorkflowProgress] Workflow progress message not found for step-complete:', data.workflow_id);
-    }
-  });
-
-  ipcRenderer.on('workflow-complete', (event: any, data: any) => {
+  window.electronAPI.onWorkflowComplete((data: any) => {
     console.log('📡 [IPC DEBUG] workflow-complete event received:', data);
     console.log('📡 [IPC DEBUG] workflow-complete data keys:', Object.keys(data));
     console.log('📡 [IPC DEBUG] workflow-complete data.result keys:', data.result ? Object.keys(data.result) : 'no result');
@@ -400,12 +612,47 @@ function setupWorkflowEventListeners(): void {
       
       displayAgentResults(resultData);
       console.log('🎯 [WORKFLOW-COMPLETE] displayAgentResults called successfully');
+      
+      // Store memory if available - try multiple content sources
+      if (memoryService && resultData) {
+        let summary = '';
+        let memoryQuery = data.workflow_id || 'Agent Query';
+        
+        // Try different content sources in order of preference
+        if (resultData.consolidated_summary) {
+          summary = resultData.consolidated_summary;
+        } else if (resultData.summaries && resultData.summaries.length > 0) {
+          summary = resultData.summaries.map((s: any) => `${s.title}: ${s.summary}`).join('\n\n');
+        } else if (typeof resultData === 'string') {
+          // Handle simple string responses
+          summary = resultData;
+        } else if (resultData.content) {
+          // Handle responses with content field
+          summary = resultData.content;
+        } else if (resultData.response) {
+          // Handle responses with response field
+          summary = resultData.response;
+        }
+        
+        if (summary && summary.trim()) {
+          console.log('[Memory] Storing agent result in memory from workflow-complete');
+          
+          // Get current page info for memory context
+          const webview = getActiveWebview();
+          const url = webview?.src || '';
+          const title = webview?.getTitle ? webview.getTitle() : '';
+          
+          storeInMemory(url, memoryQuery, summary, title);
+        } else {
+          console.log('[Memory] No suitable content found for memory storage in workflow-complete');
+        }
+      }
     } else {
       console.warn('[WorkflowProgress] No result data found in workflow-complete event');
     }
   });
 
-  ipcRenderer.on('workflow-error', (event: any, data: any) => {
+  window.electronAPI.onWorkflowError((data: any) => {
     console.log('📡 [IPC DEBUG] workflow-error event received:', data);
     
     // Clear execution flag
@@ -425,11 +672,6 @@ function setupWorkflowEventListeners(): void {
       // Show error message directly in chat if we can't find the progress indicator
       addMessageToChat('assistant', `Workflow error: ${data.error}`);
     }
-  });
-
-  ipcRenderer.on('workflow-progress', (event: any, data: any) => {
-    console.log('📡 [IPC DEBUG] workflow-progress event received:', data);
-    // Handle any other progress events
   });
 
   console.log('Workflow progress system initialized');
@@ -452,8 +694,14 @@ function setupEventListeners(): void {
   if (backBtn) {
     backBtn.addEventListener('click', () => {
       const webview = getActiveWebview();
-      if (webview && webview.canGoBack()) {
-        webview.goBack();
+      if (webview && isWebviewReady(webview)) {
+        try {
+          if (webview.canGoBack()) {
+            webview.goBack();
+          }
+        } catch (error) {
+          console.log('⚠️ Error navigating back, webview not ready:', error);
+        }
       }
     });
   }
@@ -461,8 +709,14 @@ function setupEventListeners(): void {
   if (forwardBtn) {
     forwardBtn.addEventListener('click', () => {
       const webview = getActiveWebview();
-      if (webview && webview.canGoForward()) {
-        webview.goForward();
+      if (webview && isWebviewReady(webview)) {
+        try {
+          if (webview.canGoForward()) {
+            webview.goForward();
+          }
+        } catch (error) {
+          console.log('⚠️ Error navigating forward, webview not ready:', error);
+        }
       }
     });
   }
@@ -497,9 +751,8 @@ function setupEventListeners(): void {
   // Settings button (renamed from Extensions)
   if (extensionsBtn) {
     extensionsBtn.addEventListener('click', () => {
-      if (extensionsPanel) {
-        extensionsPanel.classList.toggle('hidden');
-      }
+      // Open settings in a new tab
+      createNewTab('file://browzer-settings');
     });
   }
 
@@ -507,18 +760,12 @@ function setupEventListeners(): void {
   const newExtensionsBtn = document.getElementById('newExtensionsBtn') as HTMLButtonElement;
   if (newExtensionsBtn) {
     newExtensionsBtn.addEventListener('click', () => {
-      // For now, just open the extensions section of the panel
-      if (extensionsPanel) {
-        extensionsPanel.classList.remove('hidden');
-        // Scroll to extensions section
-        const extensionsSection = document.querySelector('.extensions-management');
-        if (extensionsSection) {
-          extensionsSection.scrollIntoView({ behavior: 'smooth' });
-        }
-      }
+      // Open settings in a new tab
+      createNewTab('file://browzer-settings');
     });
   }
 
+  // Close extensions panel (deprecated - settings now open in new tab)
   if (closeExtensionsBtn) {
     closeExtensionsBtn.addEventListener('click', () => {
       if (extensionsPanel) {
@@ -581,6 +828,10 @@ function setupEventListeners(): void {
   ipcRenderer.on('menu-new-tab', () => {
     createNewTab();
   });
+
+  ipcRenderer.on('menu-new-tab-with-url', (event, url) => {
+    createNewTab(url);
+  });
   
   ipcRenderer.on('menu-close-tab', () => {
     if (activeTabId) {
@@ -594,26 +845,108 @@ function setupEventListeners(): void {
   
   ipcRenderer.on('menu-reload', () => {
     const webview = getActiveWebview();
-    if (webview) {
-      webview.reload();
+    if (webview && isWebviewReady(webview)) {
+      try {
+        webview.reload();
+      } catch (error) {
+        console.log('⚠️ Error reloading, webview not ready:', error);
+      }
     }
   });
   
   ipcRenderer.on('menu-go-back', () => {
     const webview = getActiveWebview();
-    if (webview && webview.canGoBack()) {
-      webview.goBack();
+    if (webview && isWebviewReady(webview)) {
+      try {
+        if (webview.canGoBack()) {
+          webview.goBack();
+        }
+      } catch (error) {
+        console.log('⚠️ Error going back, webview not ready:', error);
+      }
     }
   });
   
   ipcRenderer.on('menu-go-forward', () => {
     const webview = getActiveWebview();
-    if (webview && webview.canGoForward()) {
-      webview.goForward();
+    if (webview && isWebviewReady(webview)) {
+      try {
+        if (webview.canGoForward()) {
+          webview.goForward();
+        }
+      } catch (error) {
+        console.log('⚠️ Error going forward, webview not ready:', error);
+      }
     }
   });
 
+  // Settings menu listeners
+  ipcRenderer.on('menu-settings-api-keys', () => {
+    openSettingsToSection('ai-keys');
+  });
 
+  ipcRenderer.on('menu-settings-interface', () => {
+    openSettingsToSection('interface');
+  });
+
+  ipcRenderer.on('menu-settings-ai-memory', () => {
+    openSettingsToSection('ai-memory');
+  });
+
+  ipcRenderer.on('menu-settings-privacy', () => {
+    openSettingsToSection('privacy');
+  });
+
+  ipcRenderer.on('menu-settings-cache', () => {
+    openSettingsToSection('cache');
+  });
+
+  ipcRenderer.on('menu-settings-general', () => {
+    openSettingsToSection('general');
+  });
+
+
+}
+
+// Function to open settings page and navigate to a specific section
+function openSettingsToSection(sectionId: string): void {
+  console.log('[Settings Menu] Opening settings to section:', sectionId);
+  
+  // Create the settings URL with anchor
+  const settingsUrl = `file://browzer-settings#${sectionId}`;
+  console.log('[Settings Menu] Settings URL with anchor:', settingsUrl);
+  
+  // Check if there's already a settings tab open with any URL starting with file://browzer-settings
+  const existingSettingsTab = tabs.find(tab => tab.url.startsWith('file://browzer-settings'));
+  
+  if (existingSettingsTab) {
+    console.log('[Settings Menu] Found existing settings tab, updating URL to:', settingsUrl);
+    
+    // Update the existing tab's URL to include the new anchor
+    existingSettingsTab.url = settingsUrl;
+    
+    // Switch to the existing tab
+    selectTab(existingSettingsTab.id);
+    
+    // Update the webview src to navigate to the anchored URL
+    const webview = document.getElementById(existingSettingsTab.id) as any;
+    if (webview) {
+      const currentSrc = webview.getAttribute('src');
+      const newSrc = currentSrc.split('#')[0] + '#' + sectionId;
+      console.log('[Settings Menu] Updating webview src from', currentSrc, 'to', newSrc);
+      webview.setAttribute('src', newSrc);
+    }
+    
+    return;
+  }
+  
+  // Create a new tab with the anchored settings URL
+  console.log('[Settings Menu] Creating new settings tab with URL:', settingsUrl);
+  const tabId = createNewTab(settingsUrl);
+  
+  if (tabId) {
+    console.log('[Settings Menu] Successfully created settings tab:', tabId);
+  }
 }
 
 function setupGlobalErrorHandler(): void {
@@ -661,12 +994,19 @@ function navigateToUrl(): void {
 
 function updateNavigationButtons(): void {
   const webview = getActiveWebview();
-  if (webview) {
-    if (backBtn) {
-      backBtn.disabled = !webview.canGoBack();
-    }
-    if (forwardBtn) {
-      forwardBtn.disabled = !webview.canGoForward();
+  if (webview && isWebviewReady(webview)) {
+    try {
+      if (backBtn) {
+        backBtn.disabled = !webview.canGoBack();
+      }
+      if (forwardBtn) {
+        forwardBtn.disabled = !webview.canGoForward();
+      }
+    } catch (error) {
+      console.log('⚠️ Webview not ready for navigation buttons, using defaults');
+      // Fallback to disabled state if webview methods fail
+      if (backBtn) backBtn.disabled = true;
+      if (forwardBtn) forwardBtn.disabled = true;
     }
   } else {
     if (backBtn) {
@@ -675,6 +1015,19 @@ function updateNavigationButtons(): void {
     if (forwardBtn) {
       forwardBtn.disabled = true;
     }
+  }
+}
+
+function isWebviewReady(webview: any): boolean {
+  try {
+    // Check if webview is properly attached to DOM and ready
+    return webview && 
+           webview.nodeType === Node.ELEMENT_NODE &&
+           webview.parentNode &&
+           typeof webview.canGoBack === 'function' &&
+           webview.getWebContentsId !== undefined;
+  } catch (error) {
+    return false;
   }
 }
 
@@ -780,40 +1133,11 @@ function restoreTabs(): void {
 }
 
 function saveTabs(): void {
-  try {
-    if (!tabs || tabs.length === 0) {
-      console.log('No tabs to save');
-      return;
-    }
-    
-    const tabsToSave = tabs.map(tab => {
-      try {
-        const webview = document.getElementById(tab.webviewId);
-        const titleElem = document.querySelector(`#${tab.id} .tab-title`);
-        return {
-          url: webview && (webview as any).src ? (webview as any).src : 'about:blank',
-          title: titleElem ? titleElem.textContent : 'New Tab'
-        };
-      } catch (err) {
-        console.error('Error saving individual tab:', err);
-        return {
-          url: 'about:blank',
-          title: 'New Tab'
-        };
-      }
-    });
-    
-    localStorage.setItem(SAVED_TABS_KEY, JSON.stringify(tabsToSave));
-    console.log(`Saved ${tabsToSave.length} tabs to localStorage`);
-  } catch (err) {
-    console.error('Error saving tabs:', err);
-  }
+  // Delegate to the enhanced auto-save function
+  autoSaveTabs();
 }
 
 function createNewTab(url: string = NEW_TAB_URL): string | null {
-  console.log('🚨 [NEW TAB DEBUG] createNewTab called with URL:', url);
-  console.log('🚨 [NEW TAB DEBUG] Call stack:', new Error().stack);
-  
   if (!tabsContainer || !webviewsContainer) {
     console.error('Cannot create tab: containers not found');
     return null;
@@ -822,8 +1146,6 @@ function createNewTab(url: string = NEW_TAB_URL): string | null {
   const tabId = 'tab-' + Date.now();
   const webviewId = 'webview-' + tabId;
   
-  console.log('🚨 [NEW TAB DEBUG] Creating tab with ID:', tabId);
-  
   try {
     // Create tab element
     const tab = document.createElement('div');
@@ -831,9 +1153,10 @@ function createNewTab(url: string = NEW_TAB_URL): string | null {
     tab.id = tabId;
     tab.dataset.webviewId = webviewId;
     
+    const initialTitle = url.startsWith('file://browzer-settings') ? '⚙️ Browzer Settings' : 'New Tab';
     tab.innerHTML = `
       <div class="tab-favicon"></div>
-      <span class="tab-title">New Tab</span>
+      <span class="tab-title">${initialTitle}</span>
       <button class="tab-close">×</button>
     `;
     
@@ -855,7 +1178,7 @@ function createNewTab(url: string = NEW_TAB_URL): string | null {
     const newTab = {
       id: tabId,
       url: url,
-      title: 'New Tab',
+      title: initialTitle,
       isActive: false,
       webviewId: webviewId,
       history: [],
@@ -875,11 +1198,149 @@ function createNewTab(url: string = NEW_TAB_URL): string | null {
     // Save tab state
     saveTabs();
     
-    console.log('🚨 [NEW TAB DEBUG] Tab created successfully:', tabId);
+      console.log('🚨 [NEW TAB DEBUG] Tab created successfully:', tabId);
+  return tabId;
+} catch (error) {
+  console.error('Error creating tab:', error);
+  return null;
+}
+}
+
+function createNewTabWithoutSelection(url: string = NEW_TAB_URL): string | null {
+  if (!tabsContainer || !webviewsContainer) {
+    console.error('Cannot create tab: containers not found');
+    return null;
+  }
+  
+  const tabId = 'tab-' + Date.now();
+  const webviewId = 'webview-' + tabId;
+  
+  try {
+    // Create tab element
+    const tab = document.createElement('div');
+    tab.className = 'tab';
+    tab.id = tabId;
+    tab.dataset.webviewId = webviewId;
+    
+    tab.innerHTML = `
+      <div class="tab-favicon"></div>
+      <span class="tab-title">New Tab</span>
+      <button class="tab-close">×</button>
+    `;
+    
+    tabsContainer.appendChild(tab);
+    console.log('Tab element created (no selection):', tabId);
+    
+    // Create webview
+    const webview = document.createElement('webview') as any;
+    webview.id = webviewId;
+    webview.className = 'webview';
+
+    // Configure webview
+    configureWebview(webview, url);
+    
+    webviewsContainer.appendChild(webview);
+    console.log('Webview element created (no selection):', webviewId);
+    
+    // Add to tabs array
+    const newTab = {
+      id: tabId,
+      url: url,
+      title: 'New Tab',
+      isActive: false, // Don't set as active
+      webviewId: webviewId,
+      history: [],
+      currentHistoryIndex: -1,
+      isProblematicSite: isProblematicSite(url)
+    };
+    
+    tabs.push(newTab);
+    
+    // Setup event listeners
+    setupTabEventListeners(tab, tabId);
+    setupWebviewEvents(webview);
+    
+    // DON'T select this tab immediately - that's the key difference
+    
+    // Save tab state
+    saveTabs();
+    
+    console.log('🚨 [NEW TAB DEBUG] Tab created successfully (no selection):', tabId);
     return tabId;
   } catch (error) {
-    console.error('Error creating tab:', error);
+    console.error('Error creating tab without selection:', error);
     return null;
+  }
+}
+
+// Get ad blocker CSS rules and inject them into webviews
+function injectAdBlockCSS(webview: any): void {
+  if (!webview) return;
+  
+  // Check if webview is valid and ready
+  if (!webview.id || !webview.src || webview.src === 'about:blank') {
+    console.log('[AdBlock] Skipping CSS injection - webview not ready');
+    return;
+  }
+  
+  try {
+    // Request CSS rules from main process
+    ipcRenderer.invoke('get-adblock-css').then((cssRules: string) => {
+      if (!cssRules || !cssRules.trim()) {
+        console.log('[AdBlock] No CSS rules to inject');
+        return;
+      }
+      
+      // Check if webview is still valid before injection
+      if (!webview || !webview.executeJavaScript) {
+        console.log('[AdBlock] Webview no longer valid, skipping injection');
+        return;
+      }
+      
+      const script = `
+        (function() {
+          try {
+            // Check if document is ready
+            if (!document || !document.head) {
+              console.log('[AdBlock] Document not ready, skipping CSS injection');
+              return;
+            }
+            
+            // Remove existing ad block styles
+            const existingStyle = document.getElementById('browzer-adblock-css');
+            if (existingStyle) {
+              existingStyle.remove();
+            }
+            
+            // Inject new ad block styles
+            const style = document.createElement('style');
+            style.id = 'browzer-adblock-css';
+            style.type = 'text/css';
+            style.innerHTML = \`${cssRules.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`;
+            document.head.appendChild(style);
+            
+            console.log('[AdBlock] CSS rules injected successfully');
+          } catch (injectionError) {
+            console.warn('[AdBlock] CSS injection failed:', injectionError.message);
+          }
+        })();
+      `;
+      
+      // Execute with error handling
+      webview.executeJavaScript(script).catch((error: any) => {
+        // Don't log errors for destroyed webviews or navigation
+        if (!error.message.includes('Object has been destroyed') && 
+            !error.message.includes('navigation') &&
+            !error.message.includes('Script failed to execute')) {
+          console.warn('[AdBlock] Script execution failed:', error.message);
+        }
+      });
+      
+    }).catch((error: any) => {
+      console.error('[AdBlock] Error getting CSS rules:', error);
+    });
+  } catch (error) {
+    console.error('[AdBlock] Error in CSS injection setup:', error);
   }
 }
 
@@ -893,9 +1354,8 @@ function configureWebview(webview: any, url: string): void {
   // Enhanced web preferences for OAuth compatibility and script execution
   const webPreferencesArray = [
     'contextIsolation=false', // Allow better script execution
-    'nodeIntegration=false',
-    'webSecurity=false', // Disable web security for development
-    'allowRunningInsecureContent=true', // Allow mixed content
+    'nodeIntegration=true', // Enable for IPC communication
+    'webSecurity=true', // Keep web security enabled
     'experimentalFeatures=true',
     'sandbox=false',
     'webgl=true',
@@ -917,18 +1377,15 @@ function configureWebview(webview: any, url: string): void {
     // Essential for OAuth flows and script execution
     'nativeWindowOpen=true',
     'contextMenu=true',
-    'devTools=true',
-    // Disable certificate verification for development
-    'ignoreCertificateErrors=true'
+    'devTools=true'
   ];
 
   // Set comprehensive attributes for OAuth compatibility
   webview.setAttribute('useragent', userAgent);
   webview.setAttribute('webpreferences', webPreferencesArray.join(', '));
   webview.setAttribute('allowpopups', 'true');
-  webview.setAttribute('disablewebsecurity', 'true'); // Disable web security for better script execution
-  webview.setAttribute('nodeintegration', 'false');
-  webview.setAttribute('nodeintegrationinsubframes', 'false');
+  webview.setAttribute('nodeintegration', 'true');
+  webview.setAttribute('nodeintegrationinsubframes', 'true');
   webview.setAttribute('plugins', 'true');
   webview.setAttribute('disableguestresize', 'false');
   webview.setAttribute('preload', '');
@@ -959,8 +1416,323 @@ function configureWebview(webview: any, url: string): void {
   // Set the URL
   if (url === NEW_TAB_URL) {
     webview.setAttribute('src', homepageUrl);
+  } else if (url.startsWith('file://browzer-settings')) {
+    // Load the settings page (with or without anchor)
+    // For packaged apps, use getResourcePath instead of cwd
+    window.electronAPI.getResourcePath('src/renderer/settings.html').then(settingsFilePath => {
+      const settingsPath = `file://${settingsFilePath}`;
+      
+      // If there's an anchor in the URL, append it to the settings path
+      const anchorIndex = url.indexOf('#');
+      const finalUrl = anchorIndex !== -1 ? settingsPath + url.substring(anchorIndex) : settingsPath;
+      
+      console.log('[Settings] Resource path:', settingsFilePath);
+      console.log('[Settings] Settings URL:', finalUrl);
+      webview.setAttribute('src', finalUrl);
+    }).catch(error => {
+      console.error('[Settings] Failed to get resource path:', error);
+      // Fallback to development path
+      const cwd = window.electronAPI.cwd();
+      const settingsPath = `file://${window.electronAPI.path.join(cwd, 'src/renderer/settings.html')}`;
+      const anchorIndex = url.indexOf('#');
+      const finalUrl = anchorIndex !== -1 ? settingsPath + url.substring(anchorIndex) : settingsPath;
+      console.log('[Settings] Fallback to CWD path:', finalUrl);
+      webview.setAttribute('src', finalUrl);
+    });
+    
+    // Set up settings page communication after it loads
+    webview.addEventListener('dom-ready', () => {
+      setupSettingsPageCommunication(webview);
+    });
   } else {
     webview.setAttribute('src', url);
+  }
+}
+
+function setupSettingsPageCommunication(webview: any): void {
+  console.log('Setting up settings page communication');
+  
+  // Send initial settings data after page loads
+  setTimeout(async () => {
+    await injectSettingsDataAndHandlers(webview);
+  }, 1000);
+}
+
+async function injectSettingsDataAndHandlers(webview: any): Promise<void> {
+  if (!isWebviewReady(webview)) {
+    console.log('Webview not ready, retrying in 500ms');
+    setTimeout(() => injectSettingsDataAndHandlers(webview), 500);
+    return;
+  }
+
+  try {
+    console.log('Injecting settings data and handlers');
+    
+    // Get current settings data
+    let adBlockStats = { blockedDomains: 0, cssRules: 0, filterRules: 0 };
+    try {
+      const adBlockStatus = await ipcRenderer.invoke('get-adblock-status');
+      if (adBlockStatus && adBlockStatus.stats) {
+        adBlockStats = {
+          blockedDomains: adBlockStatus.stats.blockedDomains || 0,
+          cssRules: adBlockStatus.stats.cssRules || 0,
+          filterRules: adBlockStatus.stats.filterRules || 0
+        };
+      }
+    } catch (error) {
+      console.warn('Could not load ad blocker stats:', error);
+    }
+
+    const settingsData = {
+      apiKeys: {
+        openai: localStorage.getItem('openai_api_key') || '',
+        anthropic: localStorage.getItem('anthropic_api_key') || '',
+        perplexity: localStorage.getItem('perplexity_api_key') || '',
+        chutes: localStorage.getItem('chutes_api_key') || ''
+      },
+      sidebarEnabled: localStorage.getItem('sidebarEnabled') === 'true',
+      adBlockEnabled: localStorage.getItem('adBlockEnabled') !== 'false',
+      homepage: localStorage.getItem('homepage') || 'https://www.google.com',
+      maxCacheSize: localStorage.getItem('maxCacheSize') || '50',
+      autoCleanupEnabled: localStorage.getItem('autoCleanupEnabled') !== 'false',
+      memoryCount: JSON.parse(localStorage.getItem(MEMORY_KEY) || '[]').length,
+      adBlockStats,
+      cacheStats: { totalSize: '0 MB', itemCount: 0 }
+    };
+
+    // Inject the settings data and setup handlers
+    const injectionScript = `
+      (function() {
+        console.log('Settings injection script running');
+        
+        // Store settings data globally
+        window.browserSettings = ${JSON.stringify(settingsData)};
+        window.settingsActions = [];
+        
+        // Create communication function
+        window.sendToBrowser = function(action, data) {
+          console.log('Queuing action:', action, data);
+          window.settingsActions.push({ action, data });
+        };
+        
+        // Update UI with current settings
+        function updateUIWithBrowserSettings(data) {
+          console.log('Updating UI with settings:', data);
+          
+          // Load API keys
+          const providers = ['openai', 'anthropic', 'perplexity', 'chutes'];
+          providers.forEach(provider => {
+            const input = document.getElementById(provider + 'ApiKey');
+            if (input && data.apiKeys && data.apiKeys[provider]) {
+              input.value = data.apiKeys[provider];
+              console.log('Set API key for', provider);
+            }
+          });
+
+          // Load sidebar setting
+          const sidebarToggle = document.getElementById('sidebarToggle');
+          const sidebarCheckbox = document.getElementById('sidebarEnabled');
+          if (sidebarCheckbox && sidebarToggle) {
+            sidebarCheckbox.checked = data.sidebarEnabled || false;
+            sidebarToggle.classList.toggle('active', data.sidebarEnabled || false);
+            console.log('Set sidebar enabled:', data.sidebarEnabled);
+          }
+
+          // Load ad block setting
+          const adBlockToggle = document.getElementById('adBlockToggle');
+          const adBlockCheckbox = document.getElementById('adBlockEnabled');
+          if (adBlockCheckbox && adBlockToggle) {
+            adBlockCheckbox.checked = data.adBlockEnabled !== false;
+            adBlockToggle.classList.toggle('active', data.adBlockEnabled !== false);
+            console.log('Set adblock enabled:', data.adBlockEnabled);
+          }
+
+          // Load cache settings
+          const maxCacheSizeInput = document.getElementById('maxCacheSize');
+          if (maxCacheSizeInput) {
+            maxCacheSizeInput.value = data.maxCacheSize || '50';
+          }
+
+          const autoCleanupToggle = document.getElementById('autoCleanupToggle');
+          const autoCleanupCheckbox = document.getElementById('autoCleanupEnabled');
+          if (autoCleanupCheckbox && autoCleanupToggle) {
+            autoCleanupCheckbox.checked = data.autoCleanupEnabled !== false;
+            autoCleanupToggle.classList.toggle('active', data.autoCleanupEnabled !== false);
+          }
+
+          // Load homepage setting
+          const homepageInput = document.getElementById('homepageInput');
+          if (homepageInput) {
+            homepageInput.value = data.homepage || 'https://www.google.com';
+          }
+
+          // Update stats
+          const memoryCount = document.getElementById('memoryCount');
+          if (memoryCount) {
+            memoryCount.textContent = data.memoryCount || 0;
+            console.log('Set memory count:', data.memoryCount);
+          }
+
+          const blockedDomainsCount = document.getElementById('blockedDomainsCount');
+          const cssRulesCount = document.getElementById('cssRulesCount');
+          const filterRulesCount = document.getElementById('filterRulesCount');
+          
+          if (blockedDomainsCount) blockedDomainsCount.textContent = data.adBlockStats.blockedDomains || 0;
+          if (cssRulesCount) cssRulesCount.textContent = data.adBlockStats.cssRules || 0;
+          if (filterRulesCount) filterRulesCount.textContent = data.adBlockStats.filterRules || 0;
+
+          const totalCacheSize = document.getElementById('totalCacheSize');
+          const cacheItemCount = document.getElementById('cacheItemCount');
+          if (totalCacheSize) totalCacheSize.textContent = data.cacheStats.totalSize || '0 MB';
+          if (cacheItemCount) cacheItemCount.textContent = data.cacheStats.itemCount || 0;
+          
+          console.log('UI update complete');
+        }
+        
+        // Override the existing functions to use our communication
+        window.sendToMainRenderer = window.sendToBrowser;
+        
+        // Update UI immediately
+        if (window.browserSettings) {
+          updateUIWithBrowserSettings(window.browserSettings);
+        }
+        
+        console.log('Settings injection complete');
+      })();
+    `;
+
+    await webview.executeJavaScript(injectionScript);
+    console.log('Settings injection completed successfully');
+
+    // Set up listener for settings actions from the webview
+    setupSettingsActionListener(webview);
+
+  } catch (error) {
+    console.error('Error injecting settings:', error);
+  }
+}
+
+function setupSettingsActionListener(webview: any): void {
+  // We'll use a polling mechanism to check for settings actions
+  const checkForActions = async () => {
+    try {
+      const result = await webview.executeJavaScript(`
+        (function() {
+          if (window.settingsActions && window.settingsActions.length > 0) {
+            const actions = window.settingsActions.slice();
+            window.settingsActions = [];
+            return actions;
+          }
+          return [];
+        })();
+      `);
+      
+      if (result && result.length > 0) {
+        for (const { action, data } of result) {
+          await handleSettingsRequest(webview, action, data);
+        }
+      }
+    } catch (error) {
+      // Ignore errors, webview might not be ready
+    }
+  };
+
+  // Poll every 500ms for settings actions
+  const intervalId = setInterval(checkForActions, 500);
+
+  // Clean up interval when webview is destroyed
+  webview.addEventListener('destroyed', () => {
+    clearInterval(intervalId);
+  });
+}
+
+async function handleSettingsRequest(webview: any, action: string, data: any): Promise<void> {
+  switch (action) {
+    case 'save-api-key':
+      const { provider, apiKey } = data;
+      localStorage.setItem(`${provider}_api_key`, apiKey);
+      showToast(`${provider.charAt(0).toUpperCase() + provider.slice(1)} API key saved!`, 'success');
+      break;
+      
+    case 'toggle-sidebar':
+      localStorage.setItem('sidebarEnabled', data.enabled.toString());
+      applySidebarLayout(data.enabled);
+      showToast(`Sidebar ${data.enabled ? 'enabled' : 'disabled'}`, 'success');
+      break;
+      
+    case 'toggle-adblock':
+      localStorage.setItem('adBlockEnabled', data.enabled.toString());
+      showToast(`Ad blocking ${data.enabled ? 'enabled' : 'disabled'}`, 'success');
+      break;
+      
+    case 'save-homepage':
+      localStorage.setItem('homepage', data.homepage);
+      showToast('Homepage saved!', 'success');
+      break;
+      
+    case 'save-cache-settings':
+      localStorage.setItem('maxCacheSize', data.maxCacheSize);
+      localStorage.setItem('autoCleanupEnabled', data.autoCleanupEnabled.toString());
+      showToast('Cache settings saved!', 'success');
+      break;
+      
+        case 'clear-memory':
+      localStorage.removeItem(MEMORY_KEY);
+      showToast('Memory cleared successfully.', 'success');
+      await refreshSettingsPage(webview);
+      break;
+      
+    case 'export-memory':
+      exportMemory();
+      break;
+      
+    case 'import-memory':
+      if (data.memories && Array.isArray(data.memories)) {
+        localStorage.setItem(MEMORY_KEY, JSON.stringify(data.memories));
+        showToast('Memory imported successfully.', 'success');
+        await refreshSettingsPage(webview);
+      } else {
+        showToast('Invalid memory file format.', 'error');
+      }
+      break;
+      
+    case 'add-blocked-domain':
+      // Add blocked domain logic
+      showToast(`Domain ${data.domain} blocked`, 'success');
+      break;
+      
+    case 'add-allowed-domain':
+      // Add allowed domain logic  
+      showToast(`Domain ${data.domain} allowed`, 'success');
+      break;
+  }
+}
+
+async function refreshSettingsPage(webview: any): Promise<void> {
+  // Re-inject updated settings data
+  await injectSettingsDataAndHandlers(webview);
+}
+
+
+
+function exportMemory(): void {
+  try {
+    const memory = localStorage.getItem(MEMORY_KEY) || '[]';
+    const blob = new Blob([memory], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `browzer-memory-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    
+    URL.revokeObjectURL(url);
+    showToast('Memory exported successfully.', 'success');
+  } catch (e) {
+    console.error('Error exporting memory:', e);
+    showToast('Error exporting memory: ' + (e as Error).message, 'error');
   }
 }
 
@@ -979,6 +1751,9 @@ function setupTabEventListeners(tab: HTMLElement, tabId: string): void {
       closeTab(tabId);
     });
   }
+
+  // Setup tab preview events
+  setupTabPreviewEvents(tab, tabId);
 }
 
 function setupWebviewEvents(webview: any): void {
@@ -992,6 +1767,7 @@ function setupWebviewEvents(webview: any): void {
         const tab = document.getElementById(tabId);
         if (tab) {
           tab.classList.add('loading');
+          console.log(`[Tab Loading] Started loading for tab: ${tabId}`);
         }
       }
     }
@@ -1005,10 +1781,12 @@ function setupWebviewEvents(webview: any): void {
         const tab = document.getElementById(tabId);
         if (tab) {
           tab.classList.remove('loading');
+          console.log(`[Tab Loading] Finished loading for tab: ${tabId}`);
         }
       }
     }
     
+    // Update URL bar, title, and navigation buttons
     if (urlBar) {
       urlBar.value = webview.src;
     }
@@ -1016,12 +1794,56 @@ function setupWebviewEvents(webview: any): void {
     updateTabTitle(webview, webview.getTitle());
     updateNavigationButtons();
     
-    // Track page visit in history
+    // Track page visit in history - THIS IS THE KEY FIX!
     const url = webview.src;
-    const title = webview.getTitle();
+    const webviewTitle = webview.getTitle();
+    
+    // Debug logging for successful page loads
+    console.log('🔍 [HISTORY TRACK] did-finish-load event:', {
+      webviewId: webview.id,
+      url: url,
+      webviewTitle: webviewTitle,
+      isAboutBlank: url === 'about:blank'
+    });
+    
     if (url && url !== 'about:blank' && !url.startsWith('file://')) {
-      trackPageVisit(url, title);
+      console.log('✅ [HISTORY TRACK] Tracking page visit with webview title:', { url, title: webviewTitle });
+      trackPageVisit(url, webviewTitle);
+    } else {
+      console.log('❌ [HISTORY TRACK] Skipping page visit - invalid URL or about:blank');
     }
+    
+    // Update favicon after loading completes
+    setTimeout(() => {
+      if (webview && webview.src) {
+        updateTabFavicon(webview.id, webview.src);
+      }
+    }, 500);
+  });
+
+  // Also handle loading failures
+  webview.addEventListener('did-fail-load', () => {
+    const webviewId = webview.id;
+    if (webviewId) {
+      const tabId = getTabIdFromWebview(webviewId);
+      if (tabId) {
+        const tab = document.getElementById(tabId);
+        if (tab) {
+          tab.classList.remove('loading');
+          console.log(`[Tab Loading] Failed loading for tab: ${tabId}`);
+        }
+      }
+    }
+    
+    // Update URL bar on failed loads (but don't track in history)
+    if (urlBar) {
+      urlBar.value = webview.src;
+    }
+    
+    updateTabTitle(webview, webview.getTitle());
+    updateNavigationButtons();
+    
+    console.log('❌ [HISTORY TRACK] Page failed to load, not tracking in history:', webview.src);
     
     // DISABLED: Auto-summarize feature commented out
     /*
@@ -1111,6 +1933,8 @@ function setupWebviewEvents(webview: any): void {
     if (urlBar && getTabIdFromWebview(webview.id) === activeTabId) {
       urlBar.value = e.url;
     }
+    // Auto-save tabs when navigation completes
+    autoSaveTabs();
   });
 
   webview.addEventListener('did-navigate-in-page', (e: any) => {
@@ -1119,6 +1943,8 @@ function setupWebviewEvents(webview: any): void {
     if (urlBar && getTabIdFromWebview(webview.id) === activeTabId) {
       urlBar.value = e.url;
     }
+    // Auto-save tabs when in-page navigation completes
+    autoSaveTabs();
   });
 
   webview.addEventListener('did-fail-load', (e: any) => {
@@ -1166,6 +1992,39 @@ function setupWebviewEvents(webview: any): void {
     }
   });
   
+  // Listen for IPC messages from webview (for Add to Chat)
+  webview.addEventListener('ipc-message', (event: any) => {
+    console.log('🔍 [IPC DEBUG] Received ipc-message from webview:', webview.id, 'channel:', event.channel, 'args:', event.args);
+    if (event.channel === 'add-to-chat') {
+      console.log('✅ [Add to Chat] Processing IPC message with text:', event.args[0]?.substring(0, 50) + '...');
+      if (event.args[0]) {
+        // Add selected text to @ context system instead of just chat
+        addSelectedTextToContextSystem(event.args[0], webview);
+        showToast('✅ Text added to context!', 'success');
+        console.log('✅ [Add to Chat] Text successfully added to context system via IPC');
+      } else {
+        console.warn('⚠️ [Add to Chat] IPC message received but no text found in args');
+      }
+    }
+  });
+
+  // Inject text selection handler and ad block CSS
+  webview.addEventListener('did-finish-load', () => {
+    console.log('[Text Selection] Injecting enhanced selection handler for webview:', webview.id);
+    try {
+      injectEnhancedSelectionHandler(webview);
+      // Inject ad block CSS after page loads with validation
+      setTimeout(() => {
+        // Double-check webview is still valid before injection
+        if (webview && !webview.isDestroyed && webview.executeJavaScript) {
+          injectAdBlockCSS(webview);
+        }
+      }, 500);
+    } catch (error) {
+      console.error('[Text Selection] Failed to inject handler:', error);
+    }
+  });
+
   console.log('All webview event listeners set up for:', webview.id);
 }
 
@@ -1251,6 +2110,9 @@ function selectTab(tabId: string): void {
     
     updateNavigationButtons();
     
+    // Auto-save when tab selection changes
+    autoSaveTabs();
+    
     console.log('Tab selection complete:', tabId);
   } catch (error) {
     console.error('Error in selectTab:', error);
@@ -1301,7 +2163,14 @@ function updateTabTitle(webview: any, title: string): void {
     if (tabId) {
       const tabTitle = document.querySelector(`#${tabId} .tab-title`);
       if (tabTitle) {
-        const pageTitle = title || webview.getTitle() || 'New Tab';
+        let pageTitle = title || webview.getTitle() || 'New Tab';
+        
+        // Special handling for settings page
+        const tab = tabs.find(t => t.id === tabId);
+        if (tab && tab.url.startsWith('file://browzer-settings')) {
+          pageTitle = '⚙️ Browzer Settings';
+        }
+        
         tabTitle.textContent = pageTitle;
         saveTabs();
       }
@@ -1332,7 +2201,12 @@ function getTabIdFromWebview(webviewId: string): string | null {
 }
 
 function trackPageVisit(url: string, title: string): void {
-  if (!url || url === 'about:blank') return;
+  console.log('📝 [TRACK PAGE] Called with:', { url, title });
+  
+  if (!url || url === 'about:blank') {
+    console.log('❌ [TRACK PAGE] Rejected - empty URL or about:blank');
+    return;
+  }
   
   // Skip internal pages and invalid URLs
   if (url.startsWith('file://') || 
@@ -1342,9 +2216,11 @@ function trackPageVisit(url: string, title: string): void {
       !title ||
       title.length === 0 ||
       title === 'New Tab') {
-    console.log('🔍 [HISTORY DEBUG] Skipping page visit:', { url, title });
+    console.log('❌ [TRACK PAGE] Rejected - internal/invalid page:', { url, title });
     return;
   }
+  
+  console.log('✅ [TRACK PAGE] Processing valid page visit');
   
   try {
     let history = JSON.parse(localStorage.getItem(HISTORY_STORAGE_KEY) || '[]');
@@ -1430,6 +2306,90 @@ function setupExtensionsPanel(): void {
     });
   }
 
+  // Export memory
+  const exportMemoryBtn = document.getElementById('exportMemoryBtn');
+  if (exportMemoryBtn) {
+    exportMemoryBtn.addEventListener('click', () => {
+      try {
+        const memory = localStorage.getItem(MEMORY_KEY) || '[]';
+        const blob = new Blob([memory], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'ai_memory_export.json';
+        a.click();
+        
+        URL.revokeObjectURL(url);
+        showToast('Memory exported successfully.', 'success');
+      } catch (e) {
+        console.error('Error exporting memory:', e);
+        showToast('Error exporting memory: ' + (e as Error).message, 'error');
+      }
+    });
+  }
+
+  // Import memory
+  const importMemoryBtn = document.getElementById('importMemoryBtn');
+  if (importMemoryBtn) {
+    importMemoryBtn.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+      
+      input.onchange = (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (!file) return;
+        
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const contents = event.target?.result as string;
+            const parsed = JSON.parse(contents);
+            
+            if (Array.isArray(parsed)) {
+              localStorage.setItem(MEMORY_KEY, contents);
+              updateMemoryCount();
+              showToast('Memory imported successfully.', 'success');
+            } else {
+              showToast('Invalid memory file format.', 'error');
+            }
+          } catch (e) {
+            showToast('Error parsing memory file: ' + (e as Error).message, 'error');
+          }
+        };
+        
+        reader.readAsText(file);
+      };
+      
+      input.click();
+    });
+  }
+
+  // Sidebar setting
+  const sidebarEnabledCheckbox = document.getElementById('sidebarEnabled') as HTMLInputElement;
+  if (sidebarEnabledCheckbox) {
+    // Load saved sidebar preference for UI display
+    const savedSidebarEnabled = localStorage.getItem('sidebarEnabled') === 'true';
+    sidebarEnabledCheckbox.checked = savedSidebarEnabled;
+    
+    // Handle sidebar toggle (layout is already applied on startup)
+    sidebarEnabledCheckbox.addEventListener('change', () => {
+      const isEnabled = sidebarEnabledCheckbox.checked;
+      localStorage.setItem('sidebarEnabled', isEnabled.toString());
+      applySidebarLayout(isEnabled);
+      showToast(isEnabled ? 'Sidebar enabled' : 'Sidebar disabled', 'success');
+    });
+  }
+
+  // Clear any stuck loading states IMMEDIATELY
+  clearStuckLoadingStates();
+  
+  // Set up periodic cleanup every 5 seconds to prevent stuck states
+  setInterval(() => {
+    clearStuckLoadingStates();
+  }, 5000);
+
   // Homepage setting
   const homepageInput = document.getElementById('homepageInput') as HTMLInputElement;
   const saveHomepageBtn = document.getElementById('saveHomepageBtn');
@@ -1458,6 +2418,7 @@ function updateMemoryCount(): void {
     if (memoryCountSpan) {
       memoryCountSpan.textContent = memory.length.toString();
     }
+    console.log('[Memory] Updated memory count display:', memory.length);
   } catch (e) {
     console.error('Error updating memory count:', e);
     const memoryCountSpan = document.getElementById('memoryCount');
@@ -1469,9 +2430,10 @@ function updateMemoryCount(): void {
 
 function setupAgentControls(): void {
   console.log('[setupAgentControls] Starting setup...');
-  // Initialize chat UI
-  if (agentResults) {
-    console.log('[setupAgentControls] agentResults element found');
+  // Initialize chat UI in the fixed container
+  const chatInputContainer = document.querySelector('.chat-input-container');
+  if (chatInputContainer) {
+    console.log('[setupAgentControls] Chat input container found');
     // Add chat input area if it doesn't exist
     let chatInputArea = document.querySelector('.chat-input-area');
     if (!chatInputArea) {
@@ -1496,13 +2458,8 @@ function setupAgentControls(): void {
           <button id="sendMessageBtn" class="chat-send-btn">Send</button>
         </div>
       `;
-      // Check if there's a chat container to position after
-      const existingChatContainer = document.getElementById('chatContainer');
-      if (existingChatContainer && existingChatContainer.parentNode === agentResults) {
-        existingChatContainer.insertAdjacentElement('afterend', chatInputArea);
-      } else {
-        agentResults.appendChild(chatInputArea);
-      }
+      
+      chatInputContainer.appendChild(chatInputArea);
       
       // Set up chat input handlers
       setupChatInputHandlers();
@@ -1710,10 +2667,13 @@ function showHistoryPage(): void {
     console.log('Active webview found:', !!webview);
     
     if (webview) {
-      const historyURL = `file://${path.join(process.cwd(), 'history.html')}`;
-      console.log('Loading history URL:', historyURL);
-      
-      const historyLoadHandler = () => {
+      // For packaged apps, use getResourcePath instead of cwd
+      window.electronAPI.getResourcePath('src/renderer/history.html').then(historyFilePath => {
+        const historyURL = `file://${historyFilePath}`;
+        console.log('[History] Resource path:', historyFilePath);
+        console.log('[History] Loading history URL:', historyURL);
+        
+        const historyLoadHandler = () => {
         console.log('History page loaded, injecting data...');
         
         try {
@@ -1745,16 +2705,73 @@ function showHistoryPage(): void {
         
         webview.removeEventListener('did-finish-load', historyLoadHandler);
       };
-      
-      webview.addEventListener('did-finish-load', historyLoadHandler);
-      webview.loadURL(historyURL);
-      console.log('History URL loaded successfully');
+        
+        webview.addEventListener('did-finish-load', historyLoadHandler);
+        webview.loadURL(historyURL);
+        console.log('History URL loaded successfully');
+      }).catch(error => {
+        console.error('[History] Failed to get resource path:', error);
+        // Fallback to development path
+        const cwd = window.electronAPI.cwd();
+        const historyURL = `file://${window.electronAPI.path.join(cwd, 'src/renderer/history.html')}`;
+        console.log('[History] Fallback to CWD path:', historyURL);
+        
+        const historyLoadHandler = () => {
+          console.log('History page loaded, injecting data...');
+          
+          try {
+            const historyData = localStorage.getItem(HISTORY_STORAGE_KEY) || '[]';
+            const parsedHistory = JSON.parse(historyData);
+            console.log('Injecting history data:', parsedHistory.length, 'items');
+            
+            webview.executeJavaScript(`
+              if (window.receiveHistoryData) {
+                window.receiveHistoryData(${historyData});
+              } else {
+                window.__pendingHistoryData = ${historyData};
+                setTimeout(() => {
+                  if (window.receiveHistoryData && window.__pendingHistoryData) {
+                    window.receiveHistoryData(window.__pendingHistoryData);
+                    delete window.__pendingHistoryData;
+                  }
+                }, 500);
+              }
+            `).then(() => {
+              console.log('History data injected successfully');
+            }).catch((err: any) => {
+              console.error('Error injecting history data:', err);
+            });
+            
+          } catch (error) {
+            console.error('Error preparing history data:', error);
+          }
+          
+          webview.removeEventListener('did-finish-load', historyLoadHandler);
+        };
+        
+        webview.addEventListener('did-finish-load', historyLoadHandler);
+        webview.loadURL(historyURL);
+        console.log('History URL loaded successfully (fallback)');
+      });
       
     } else {
       console.log('No active webview, creating new tab...');
-      const historyURL = `file://${path.join(process.cwd(), 'history.html')}`;
-      const newTabId = createNewTab(historyURL);
-      console.log('New history tab created:', newTabId);
+      // For packaged apps, use getResourcePath instead of cwd
+      window.electronAPI.getResourcePath('src/renderer/history.html').then(historyFilePath => {
+        const historyURL = `file://${historyFilePath}`;
+        console.log('[History] Resource path:', historyFilePath);
+        console.log('[History] Creating new history tab with URL:', historyURL);
+        const newTabId = createNewTab(historyURL);
+        console.log('New history tab created:', newTabId);
+      }).catch(error => {
+        console.error('[History] Failed to get resource path:', error);
+        // Fallback to development path
+        const cwd = window.electronAPI.cwd();
+        const historyURL = `file://${window.electronAPI.path.join(cwd, 'src/renderer/history.html')}`;
+        console.log('[History] Fallback to CWD path:', historyURL);
+        const newTabId = createNewTab(historyURL);
+        console.log('New history tab created (fallback):', newTabId);
+      });
     }
   } catch (error) {
     console.error('Error in showHistoryPage:', error);
@@ -1776,14 +2793,17 @@ function getExtensionDisplayName(extensionId: string): string {
 }
 
 // Helper function to get the currently selected AI provider
+// Model selection commented out - always return 'anthropic'
 function getSelectedProvider(): string {
-  const modelSelector = document.getElementById('modelSelector') as HTMLSelectElement;
-  return modelSelector ? modelSelector.value : 'anthropic'; // Default to anthropic
+  // const modelSelector = document.getElementById('modelSelector') as HTMLSelectElement;
+  // return modelSelector ? modelSelector.value : 'anthropic'; // Default to anthropic
+  return 'anthropic'; // Always use Anthropic Claude
 }
 
 // Helper function to gather all browser API keys
 function getBrowserApiKeys(): Record<string, string> {
-  const providers = ['openai', 'anthropic', 'perplexity', 'chutes'];
+  // Only include Anthropic API key - other providers commented out
+  const providers = ['anthropic']; // ['openai', 'anthropic', 'perplexity', 'chutes'];
   const apiKeys: Record<string, string> = {};
   
   console.log('[DEBUG] Reading API keys from localStorage...');
@@ -1853,13 +2873,14 @@ async function executeAgent(): Promise<void> {
       return;
     }
     
-    if (!modelSelector) {
-      console.error('Model selector not found');
-      showToast('Model selector not found', 'error');
-      return;
-    }
+    // Model selector commented out - always use 'anthropic'
+    // if (!modelSelector) {
+    //   console.error('Model selector not found');
+    //   showToast('Model selector not found', 'error');
+    //   return;
+    // }
     
-    const provider = modelSelector.value;
+    const provider = 'anthropic'; // Always use Anthropic Claude
     const apiKey = localStorage.getItem(`${provider}_api_key`);
     
     if (!apiKey) {
@@ -1915,42 +2936,34 @@ async function executeAgent(): Promise<void> {
     // Store current processing time
     localStorage.setItem(lastProcessedKey, currentTime.toString());
     
-    // Set up chat container if it doesn't exist
-    if (agentResults) {
-      let chatContainer = document.getElementById('chatContainer');
-      let chatInputArea = document.querySelector('.chat-input-area');
+    // Ensure chat input area exists in the fixed container
+    const chatInputContainer = document.querySelector('.chat-input-container');
+    if (chatInputContainer && !document.querySelector('.chat-input-area')) {
+      console.log('[executeAgent] Chat input area not found, creating one');
       
-      // Chat container creation is now handled by addMessageToChat
-      // Just ensure we have a reference to check for input area positioning
+      const chatInputArea = document.createElement('div');
+      chatInputArea.className = 'chat-input-area';
+      chatInputArea.innerHTML = `
+        <div class="chat-mode-selector">
+          <label class="mode-option">
+            <input type="radio" name="chatMode" value="ask" checked />
+            <span>Ask</span>
+          </label>
+          ${DOAGENT_ENABLED ? `
+          <label class="mode-option">
+            <input type="radio" name="chatMode" value="do" />
+            <span>Do</span>
+          </label>
+          ` : ''}
+        </div>
+        <div class="chat-input-row">
+          <input type="text" id="chatInput" placeholder="Ask a follow-up question..." />
+          <button id="sendMessageBtn" class="chat-send-btn">Send</button>
+        </div>
+      `;
       
-      if (!chatInputArea) {
-        console.log('[executeAgent] Chat input area not found, creating one');
-        
-        chatInputArea = document.createElement('div');
-        chatInputArea.className = 'chat-input-area';
-        chatInputArea.innerHTML = `
-          <div class="chat-mode-selector">
-            <label class="mode-option">
-              <input type="radio" name="chatMode" value="ask" checked />
-              <span>Ask</span>
-            </label>
-            ${DOAGENT_ENABLED ? `
-            <label class="mode-option">
-              <input type="radio" name="chatMode" value="do" />
-              <span>Do</span>
-            </label>
-            ` : ''}
-          </div>
-          <div class="chat-input-row">
-            <input type="text" id="chatInput" placeholder="Ask a follow-up question..." />
-            <button id="sendMessageBtn" class="chat-send-btn">Send</button>
-          </div>
-        `;
-        
-        // Position the input area after the chat container (will be created by addMessageToChat if needed)
-        agentResults.appendChild(chatInputArea);
-        setupChatInputHandlers();
-      }
+      chatInputContainer.appendChild(chatInputArea);
+      setupChatInputHandlers();
     }
 
     // Show loading
@@ -1996,9 +3009,10 @@ async function executeAgent(): Promise<void> {
           pageContent,
           browserApiKeys: getBrowserApiKeys(),
           selectedProvider: provider,
-          selectedModel: modelSelector.selectedOptions[0]?.dataset.model || 'claude-3-7-sonnet-latest',
+          selectedModel: 'claude-3-5-sonnet-20241022', // Always use Claude 3.5 Sonnet
           isQuestion: false,
-          conversationHistory: []
+          conversationHistory: await buildConversationHistoryWithMemories(url, query),
+          mcpTools: await getMcpToolsForAsk() // Add MCP tools to workflow data
         };
 
         await ipcRenderer.invoke('execute-workflow', {
@@ -2057,7 +3071,9 @@ async function executeAgent(): Promise<void> {
     const data = {
       query,
       pageContent,
-      isQuestion: false
+      isQuestion: false,
+      conversationHistory: await buildConversationHistoryWithMemories(url, query),
+      mcpTools: await getMcpToolsForAsk() // Add MCP tools to extension data
     };
     
     console.log(`Executing single extension: ${extensionId} (confidence: ${routingResult.confidence}) with action: ${action}`);
@@ -2097,8 +3113,43 @@ async function executeAgent(): Promise<void> {
       if (result.success === false) {
         addMessageToChat('assistant', `Error: ${result.error}`);
       } else {
-        console.log('Calling displayAgentResults with:', result.data);
-        displayAgentResults(result.data);
+              console.log('Calling displayAgentResults with:', result.data);
+      displayAgentResults(result.data);
+      
+      // Store memory if available - try multiple content sources
+      if (memoryService && result.data) {
+        let summary = '';
+        let memoryQuery = query || 'Agent Query';
+        
+        // Try different content sources in order of preference
+        if (result.data.consolidated_summary) {
+          summary = result.data.consolidated_summary;
+        } else if (result.data.summaries && result.data.summaries.length > 0) {
+          summary = result.data.summaries.map((s: any) => `${s.title}: ${s.summary}`).join('\n\n');
+        } else if (typeof result.data === 'string') {
+          // Handle simple string responses
+          summary = result.data;
+        } else if (result.data.content) {
+          // Handle responses with content field
+          summary = result.data.content;
+        } else if (result.data.response) {
+          // Handle responses with response field
+          summary = result.data.response;
+        }
+        
+        if (summary && summary.trim()) {
+          console.log('[Memory] Storing agent result in memory from workflow-complete');
+          
+          // Get current page info for memory context
+          const webview = getActiveWebview();
+          const url = webview?.src || '';
+          const title = webview?.getTitle ? webview.getTitle() : '';
+          
+          storeInMemory(url, memoryQuery, summary, title);
+        } else {
+          console.log('[Memory] No suitable content found for memory storage in workflow-complete');
+        }
+      }
       }
     } catch (extensionError) {
       console.error('Single extension execution failed:', extensionError);
@@ -2188,6 +3239,56 @@ async function extractPageContent(webview: any): Promise<any> {
   }
 }
 
+// Simple markdown to HTML converter
+function markdownToHtml(text: string): string {
+  let html = text;
+  
+  // Escape HTML entities in content first, but preserve already-escaped entities
+  html = html.replace(/&(?!amp;|lt;|gt;|quot;|#39;|#x27;)/g, '&amp;');
+  
+  // Headers (must come before other processing)
+  html = html.replace(/^### (.*$)/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.*$)/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.*$)/gm, '<h1>$1</h1>');
+  
+  // Bold text
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  
+  // Italic text
+  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  
+  // Code blocks (triple backticks)
+  html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+  
+  // Inline code (single backticks)
+  html = html.replace(/`([^`]*)`/g, '<code>$1</code>');
+  
+  // Lists - simple approach
+  // Convert unordered list items
+  html = html.replace(/^\* (.*$)/gm, '<li>$1</li>');
+  html = html.replace(/^\- (.*$)/gm, '<li>$1</li>');
+  
+  // Convert ordered list items  
+  html = html.replace(/^\d+\. (.*$)/gm, '<li>$1</li>');
+  
+  // Wrap consecutive <li> elements in appropriate list tags
+  html = html.replace(/(<li>.*<\/li>)/gms, function(match) {
+    return '<ul>' + match + '</ul>';
+  });
+  
+  // Convert line breaks to <br> but preserve existing HTML structure
+  // Don't add <br> before closing tags, opening tags, or after certain elements
+  html = html.replace(/\n(?!<\/|<h|<ul|<ol|<li|<pre|<blockquote|<strong|<em)/g, '<br>');
+  
+  // Links [text](url)
+  html = html.replace(/\[([^\]]*)\]\(([^\)]*)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  
+  // Blockquotes
+  html = html.replace(/^> (.*$)/gm, '<blockquote>$1</blockquote>');
+  
+  return html;
+}
+
 function addMessageToChat(role: string, content: string, timing?: number): void {
   try {
     let chatContainer = document.getElementById('chatContainer');
@@ -2229,11 +3330,11 @@ function addMessageToChat(role: string, content: string, timing?: number): void 
     if (role === 'context') {
       // Special handling for context messages
       messageDiv.className = 'chat-message context-message';
-      messageDiv.innerHTML = `<div class="message-content">${content}</div>`;
+      messageDiv.innerHTML = `<div class="message-content">${markdownToHtml(content)}</div>`;
       messageDiv.dataset.role = 'context';
     } else if (role === 'user') {
       messageDiv.className = 'chat-message user-message';
-      messageDiv.innerHTML = `<div class="message-content">${content}</div>`;
+      messageDiv.innerHTML = `<div class="message-content">${markdownToHtml(content)}</div>`;
       messageDiv.dataset.role = 'user';
       messageDiv.dataset.timestamp = new Date().toISOString();
     } else if (role === 'assistant') {
@@ -2244,17 +3345,20 @@ function addMessageToChat(role: string, content: string, timing?: number): void 
       // Check if content contains only a loading indicator
       const isLoading = content.includes('class="loading"') && !content.replace(/<div class="loading">.*?<\/div>/g, '').trim();
       
+      // Apply markdown processing for assistant messages (but not for loading indicators)
+      const processedContent = isLoading ? content : markdownToHtml(content);
+      
       if (timing && !isLoading) {
         messageDiv.innerHTML = `
           <div class="timing-info">
             <span>Response generated in</span>
             <span class="time-value">${timing.toFixed(2)}s</span>
           </div>
-          <div class="message-content">${content}</div>
+          <div class="message-content">${processedContent}</div>
         `;
         messageDiv.dataset.genTime = timing.toFixed(2);
       } else {
-        messageDiv.innerHTML = `<div class="message-content">${content}</div>`;
+        messageDiv.innerHTML = `<div class="message-content">${processedContent}</div>`;
       }
     }
     
@@ -2263,9 +3367,9 @@ function addMessageToChat(role: string, content: string, timing?: number): void 
     // Scroll to bottom with smooth behavior
     chatContainer.scrollTop = chatContainer.scrollHeight;
     
-    // Ensure chat input area exists for follow-up questions
-    const agentResults = document.getElementById('agentResults');
-    if (agentResults && !document.querySelector('.chat-input-area')) {
+    // Ensure chat input area exists in the fixed container
+    const chatInputContainer = document.querySelector('.chat-input-container');
+    if (chatInputContainer && !document.querySelector('.chat-input-area')) {
       console.log('[addMessageToChat] Creating chat input area for follow-up questions');
       
       const chatInputArea = document.createElement('div');
@@ -2289,7 +3393,7 @@ function addMessageToChat(role: string, content: string, timing?: number): void 
         </div>
       `;
       
-      agentResults.appendChild(chatInputArea);
+      chatInputContainer.appendChild(chatInputArea);
       setupChatInputHandlers();
     }
     
@@ -2416,14 +3520,15 @@ async function processFollowupQuestion(question: string): Promise<void> {
   try {
     addMessageToChat('assistant', '<div class="loading">Processing your question...</div>');
     
-    if (!modelSelector) {
-      clearLoadingIndicators();
-      addMessageToChat('assistant', 'Error: Model selector not found.');
-      isWorkflowExecuting = false; // Clear flag if not proceeding
-      return;
-    }
+    // Model selector commented out - always use 'anthropic'
+    // if (!modelSelector) {
+    //   clearLoadingIndicators();
+    //   addMessageToChat('assistant', 'Error: Model selector not found.');
+    //   isWorkflowExecuting = false; // Clear flag if not proceeding
+    //   return;
+    // }
     
-    const provider = modelSelector.value;
+    const provider = 'anthropic'; // Always use Anthropic Claude
     const apiKey = localStorage.getItem(`${provider}_api_key`);
     
     if (!apiKey) {
@@ -2479,9 +3584,10 @@ async function processFollowupQuestion(question: string): Promise<void> {
           pageContent,
           browserApiKeys: getBrowserApiKeys(),
           selectedProvider: provider,
-          selectedModel: modelSelector.selectedOptions[0]?.dataset.model || 'claude-3-7-sonnet-latest',
+          selectedModel: 'claude-3-5-sonnet-20241022', // Always use Claude 3.5 Sonnet
           isQuestion: true,
-          conversationHistory: []
+          conversationHistory: await buildConversationHistoryWithMemories(currentUrl, question),
+          mcpTools: await getMcpToolsForAsk() // Add MCP tools to workflow data
         };
 
         await ipcRenderer.invoke('execute-workflow', {
@@ -2536,7 +3642,9 @@ async function processFollowupQuestion(question: string): Promise<void> {
     const data = {
       query: questionRequest,
       pageContent,
-      isQuestion: true
+      isQuestion: true,
+      conversationHistory: await buildConversationHistoryWithMemories(currentUrl, question),
+      mcpTools: await getMcpToolsForAsk() // Add MCP tools to extension data
     };
     
     console.log(`[processFollowupQuestion] Executing extension with question: ${extensionId} (confidence: ${routingResult.confidence}) - ${question}`);
@@ -2580,6 +3688,40 @@ async function processFollowupQuestion(question: string): Promise<void> {
       
       console.log('[processFollowupQuestion] Displaying results...');
       displayAgentResults(result.data);
+      
+      // Store memory if available - try multiple content sources
+      if (memoryService && result.data) {
+        let summary = '';
+        
+        // Try different content sources in order of preference
+        if (result.data.consolidated_summary) {
+          summary = result.data.consolidated_summary;
+        } else if (result.data.summaries && result.data.summaries.length > 0) {
+          summary = result.data.summaries.map((s: any) => `${s.title}: ${s.summary}`).join('\n\n');
+        } else if (typeof result.data === 'string') {
+          // Handle simple string responses
+          summary = result.data;
+        } else if (result.data.content) {
+          // Handle responses with content field
+          summary = result.data.content;
+        } else if (result.data.response) {
+          // Handle responses with response field
+          summary = result.data.response;
+        }
+        
+        if (summary && summary.trim()) {
+          console.log('[Memory] Storing followup result in memory');
+          
+          // Get current page info for memory context
+          const webview = getActiveWebview();
+          const url = webview?.src || '';
+          const title = webview?.getTitle ? webview.getTitle() : '';
+          
+          storeInMemory(url, question, summary, title);
+        } else {
+          console.log('[Memory] No suitable content found for memory storage in followup');
+        }
+      }
     } catch (extensionError) {
       console.error('Follow-up extension execution failed:', extensionError);
       
@@ -2636,14 +3778,15 @@ async function processFollowupQuestionWithContexts(question: string, contexts: W
   try {
     addMessageToChat('assistant', '<div class="loading">Processing your question with webpage contexts...</div>');
     
-    if (!modelSelector) {
-      clearLoadingIndicators();
-      addMessageToChat('assistant', 'Error: Model selector not found.');
-      isWorkflowExecuting = false;
-      return;
-    }
+    // Model selector commented out - always use 'anthropic'
+    // if (!modelSelector) {
+    //   clearLoadingIndicators();
+    //   addMessageToChat('assistant', 'Error: Model selector not found.');
+    //   isWorkflowExecuting = false;
+    //   return;
+    // }
     
-    const provider = modelSelector.value;
+    const provider = 'anthropic'; // Always use Anthropic Claude
     const apiKey = localStorage.getItem(`${provider}_api_key`);
     
     if (!apiKey) {
@@ -2728,9 +3871,10 @@ async function processFollowupQuestionWithContexts(question: string, contexts: W
           pageContent: enhancedPageContent,
           browserApiKeys: getBrowserApiKeys(),
           selectedProvider: provider,
-          selectedModel: modelSelector.selectedOptions[0]?.dataset.model || 'claude-3-7-sonnet-latest',
+          selectedModel: 'claude-3-5-sonnet-20241022', // Always use Claude 3.5 Sonnet
           isQuestion: true,
-          conversationHistory: []
+          conversationHistory: await buildConversationHistoryWithMemories(currentUrl, question),
+          mcpTools: await getMcpToolsForAsk() // Add MCP tools to workflow data
         };
 
         await ipcRenderer.invoke('execute-workflow', {
@@ -2782,7 +3926,9 @@ async function processFollowupQuestionWithContexts(question: string, contexts: W
     const data = {
       query: questionRequest,
       pageContent: enhancedPageContent,
-      isQuestion: true
+      isQuestion: true,
+      conversationHistory: await buildConversationHistoryWithMemories(currentUrl, question),
+      mcpTools: await getMcpToolsForAsk() // Add MCP tools to extension data
     };
     
     console.log(`[processFollowupQuestionWithContexts] Executing extension with question: ${extensionId} (confidence: ${routingResult.confidence}) - ${question}`);
@@ -2826,6 +3972,40 @@ async function processFollowupQuestionWithContexts(question: string, contexts: W
       
       console.log('[processFollowupQuestionWithContexts] Displaying results...');
       displayAgentResults(result.data);
+      
+      // Store memory if available - try multiple content sources
+      if (memoryService && result.data) {
+        let summary = '';
+        
+        // Try different content sources in order of preference
+        if (result.data.consolidated_summary) {
+          summary = result.data.consolidated_summary;
+        } else if (result.data.summaries && result.data.summaries.length > 0) {
+          summary = result.data.summaries.map((s: any) => `${s.title}: ${s.summary}`).join('\n\n');
+        } else if (typeof result.data === 'string') {
+          // Handle simple string responses
+          summary = result.data;
+        } else if (result.data.content) {
+          // Handle responses with content field
+          summary = result.data.content;
+        } else if (result.data.response) {
+          // Handle responses with response field
+          summary = result.data.response;
+        }
+        
+        if (summary && summary.trim()) {
+          console.log('[Memory] Storing followup with contexts result in memory');
+          
+          // Get current page info for memory context
+          const webview = getActiveWebview();
+          const url = webview?.src || '';
+          const title = webview?.getTitle ? webview.getTitle() : '';
+          
+          storeInMemory(url, question, summary, title);
+        } else {
+          console.log('[Memory] No suitable content found for memory storage in followup with contexts');
+        }
+      }
     } catch (extensionError) {
       console.error('Follow-up extension with contexts execution failed:', extensionError);
       
@@ -3097,6 +4277,356 @@ function showExtensionStore(): void {
   if (forwardBtn) forwardBtn.disabled = true;
 }
 
+// ========================= FLOATING ADD TO CHAT BUTTON =========================
+
+function createAddToChatButton(): HTMLElement {
+  if (addToChatButton) {
+    return addToChatButton;
+  }
+  
+  addToChatButton = document.createElement('button');
+  addToChatButton.className = 'add-to-chat-button';
+  addToChatButton.textContent = 'Add to Chat';
+  addToChatButton.setAttribute('title', 'Add selected text to chat conversation');
+  
+  // Add click handler
+  addToChatButton.addEventListener('click', () => {
+    if (currentSelection) {
+      console.log('[Add to Chat] Adding selected text to chat:', currentSelection.text.substring(0, 50) + '...');
+      
+      // Add the selected text as a context message to chat
+      addMessageToChat('context', `**Selected Text:**\n\n${currentSelection.text}`);
+      
+      // Clear selection and hide button
+      hideAddToChatButton();
+      
+      // Show success feedback
+      showToast('Text added to chat!', 'success');
+    }
+  });
+  
+  document.body.appendChild(addToChatButton);
+  return addToChatButton;
+}
+
+function showAddToChatButton(text: string, rect: any, webview: any): void {
+  console.log('[Add to Chat] Showing button for selection:', text.substring(0, 30) + '...');
+  
+  // Store current selection
+  currentSelection = { text, rect, webview };
+  
+  // Create button if it doesn't exist
+  const button = createAddToChatButton();
+  
+  // Get webview container position to calculate absolute coordinates
+  const webviewContainer = document.querySelector('.webviews-container');
+  if (!webviewContainer) return;
+  
+  const containerRect = webviewContainer.getBoundingClientRect();
+  
+  // Position the button above the selection
+  const buttonX = containerRect.left + rect.left + (rect.width / 2);
+  const buttonY = containerRect.top + rect.top - 40; // 40px above selection
+  
+  // Ensure button stays within viewport
+  const buttonWidth = 120; // Approximate button width
+  const adjustedX = Math.max(10, Math.min(buttonX - buttonWidth / 2, window.innerWidth - buttonWidth - 10));
+  const adjustedY = Math.max(10, buttonY);
+  
+  button.style.left = `${adjustedX}px`;
+  button.style.top = `${adjustedY}px`;
+  
+  // Show the button with animation
+  requestAnimationFrame(() => {
+    button.classList.add('show');
+  });
+  
+  // Auto-hide after 5 seconds
+  setTimeout(() => {
+    if (currentSelection && currentSelection.text === text) {
+      hideAddToChatButton();
+    }
+  }, 5000);
+}
+
+function hideAddToChatButton(): void {
+  if (addToChatButton) {
+    addToChatButton.classList.remove('show');
+    currentSelection = null;
+  }
+}
+
+// Hide button when clicking elsewhere
+document.addEventListener('click', (e) => {
+  if (addToChatButton && !addToChatButton.contains(e.target as Node)) {
+    hideAddToChatButton();
+  }
+});
+
+// Hide button when scrolling or resizing
+document.addEventListener('scroll', hideAddToChatButton, true);
+window.addEventListener('resize', hideAddToChatButton);
+
+function setupTextSelectionListener(): void {
+  console.log('[Text Selection] Setting up message listener for text selections');
+  
+  // Listen for messages from webviews about text selections
+  window.addEventListener('message', (event) => {
+    console.log('🔍 [MESSAGE DEBUG] Received window message:', event.data);
+    // Only handle messages from our webviews
+    if (event.data && event.data.type === 'add-to-chat') {
+      console.log('✅ [Add to Chat] Received postMessage with text:', event.data.text?.substring(0, 30) + '...');
+      if (event.data.text) {
+        // Add selected text to @ context system instead of just chat
+        const activeWebview = getActiveWebview();
+        if (activeWebview) {
+          addSelectedTextToContextSystem(event.data.text, activeWebview);
+          showToast('✅ Text added to context!', 'success');
+          console.log('✅ [Add to Chat] Text successfully added to context system via postMessage');
+        }
+      } else {
+        console.warn('⚠️ [Add to Chat] PostMessage received but no text found');
+      }
+    }
+  });
+  
+  console.log('[Text Selection] Message listener set up successfully');
+}
+
+function injectEnhancedSelectionHandler(webview: any): void {
+  if (!webview) return;
+  
+  // Check if webview is valid and ready
+  if (!webview.id || !webview.src || webview.src === 'about:blank' || webview.isDestroyed) {
+    console.log('[Selection Handler] Skipping injection - webview not ready');
+    return;
+  }
+  
+  try {
+    console.log('[Selection Handler] Injecting enhanced selection handler for webview:', webview.id);
+    
+    const injectionScript = `
+      (function() {
+        // Prevent multiple injections
+        if (window.__browzerSelectionHandler) {
+          console.log('Selection handler already installed');
+          return;
+        }
+        
+        console.log('Installing Browzer enhanced selection handler...');
+        window.__browzerSelectionHandler = true;
+        
+        // Create and style the add to chat button
+        let addToChatBtn = null;
+        let selectionTimeout = null;
+        
+        function createAddToChatButton(selectedText, rect) {
+          try {
+            // Remove any existing button
+            hideAddToChatButton();
+            
+            // Create new button
+            addToChatBtn = document.createElement('button');
+                         addToChatBtn.textContent = '@ Add to Context';
+            addToChatBtn.setAttribute('data-browzer-button', 'true');
+            
+            // Apply styles directly
+            const styles = {
+              position: 'fixed',
+              zIndex: '2147483647',
+              padding: '8px 12px',
+              background: '#1a73e8',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: '500',
+              cursor: 'pointer',
+              fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif',
+              boxShadow: '0 4px 16px rgba(26, 115, 232, 0.3), 0 2px 8px rgba(0, 0, 0, 0.1)',
+              transition: 'all 0.2s ease',
+              whiteSpace: 'nowrap',
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)'
+            };
+            
+            Object.assign(addToChatBtn.style, styles);
+            
+            // Position the button above the selection
+            const buttonTop = Math.max(10, rect.top - 40);
+            const buttonLeft = Math.max(10, Math.min(rect.left, window.innerWidth - 140));
+            
+            addToChatBtn.style.top = buttonTop + 'px';
+            addToChatBtn.style.left = buttonLeft + 'px';
+            
+            // Hover effects
+            addToChatBtn.addEventListener('mouseenter', function() {
+              this.style.background = '#1557b0';
+              this.style.transform = 'translateY(-1px)';
+              this.style.boxShadow = '0 6px 20px rgba(26, 115, 232, 0.4), 0 4px 12px rgba(0, 0, 0, 0.15)';
+            });
+            
+            addToChatBtn.addEventListener('mouseleave', function() {
+              this.style.background = '#1a73e8';
+              this.style.transform = 'translateY(0)';
+              this.style.boxShadow = '0 4px 16px rgba(26, 115, 232, 0.3), 0 2px 8px rgba(0, 0, 0, 0.1)';
+            });
+            
+            // Click handler with multiple communication methods
+            addToChatBtn.addEventListener('click', function(e) {
+              e.preventDefault();
+              e.stopPropagation();
+              
+              console.log('Add to Chat clicked, sending text:', selectedText.substring(0, 50));
+              
+              let messageSent = false;
+              
+                             // Method 1: Try IPC (for Electron webviews with node integration)
+               try {
+                 // Check if we're in a webview context with node integration
+                 if (typeof require !== 'undefined') {
+                   try {
+                     const { ipcRenderer } = require('electron');
+                     if (ipcRenderer && typeof ipcRenderer.sendToHost === 'function') {
+                       ipcRenderer.sendToHost('add-to-chat', selectedText);
+                       messageSent = true;
+                       console.log('Message sent via IPC sendToHost');
+                     }
+                   } catch (electronErr) {
+                     console.log('Electron require failed in webview:', electronErr.message);
+                   }
+                 }
+               } catch (err) {
+                 console.log('IPC sendToHost method failed:', err.message);
+               }
+              
+              // Method 2: PostMessage to parent
+              if (!messageSent) {
+                try {
+                  window.parent.postMessage({
+                    type: 'add-to-chat',
+                    text: selectedText,
+                    source: 'browzer-selection'
+                  }, '*');
+                  messageSent = true;
+                  console.log('Message sent via postMessage to parent');
+                } catch (err) {
+                  console.log('PostMessage to parent failed:', err.message);
+                }
+              }
+              
+              // Method 3: PostMessage to top window
+              if (!messageSent) {
+                try {
+                  window.top.postMessage({
+                    type: 'add-to-chat',
+                    text: selectedText,
+                    source: 'browzer-selection'
+                  }, '*');
+                  messageSent = true;
+                  console.log('Message sent via postMessage to top');
+                } catch (err) {
+                  console.log('PostMessage to top failed:', err.message);
+                }
+              }
+              
+              if (messageSent) {
+                console.log('Text sent to chat:', selectedText.substring(0, 30) + '...');
+                hideAddToChatButton();
+              } else {
+                console.error('Failed to send text to chat - no communication method worked');
+              }
+            });
+            
+            // Add to DOM
+            document.body.appendChild(addToChatBtn);
+            console.log('Add to Chat button created and positioned');
+            
+            // Auto-hide after 7 seconds
+            setTimeout(hideAddToChatButton, 7000);
+            
+          } catch (err) {
+            console.error('Error creating Add to Chat button:', err);
+          }
+        }
+        
+        function hideAddToChatButton() {
+          if (addToChatBtn && addToChatBtn.parentNode) {
+            addToChatBtn.parentNode.removeChild(addToChatBtn);
+          }
+          addToChatBtn = null;
+        }
+        
+        function handleTextSelection() {
+          try {
+            clearTimeout(selectionTimeout);
+            selectionTimeout = setTimeout(() => {
+              const selection = window.getSelection();
+              const text = selection.toString().trim();
+              
+              if (text && text.length >= 5) {
+                const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+                if (range) {
+                  const rect = range.getBoundingClientRect();
+                  if (rect.width > 0 && rect.height > 0) {
+                    console.log('Text selected for add to chat:', text.substring(0, 30) + '...');
+                    createAddToChatButton(text, rect);
+                  }
+                }
+              } else {
+                hideAddToChatButton();
+              }
+            }, 100);
+          } catch (e) {
+            console.error('Error in selection handler:', e);
+          }
+        }
+        
+        // Add event listeners
+        document.addEventListener('mouseup', handleTextSelection, true);
+        document.addEventListener('selectionchange', handleTextSelection);
+        document.addEventListener('touchend', handleTextSelection);
+        
+        // Hide button when clicking elsewhere
+        document.addEventListener('click', function(e) {
+          if (addToChatBtn && !addToChatBtn.contains(e.target)) {
+            hideAddToChatButton();
+          }
+        });
+        
+        // Hide on scroll
+        document.addEventListener('scroll', hideAddToChatButton, true);
+        window.addEventListener('resize', hideAddToChatButton);
+        
+        console.log('✓ Enhanced selection handler installed successfully');
+        
+      })();
+    `;
+    
+    // Check one more time before execution
+    if (!webview || webview.isDestroyed || !webview.executeJavaScript) {
+      console.log('[Selection Handler] Webview no longer valid, skipping injection');
+      return;
+    }
+    
+    webview.executeJavaScript(injectionScript, false)
+      .then(() => {
+        console.log('[Selection Handler] ✓ Enhanced selection handler injection successful for webview:', webview.id);
+      })
+      .catch((error: any) => {
+        // Don't log errors for destroyed webviews or common navigation errors
+        if (!error.message.includes('Object has been destroyed') && 
+            !error.message.includes('navigation') &&
+            !error.message.includes('Script failed to execute')) {
+          console.error('[Selection Handler] Failed to inject enhanced selection handler:', error);
+        }
+      });
+      
+  } catch (error) {
+    console.error('[Selection Handler] Error setting up enhanced selection handler:', error);
+  }
+}
+
 // ========================= EXPORTS FOR DEBUGGING =========================
 
 // Export for debugging - placed at end after all functions are defined
@@ -3177,6 +4707,47 @@ function findWorkflowProgressInChat(workflowId: string): HTMLElement | null {
 
   const workflowMessages = chatContainer.querySelectorAll(`[data-workflow-id="${workflowId}"]`);
   return workflowMessages.length > 0 ? workflowMessages[0] as HTMLElement : null;
+}
+
+// ========================= SELECTED TEXT TO CONTEXT SYSTEM =========================
+
+async function addSelectedTextToContextSystem(selectedText: string, webview: any): Promise<void> {
+  try {
+    console.log('[Context System] Adding selected text to @ context system:', selectedText.substring(0, 50) + '...');
+    
+    // Get current page info
+    const url = webview.src || '';
+    const title = webview.getTitle ? webview.getTitle() : '';
+    
+    // Create a webpage context with the selected text
+    const contextId = `selected-${Date.now()}`;
+    const contextTitle = `Selected: ${selectedText.substring(0, 30)}${selectedText.length > 30 ? '...' : ''}`;
+    
+    const webpageContext: WebpageContext = {
+      id: contextId,
+      title: contextTitle,
+      url: url,
+      timestamp: Date.now(),
+      content: {
+        title: title,
+        description: `Selected text from ${title || url}`,
+        content: selectedText,
+        html: selectedText,
+        url: url
+      }
+    };
+    
+    // Add to the context system
+    addWebpageContext(webpageContext);
+    
+    console.log('[Context System] Selected text successfully added to @ context system');
+    console.log('[Context System] Total contexts now:', selectedWebpageContexts.length);
+    
+  } catch (error) {
+    console.error('[Context System] Error adding selected text to context system:', error);
+    // Fallback to regular chat message if context system fails
+    addMessageToChat('context', `**Selected Text:**\n\n${selectedText}`);
+  }
 }
 
 // ========================= WEBPAGE CONTEXT MANAGEMENT =========================
@@ -3513,3 +5084,1143 @@ function hideMentionDropdown(): void {
     console.log('🚨 [MENTION DROPDOWN] No dropdown found to remove');
   }
 }
+
+// Helper function to build conversation history with memories
+async function buildConversationHistoryWithMemories(currentUrl: string, query: string): Promise<any[]> {
+  const conversationHistory: any[] = [];
+  
+  try {
+    // Get recent chat messages from the UI
+    const chatContainer = document.getElementById('chatContainer');
+    if (chatContainer) {
+      const messages = chatContainer.querySelectorAll('.chat-message');
+      
+      // Add recent chat messages (last 10)
+      const recentMessages = Array.from(messages).slice(-10);
+      recentMessages.forEach(message => {
+        // Skip loading messages
+        if (message.querySelector('.loading')) return;
+        
+        // Determine role (user or assistant)
+        let role = 'assistant';
+        if (message.classList.contains('user-message')) {
+          role = 'user';
+        }
+        
+        // Get text content, stripping HTML
+        const contentEl = message.querySelector('.message-content');
+        let content = '';
+        if (contentEl) {
+          // Create a temporary div to extract text without HTML
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = contentEl.innerHTML;
+          content = tempDiv.textContent || tempDiv.innerText || '';
+        }
+        
+        if (content && !content.includes('class="loading"')) {
+          conversationHistory.push({
+            role: role,
+            content: content
+          });
+        }
+      });
+    }
+    
+    // Get relevant memories from localStorage (simple approach)
+    try {
+      const allMemories = JSON.parse(localStorage.getItem(MEMORY_KEY) || '[]');
+      if (allMemories && allMemories.length > 0) {
+        // Simple relevance scoring - get recent memories from same domain or with query keywords
+        const relevantMemories = allMemories.slice(0, 10).filter((memory: any) => {
+          if (!memory) return false;
+          
+          // Check domain match
+          const currentDomain = currentUrl ? new URL(currentUrl).hostname : '';
+          const memoryDomain = memory.domain || '';
+          if (currentDomain && memoryDomain && currentDomain === memoryDomain) {
+            return true;
+          }
+          
+          // Check keyword match in question or answer
+          const queryLower = query.toLowerCase();
+          const questionMatch = memory.question && memory.question.toLowerCase().includes(queryLower);
+          const answerMatch = memory.answer && memory.answer.toLowerCase().includes(queryLower);
+          
+          return questionMatch || answerMatch;
+        }).slice(0, 5); // Take top 5 relevant memories
+        
+        console.log(`[Memory] Found ${relevantMemories.length} relevant memories for query:`, query);
+        
+        // Format memories with proper structure expected by Python agents
+        relevantMemories.forEach((memory: any) => {
+          // Add the original question as a user message with memory flag
+          conversationHistory.push({
+            role: 'user',
+            content: memory.question,
+            isMemory: true,
+            source: {
+              url: memory.url,
+              domain: memory.domain,
+              title: memory.title,
+              timestamp: memory.timestamp,
+              topic: memory.topic
+            }
+          });
+          
+          // Add the answer as an assistant message with memory flag  
+          conversationHistory.push({
+            role: 'assistant',
+            content: memory.answer,
+            isMemory: true,
+            source: {
+              url: memory.url,
+              domain: memory.domain,
+              title: memory.title,
+              timestamp: memory.timestamp,
+              topic: memory.topic
+            }
+          });
+        });
+      }
+    } catch (memoryError) {
+      console.error('[Memory] Error retrieving memories:', memoryError);
+    }
+    
+         console.log(`[Memory] Built conversation history with ${conversationHistory.length} items (${conversationHistory.filter(item => item.isMemory).length} from memory)`);
+     return conversationHistory;
+     
+   } catch (error) {
+     console.error('[Memory] Error building conversation history with memories:', error);
+     return conversationHistory; // Return whatever we have so far
+   }
+ }
+
+// Simple memory functions (based on working deprecated implementation)
+function storeInMemory(url: string, question: string, answer: string, title: string = ''): void {
+  try {
+    // Skip storing memory for empty content
+    if (!url || (!question && !answer)) {
+      console.log('Skipping memory storage due to empty content');
+      return;
+    }
+    
+    // Get existing memory
+    let memory: any[] = [];
+    try {
+      memory = JSON.parse(localStorage.getItem(MEMORY_KEY) || '[]');
+      if (!Array.isArray(memory)) {
+        console.error('Memory is not an array, resetting');
+        memory = [];
+      }
+    } catch (parseError) {
+      console.error('Error parsing memory from localStorage:', parseError);
+      memory = [];
+    }
+    
+    // Get page title from active webview if not provided
+    let pageTitle = title;
+    if (!pageTitle) {
+      const activeWebview = getActiveWebview();
+      if (activeWebview) {
+        try {
+          pageTitle = activeWebview.getTitle ? activeWebview.getTitle() : '';
+        } catch (e) {
+          console.error('Error getting title:', e);
+        }
+      }
+    }
+    
+    // Try to detect the main topic automatically
+    let pageTopic = '';
+    try {
+      pageTopic = extractTopicSimple({
+        title: pageTitle,
+        question: question,
+        answer: answer
+      });
+    } catch (topicError) {
+      console.error('Error extracting topic:', topicError);
+    }
+    
+    // Create memory item with enhanced metadata
+    const memoryItem = {
+      timestamp: Date.now(),
+      url: url || '',
+      title: pageTitle || '',
+      question: question || '',
+      answer: answer || '',
+      domain: url ? (new URL(url)).hostname : '',
+      topic: pageTopic || '',
+      // Track the model used for answers when available
+      modelInfo: {
+        provider: getModelProvider(),
+        name: 'unknown' // We can enhance this later
+      }
+    };
+    
+    // Add to beginning of array
+    memory.unshift(memoryItem);
+    
+    // Limit size
+    if (memory.length > MAX_MEMORY_ITEMS) {
+      memory = memory.slice(0, MAX_MEMORY_ITEMS);
+    }
+    
+    // Save to localStorage immediately
+    try {
+      localStorage.setItem(MEMORY_KEY, JSON.stringify(memory));
+      console.log('Memory stored:', { url, question: question.substring(0, 50), topic: pageTopic });
+    } catch (saveError) {
+      console.error('Error saving memory to localStorage:', saveError);
+    }
+    
+  } catch (error) {
+    console.error('Error storing memory:', error);
+  }
+}
+
+function extractTopicSimple(itemContent: any): string {
+  try {
+    if (!itemContent) return '';
+    
+    // Simple topic extraction - look for knowledge domains, subjects, or key entities
+    const fullText = `${itemContent.title || ''} ${itemContent.question || ''}`.toLowerCase();
+    
+    // Common subjects and entities people might compare
+    const knownDomains = [
+      'python', 'javascript', 'react', 'machine learning', 'ai', 'artificial intelligence',
+      'computer science', 'programming', 'crypto', 'cryptocurrency', 'bitcoin', 'ethereum',
+      'history', 'science', 'physics', 'chemistry', 'biology', 'medicine', 'health',
+      'politics', 'economics', 'finance', 'investing', 'stocks', 'business',
+      'climate', 'environment', 'technology', 'privacy', 'security',
+      'education', 'travel', 'food', 'nutrition', 'diet', 'fitness'
+    ];
+    
+    for (const domain of knownDomains) {
+      if (fullText.includes(domain)) {
+        return domain;
+      }
+    }
+    
+    // If no known domain, try to use first 2-3 significant words from title/question
+    const words = fullText.split(/\s+/).filter(w => w && w.length > 3);
+    if (words.length >= 2) {
+      return words.slice(0, 2).join(' ');
+    }
+    
+    return '';
+  } catch (error) {
+    console.error('Error extracting topic:', error);
+    return '';
+  }
+}
+
+// ========================= AD BLOCKER SETUP =========================
+
+function setupAdBlocker(): void {
+  console.log('[AdBlocker] Setting up ad blocker controls...');
+  
+  // Get UI elements
+  const adBlockEnabledCheckbox = document.getElementById('adBlockEnabled') as HTMLInputElement;
+  const domainInput = document.getElementById('domainInput') as HTMLInputElement;
+  const blockDomainBtn = document.getElementById('blockDomainBtn') as HTMLButtonElement;
+  const allowDomainBtn = document.getElementById('allowDomainBtn') as HTMLButtonElement;
+  const blockedDomainsCount = document.getElementById('blockedDomainsCount') as HTMLSpanElement;
+  const cssRulesCount = document.getElementById('cssRulesCount') as HTMLSpanElement;
+  const filterRulesCount = document.getElementById('filterRulesCount') as HTMLSpanElement;
+  const blockedDomainsList = document.getElementById('blockedDomainsList') as HTMLDivElement;
+  const allowedDomainsList = document.getElementById('allowedDomainsList') as HTMLDivElement;
+  
+  if (!adBlockEnabledCheckbox || !domainInput || !blockDomainBtn || !allowDomainBtn) {
+    console.error('[AdBlocker] Required UI elements not found');
+    return;
+  }
+  
+  // Load initial state
+  loadAdBlockerStatus();
+  
+  // Set up event listeners
+  adBlockEnabledCheckbox.addEventListener('change', async () => {
+    try {
+      const enabled = adBlockEnabledCheckbox.checked;
+      const result = await ipcRenderer.invoke('toggle-adblock', enabled);
+      
+      if (result.success) {
+        console.log(`[AdBlocker] Ad blocking ${enabled ? 'enabled' : 'disabled'}`);
+        showToast(`Ad blocking ${enabled ? 'enabled' : 'disabled'}`, 'success');
+        
+        // Re-inject CSS into all webviews
+        const webviews = document.querySelectorAll('webview');
+        webviews.forEach((webview: any) => {
+          setTimeout(() => {
+            // Validate webview before injection
+            if (webview && !webview.isDestroyed && webview.executeJavaScript && webview.src && webview.src !== 'about:blank') {
+              injectAdBlockCSS(webview);
+            }
+          }, 100);
+        });
+      } else {
+        console.error('[AdBlocker] Failed to toggle ad blocker:', result.error);
+        showToast('Failed to toggle ad blocker', 'error');
+        // Revert checkbox state
+        adBlockEnabledCheckbox.checked = !enabled;
+      }
+    } catch (error) {
+      console.error('[AdBlocker] Error toggling ad blocker:', error);
+      showToast('Error toggling ad blocker', 'error');
+    }
+  });
+  
+  blockDomainBtn.addEventListener('click', async () => {
+    const domain = domainInput.value.trim();
+    if (!domain) {
+      showToast('Please enter a domain', 'error');
+      return;
+    }
+    
+    try {
+      const result = await ipcRenderer.invoke('add-blocked-domain', domain);
+      if (result.success) {
+        console.log(`[AdBlocker] Added blocked domain: ${domain}`);
+        showToast(`Blocked domain: ${domain}`, 'success');
+        domainInput.value = '';
+        loadAdBlockerStatus();
+      } else {
+        console.error('[AdBlocker] Failed to add blocked domain:', result.error);
+        showToast('Failed to add blocked domain', 'error');
+      }
+    } catch (error) {
+      console.error('[AdBlocker] Error adding blocked domain:', error);
+      showToast('Error adding blocked domain', 'error');
+    }
+  });
+  
+  allowDomainBtn.addEventListener('click', async () => {
+    const domain = domainInput.value.trim();
+    if (!domain) {
+      showToast('Please enter a domain', 'error');
+      return;
+    }
+    
+    try {
+      const result = await ipcRenderer.invoke('add-allowed-domain', domain);
+      if (result.success) {
+        console.log(`[AdBlocker] Added allowed domain: ${domain}`);
+        showToast(`Allowed domain: ${domain}`, 'success');
+        domainInput.value = '';
+        loadAdBlockerStatus();
+      } else {
+        console.error('[AdBlocker] Failed to add allowed domain:', result.error);
+        showToast('Failed to add allowed domain', 'error');
+      }
+    } catch (error) {
+      console.error('[AdBlocker] Error adding allowed domain:', error);
+      showToast('Error adding allowed domain', 'error');
+    }
+  });
+  
+  // Allow adding domains by pressing Enter
+  domainInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        allowDomainBtn.click();
+      } else {
+        blockDomainBtn.click();
+      }
+    }
+  });
+  
+  console.log('[AdBlocker] Ad blocker controls set up successfully');
+}
+
+async function loadAdBlockerStatus(): Promise<void> {
+  try {
+    const status = await ipcRenderer.invoke('get-adblock-status');
+    
+    // Update checkbox
+    const adBlockEnabledCheckbox = document.getElementById('adBlockEnabled') as HTMLInputElement;
+    if (adBlockEnabledCheckbox) {
+      adBlockEnabledCheckbox.checked = status.enabled;
+    }
+    
+    // Update stats
+    const blockedDomainsCount = document.getElementById('blockedDomainsCount') as HTMLSpanElement;
+    const cssRulesCount = document.getElementById('cssRulesCount') as HTMLSpanElement;
+    const filterRulesCount = document.getElementById('filterRulesCount') as HTMLSpanElement;
+    
+    if (blockedDomainsCount) blockedDomainsCount.textContent = status.stats.blockedDomains.toString();
+    if (cssRulesCount) cssRulesCount.textContent = status.stats.cssRules.toString();
+    if (filterRulesCount) filterRulesCount.textContent = status.stats.filterRules.toString();
+    
+    console.log('[AdBlocker] Status loaded:', status);
+  } catch (error) {
+    console.error('[AdBlocker] Error loading status:', error);
+    
+    // Set default values
+    const blockedDomainsCount = document.getElementById('blockedDomainsCount') as HTMLSpanElement;
+    const cssRulesCount = document.getElementById('cssRulesCount') as HTMLSpanElement;
+    const filterRulesCount = document.getElementById('filterRulesCount') as HTMLSpanElement;
+    
+    if (blockedDomainsCount) blockedDomainsCount.textContent = 'Error';
+    if (cssRulesCount) cssRulesCount.textContent = 'Error';
+    if (filterRulesCount) filterRulesCount.textContent = 'Error';
+  }
+}
+
+function getModelProvider(): string {
+  // Model selector commented out - always return 'anthropic'
+  // const modelSelector = document.getElementById('modelSelector') as HTMLSelectElement;
+  // if (!modelSelector) return 'unknown';
+  // return modelSelector.value || 'unknown';
+  return 'anthropic'; // Always use Anthropic Claude
+}
+
+// ============ TAB SEARCH FUNCTIONALITY ============
+
+let tabSearchModal: HTMLElement | null = null;
+let tabSearchInput: HTMLInputElement | null = null;
+let tabSearchResults: HTMLElement | null = null;
+let tabSearchClose: HTMLButtonElement | null = null;
+let selectedSearchResultIndex = -1;
+let searchResults: TabInfo[] = [];
+
+function initializeTabSearch(): void {
+  tabSearchModal = document.getElementById('tabSearchModal');
+  tabSearchInput = document.getElementById('tabSearchInput') as HTMLInputElement;
+  tabSearchResults = document.getElementById('tabSearchResults');
+  tabSearchClose = document.getElementById('tabSearchClose') as HTMLButtonElement;
+
+  if (!tabSearchModal || !tabSearchInput || !tabSearchResults || !tabSearchClose) {
+    console.error('Tab search elements not found');
+    return;
+  }
+
+  // Close button event
+  tabSearchClose.addEventListener('click', hideTabSearch);
+
+  // Overlay click to close
+  const overlay = tabSearchModal.querySelector('.tab-search-overlay');
+  if (overlay) {
+    overlay.addEventListener('click', hideTabSearch);
+  }
+
+  // Search input events
+  tabSearchInput.addEventListener('input', handleTabSearchInput);
+  tabSearchInput.addEventListener('keydown', handleTabSearchKeydown);
+
+  // Global keyboard shortcut: Ctrl+Shift+A (or Cmd+Shift+A on Mac)
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'A') {
+      e.preventDefault();
+      showTabSearch();
+    }
+    
+    // Escape to close
+    if (e.key === 'Escape' && !tabSearchModal?.classList.contains('hidden')) {
+      hideTabSearch();
+    }
+  });
+}
+
+function showTabSearch(): void {
+  if (!tabSearchModal || !tabSearchInput) return;
+  
+  tabSearchModal.classList.remove('hidden');
+  tabSearchInput.focus();
+  tabSearchInput.value = '';
+  selectedSearchResultIndex = -1;
+  
+  // Show all tabs initially
+  displayTabSearchResults(tabs);
+}
+
+function hideTabSearch(): void {
+  if (!tabSearchModal) return;
+  
+  tabSearchModal.classList.add('hidden');
+  selectedSearchResultIndex = -1;
+  searchResults = [];
+}
+
+function handleTabSearchInput(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  const query = input.value.trim().toLowerCase();
+  
+  if (query === '') {
+    displayTabSearchResults(tabs);
+    return;
+  }
+  
+  // Fuzzy search through tabs
+  const filteredTabs = tabs.filter(tab => {
+    const titleMatch = tab.title.toLowerCase().includes(query);
+    const urlMatch = tab.url.toLowerCase().includes(query);
+    
+    // Simple fuzzy matching - check if all query characters appear in order
+    const fuzzyTitleMatch = fuzzyMatch(tab.title.toLowerCase(), query);
+    const fuzzyUrlMatch = fuzzyMatch(tab.url.toLowerCase(), query);
+    
+    return titleMatch || urlMatch || fuzzyTitleMatch || fuzzyUrlMatch;
+  });
+  
+  // Sort by relevance (exact matches first, then fuzzy matches)
+  filteredTabs.sort((a, b) => {
+    const aExactTitle = a.title.toLowerCase().includes(query);
+    const bExactTitle = b.title.toLowerCase().includes(query);
+    const aExactUrl = a.url.toLowerCase().includes(query);
+    const bExactUrl = b.url.toLowerCase().includes(query);
+    
+    if (aExactTitle && !bExactTitle) return -1;
+    if (!aExactTitle && bExactTitle) return 1;
+    if (aExactUrl && !bExactUrl) return -1;
+    if (!aExactUrl && bExactUrl) return 1;
+    
+    return 0;
+  });
+  
+  displayTabSearchResults(filteredTabs, query);
+}
+
+function fuzzyMatch(text: string, query: string): boolean {
+  let textIndex = 0;
+  let queryIndex = 0;
+  
+  while (textIndex < text.length && queryIndex < query.length) {
+    if (text[textIndex] === query[queryIndex]) {
+      queryIndex++;
+    }
+    textIndex++;
+  }
+  
+  return queryIndex === query.length;
+}
+
+function highlightMatch(text: string, query: string): string {
+  if (!query) return text;
+  
+  const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  return text.replace(regex, '<mark>$1</mark>');
+}
+
+function displayTabSearchResults(tabList: TabInfo[], query: string = ''): void {
+  if (!tabSearchResults) return;
+  
+  searchResults = tabList;
+  selectedSearchResultIndex = -1;
+  
+  if (tabList.length === 0) {
+    tabSearchResults.innerHTML = '<div class="tab-search-no-results">No tabs found</div>';
+    return;
+  }
+  
+  const resultsHTML = tabList.map((tab, index) => {
+    const tabElement = document.getElementById(tab.id);
+    const faviconElement = tabElement?.querySelector('.tab-favicon') as HTMLElement;
+    const faviconStyle = faviconElement?.style.backgroundImage || '';
+    
+    const highlightedTitle = highlightMatch(tab.title, query);
+    const highlightedUrl = highlightMatch(tab.url, query);
+    
+    return `
+      <div class="tab-search-result" data-tab-id="${tab.id}" data-index="${index}">
+        <div class="tab-search-result-favicon" style="${faviconStyle ? `background-image: ${faviconStyle}; background-size: contain; background-repeat: no-repeat; background-position: center;` : ''}"></div>
+        <div class="tab-search-result-content">
+          <div class="tab-search-result-title">${highlightedTitle}</div>
+          <div class="tab-search-result-url">${highlightedUrl}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+  
+  tabSearchResults.innerHTML = resultsHTML;
+  
+  // Add click event listeners
+  const resultElements = tabSearchResults.querySelectorAll('.tab-search-result');
+  resultElements.forEach((element, index) => {
+    element.addEventListener('click', () => {
+      const tabId = element.getAttribute('data-tab-id');
+      if (tabId) {
+        selectTab(tabId);
+        hideTabSearch();
+      }
+    });
+    
+    element.addEventListener('mouseenter', () => {
+      setSelectedSearchResult(index);
+    });
+  });
+}
+
+function handleTabSearchKeydown(event: KeyboardEvent): void {
+  if (searchResults.length === 0) return;
+  
+  switch (event.key) {
+    case 'ArrowDown':
+      event.preventDefault();
+      setSelectedSearchResult(Math.min(selectedSearchResultIndex + 1, searchResults.length - 1));
+      break;
+      
+    case 'ArrowUp':
+      event.preventDefault();
+      setSelectedSearchResult(Math.max(selectedSearchResultIndex - 1, -1));
+      break;
+      
+    case 'Enter':
+      event.preventDefault();
+      if (selectedSearchResultIndex >= 0 && selectedSearchResultIndex < searchResults.length) {
+        const selectedTab = searchResults[selectedSearchResultIndex];
+        selectTab(selectedTab.id);
+        hideTabSearch();
+      }
+      break;
+  }
+}
+
+function setSelectedSearchResult(index: number): void {
+  if (!tabSearchResults) return;
+  
+  // Remove previous selection
+  const previousSelected = tabSearchResults.querySelector('.tab-search-result.selected');
+  if (previousSelected) {
+    previousSelected.classList.remove('selected');
+  }
+  
+  selectedSearchResultIndex = index;
+  
+  if (index >= 0 && index < searchResults.length) {
+    const newSelected = tabSearchResults.children[index];
+    if (newSelected) {
+      newSelected.classList.add('selected');
+      
+      // Scroll into view if needed
+      newSelected.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }
+}
+
+// ============ ENHANCED AUTOMATIC SESSION MANAGEMENT ============
+
+// Enhanced automatic session management - tabs are automatically saved and restored
+
+function initializeAutoSessionManagement(): void {
+  // Set up automatic saving on various events
+  setupAutoSaveEvents();
+  
+  // Set up periodic saving (every 30 seconds) as backup
+  setInterval(() => {
+    if (tabs.length > 0) {
+      autoSaveTabs();
+    }
+  }, 30000);
+  
+  // Initial save after page load
+  setTimeout(() => {
+    if (tabs.length > 0) {
+      autoSaveTabs();
+    }
+  }, 2000);
+}
+
+function setupAutoSaveEvents(): void {
+  // Save when browser window is about to close
+  window.addEventListener('beforeunload', (e) => {
+    autoSaveTabs();
+    
+    // Force synchronous save as backup
+    try {
+      if (tabs && tabs.length > 0) {
+        const sessionData = {
+          tabs: tabs.map(tab => ({
+            url: tab.url,
+            title: tab.title,
+            isActive: tab.isActive,
+            webviewId: tab.webviewId
+          })),
+          timestamp: Date.now(),
+          activeTabId: activeTabId
+        };
+        localStorage.setItem(SAVED_TABS_KEY, JSON.stringify(sessionData));
+      }
+    } catch (err) {
+      console.error('Error in beforeunload save:', err);
+    }
+  });
+
+  // Save when window loses focus (user switches to another app)
+  window.addEventListener('blur', () => {
+    if (tabs.length > 0) {
+      autoSaveTabs();
+    }
+  });
+
+  // Save when visibility changes (tab becomes hidden)
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && tabs.length > 0) {
+      autoSaveTabs();
+    }
+  });
+
+  // Try to detect Electron context and add app-level events
+  if (typeof process !== 'undefined' && process.versions && process.versions.electron) {
+    // Add more Electron-specific save triggers if needed in the future
+    window.addEventListener('focus', () => {
+      // Could add focus-based save logic here if needed
+    });
+  }
+}
+
+function autoSaveTabs(): void {
+  try {
+    if (!tabs || tabs.length === 0) {
+      // Check if there's already a valid session - don't overwrite it with empty data
+      const existing = localStorage.getItem(SAVED_TABS_KEY);
+      if (existing) {
+        try {
+          const parsed = JSON.parse(existing);
+          if (parsed.tabs && parsed.tabs.length > 0) {
+            return; // Skip empty save to protect existing session
+          }
+        } catch (e) {
+          // Ignore parsing errors and continue
+        }
+      }
+      return;
+    }
+
+    const tabsToSave = tabs.map((tab, index) => {
+      try {
+        const webview = document.getElementById(tab.webviewId) as any;
+        const titleElem = document.querySelector(`#${tab.id} .tab-title`);
+        
+        return {
+          url: webview && webview.src ? webview.src : tab.url,
+          title: titleElem ? titleElem.textContent || 'New Tab' : tab.title,
+          isActive: tab.isActive,
+          webviewId: tab.webviewId
+        };
+      } catch (err) {
+        return {
+          url: tab.url || 'about:blank',
+          title: tab.title || 'New Tab',
+          isActive: tab.isActive,
+          webviewId: tab.webviewId
+        };
+      }
+    });
+
+    // Save the session with timestamp
+    const sessionData = {
+      tabs: tabsToSave,
+      timestamp: Date.now(),
+      activeTabId: activeTabId
+    };
+
+    localStorage.setItem(SAVED_TABS_KEY, JSON.stringify(sessionData));
+    
+  } catch (err) {
+    console.error('❌ Error in autoSaveTabs:', err);
+    if (err instanceof Error) {
+      console.error('❌ Stack trace:', err.stack);
+    }
+  }
+}
+
+function enhancedRestoreTabs(): void {
+  if (!tabsContainer || !webviewsContainer) {
+    setTimeout(() => {
+      createNewTab();
+    }, 100);
+    return;
+  }
+
+  try {
+    const savedSessionJSON = localStorage.getItem(SAVED_TABS_KEY);
+    
+    if (savedSessionJSON) {
+      let savedSession = null;
+      try {
+        savedSession = JSON.parse(savedSessionJSON);
+      } catch (parseErr) {
+        localStorage.removeItem(SAVED_TABS_KEY);
+        createNewTab();
+        return;
+      }
+      
+      if (savedSession && savedSession.tabs && savedSession.tabs.length > 0) {
+        // Clear current state
+        tabs = [];
+        tabsContainer.innerHTML = '';
+        webviewsContainer.innerHTML = '';
+        
+        let restoredCount = 0;
+        let activeTabToRestore = null;
+        const restoredTabIds: string[] = [];
+        
+        // Create tabs without selecting them immediately
+        for (let i = 0; i < savedSession.tabs.length; i++) {
+          const tabData = savedSession.tabs[i];
+          try {
+            if (tabData.url && tabData.url !== 'about:blank') {
+              const newTabId = createNewTabWithoutSelection(tabData.url);
+              
+              if (newTabId) {
+                restoredCount++;
+                restoredTabIds.push(newTabId);
+                
+                // Update the tab title if it was saved
+                if (tabData.title && tabData.title !== 'New Tab') {
+                  setTimeout(() => {
+                    const titleElement = document.querySelector(`#${newTabId} .tab-title`);
+                    if (titleElement) {
+                      titleElement.textContent = tabData.title;
+                    }
+                  }, 100);
+                }
+                
+                // Remember which tab was active
+                if (tabData.isActive || tabData.webviewId === savedSession.activeTabId) {
+                  activeTabToRestore = newTabId;
+                }
+              }
+            }
+          } catch (tabErr) {
+            // Ignore individual tab restoration errors
+          }
+        }
+        
+        // Wait for all webviews to be ready, then select the active tab
+        if (restoredCount > 0) {
+          setTimeout(() => {
+            if (activeTabToRestore && restoredTabIds.includes(activeTabToRestore)) {
+              selectTab(activeTabToRestore);
+            } else if (restoredTabIds.length > 0) {
+              selectTab(restoredTabIds[0]);
+            }
+            
+            // Show notification after tab selection
+            setTimeout(() => {
+              showToast(`Restored ${restoredCount} tabs from previous session`, 'success');
+            }, 500);
+            
+          }, 800); // Give webviews more time to initialize
+          
+          return;
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error in tab restoration:', err);
+  }
+  
+  // Create fallback tab if no tabs were restored
+  createNewTab();
+}
+
+// ============ TAB PREVIEW FUNCTIONALITY ============
+
+let tabPreview: HTMLElement | null = null;
+let tabPreviewCanvas: HTMLCanvasElement | null = null;
+let tabPreviewTitle: HTMLElement | null = null;
+let tabPreviewUrl: HTMLElement | null = null;
+let tabPreviewLoading: HTMLElement | null = null;
+
+let previewTimeout: NodeJS.Timeout | null = null;
+let hidePreviewTimeout: NodeJS.Timeout | null = null;
+let previewCache = new Map<string, { dataUrl: string, timestamp: number }>();
+
+const PREVIEW_DELAY = 0; // ms delay before showing preview
+const PREVIEW_CACHE_DURATION = 30000; // 30 seconds cache duration
+const PREVIEW_WIDTH = 320;
+const PREVIEW_HEIGHT = 180;
+
+function initializeTabPreview(): void {
+  tabPreview = document.getElementById('tabPreview');
+  tabPreviewCanvas = document.getElementById('tabPreviewCanvas') as HTMLCanvasElement;
+  tabPreviewTitle = tabPreview?.querySelector('.tab-preview-title') as HTMLElement;
+  tabPreviewUrl = tabPreview?.querySelector('.tab-preview-url') as HTMLElement;
+  tabPreviewLoading = tabPreview?.querySelector('.tab-preview-loading') as HTMLElement;
+
+  if (!tabPreview || !tabPreviewCanvas || !tabPreviewTitle || !tabPreviewUrl || !tabPreviewLoading) {
+    console.error('Tab preview elements not found');
+    return;
+  }
+
+  // Set canvas dimensions
+  tabPreviewCanvas.width = PREVIEW_WIDTH;
+  tabPreviewCanvas.height = PREVIEW_HEIGHT;
+
+  console.log('Tab preview initialized');
+}
+
+function setupTabPreviewEvents(tabElement: HTMLElement, tabId: string): void {
+  if (!tabElement) return;
+
+  // Mouse enter event
+  tabElement.addEventListener('mouseenter', (e) => {
+    // Clear any existing hide timeout
+    if (hidePreviewTimeout) {
+      clearTimeout(hidePreviewTimeout);
+      hidePreviewTimeout = null;
+    }
+
+    // Set timeout to show preview after delay
+    previewTimeout = setTimeout(() => {
+      showTabPreview(tabId, e.target as HTMLElement);
+    }, PREVIEW_DELAY);
+  });
+
+  // Mouse leave event
+  tabElement.addEventListener('mouseleave', () => {
+    // Clear show timeout
+    if (previewTimeout) {
+      clearTimeout(previewTimeout);
+      previewTimeout = null;
+    }
+
+    // Set timeout to hide preview
+    hidePreviewTimeout = setTimeout(() => {
+      hideTabPreview();
+    }, 100); // Small delay to prevent flickering
+  });
+}
+
+async function showTabPreview(tabId: string, tabElement: HTMLElement): Promise<void> {
+  if (!tabPreview || !tabPreviewCanvas || !tabPreviewTitle || !tabPreviewUrl || !tabPreviewLoading) return;
+
+  const tab = tabs.find(t => t.id === tabId);
+  if (!tab) return;
+
+  const webview = document.getElementById(tab.webviewId) as any;
+  if (!webview) return;
+
+  // Position the preview tooltip
+  positionTabPreview(tabElement);
+
+  // Update preview info
+  tabPreviewTitle.textContent = tab.title || 'New Tab';
+  tabPreviewUrl.textContent = tab.url || 'about:blank';
+
+  // Show preview with loading state
+  tabPreview.classList.remove('hidden');
+  tabPreviewLoading.classList.remove('hidden');
+
+  try {
+    // Check cache first
+    const cacheKey = tab.webviewId;
+    const cached = previewCache.get(cacheKey);
+    const now = Date.now();
+
+    if (cached && (now - cached.timestamp < PREVIEW_CACHE_DURATION)) {
+      // Use cached screenshot
+      await drawImageToCanvas(cached.dataUrl);
+      tabPreviewLoading.classList.add('hidden');
+      return;
+    }
+
+    // Capture new screenshot
+    if (webview && webview.capturePage) {
+      // For newer Electron versions
+      const nativeImage = await webview.capturePage();
+      const dataUrl = nativeImage.toDataURL();
+      
+      // Cache the screenshot
+      previewCache.set(cacheKey, { dataUrl, timestamp: now });
+      
+      await drawImageToCanvas(dataUrl);
+      tabPreviewLoading.classList.add('hidden');
+    } else {
+      // Fallback: try to use executeJavaScript to get a screenshot
+      await captureWebviewScreenshot(webview, cacheKey);
+      tabPreviewLoading.classList.add('hidden');
+    }
+
+  } catch (error) {
+    console.error('Error capturing tab preview:', error);
+    
+    // Show fallback content
+    drawFallbackPreview(tab);
+    tabPreviewLoading.classList.add('hidden');
+  }
+}
+
+function positionTabPreview(tabElement: HTMLElement): void {
+  if (!tabPreview) return;
+
+  const tabRect = tabElement.getBoundingClientRect();
+  const previewRect = { width: 320, height: 240 }; // Approximate size
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const margin = 12;
+
+  let left = tabRect.left + (tabRect.width / 2) - (previewRect.width / 2);
+  let top = tabRect.bottom + margin;
+  let position = 'top'; // Arrow position
+
+  // Reset position classes
+  tabPreview.classList.remove('position-bottom', 'position-left', 'position-right');
+
+  // Horizontal positioning
+  if (left < margin) {
+    left = margin;
+  } else if (left + previewRect.width > viewportWidth - margin) {
+    left = viewportWidth - previewRect.width - margin;
+  }
+
+  // Vertical positioning
+  if (top + previewRect.height > viewportHeight - margin) {
+    // Show above the tab instead
+    top = tabRect.top - previewRect.height - margin;
+    position = 'bottom';
+    tabPreview.classList.add('position-bottom');
+  }
+
+  // Apply positioning
+  tabPreview.style.left = `${left}px`;
+  tabPreview.style.top = `${top}px`;
+}
+
+async function drawImageToCanvas(dataUrl: string): Promise<void> {
+  if (!tabPreviewCanvas) return;
+
+  const canvas = tabPreviewCanvas; // Store reference to avoid null checks in closure
+
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Cannot get canvas context'));
+        return;
+      }
+
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Calculate aspect ratio and draw
+      const aspectRatio = img.width / img.height;
+      const canvasAspectRatio = canvas.width / canvas.height;
+
+      let drawWidth, drawHeight, drawX, drawY;
+
+      if (aspectRatio > canvasAspectRatio) {
+        // Image is wider than canvas
+        drawWidth = canvas.width;
+        drawHeight = drawWidth / aspectRatio;
+        drawX = 0;
+        drawY = (canvas.height - drawHeight) / 2;
+      } else {
+        // Image is taller than canvas
+        drawHeight = canvas.height;
+        drawWidth = drawHeight * aspectRatio;
+        drawX = (canvas.width - drawWidth) / 2;
+        drawY = 0;
+      }
+
+      ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+      resolve();
+    };
+
+    img.onerror = () => {
+      reject(new Error('Failed to load image'));
+    };
+
+    img.src = dataUrl;
+  });
+}
+
+async function captureWebviewScreenshot(webview: any, cacheKey: string): Promise<void> {
+  // Fallback method for older Electron versions or when capturePage is not available
+  try {
+    const script = `
+      (function() {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        
+        // This is a simplified fallback - in practice, capturing a full webpage
+        // as an image from JavaScript is complex and has limitations
+        return canvas.toDataURL('image/png');
+      })();
+    `;
+
+    const dataUrl = await webview.executeJavaScript(script);
+    if (dataUrl) {
+      previewCache.set(cacheKey, { dataUrl, timestamp: Date.now() });
+      await drawImageToCanvas(dataUrl);
+    } else {
+      throw new Error('No data URL returned');
+    }
+  } catch (error) {
+    console.error('Fallback screenshot capture failed:', error);
+    throw error;
+  }
+}
+
+function drawFallbackPreview(tab: TabInfo): void {
+  if (!tabPreviewCanvas) return;
+
+  const ctx = tabPreviewCanvas.getContext('2d');
+  if (!ctx) return;
+
+  const canvasWidth = tabPreviewCanvas.width;
+  const canvasHeight = tabPreviewCanvas.height;
+
+  // Clear canvas
+  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+  // Draw gradient background
+  const gradient = ctx.createLinearGradient(0, 0, 0, canvasHeight);
+  gradient.addColorStop(0, '#f8f9fa');
+  gradient.addColorStop(1, '#e8eaed');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+  // Draw page icon or placeholder
+  ctx.fillStyle = '#5f6368';
+  ctx.font = '48px system-ui';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('🌐', canvasWidth / 2, canvasHeight / 2 - 10);
+
+  // Draw URL text
+  ctx.font = '12px system-ui';
+  ctx.fillStyle = '#202124';
+  ctx.fillText(
+    tab.url.length > 40 ? tab.url.substring(0, 37) + '...' : tab.url,
+    canvasWidth / 2,
+    canvasHeight / 2 + 30
+  );
+}
+
+function hideTabPreview(): void {
+  if (!tabPreview) return;
+
+  tabPreview.classList.add('hidden');
+
+  // Clear timeouts
+  if (previewTimeout) {
+    clearTimeout(previewTimeout);
+    previewTimeout = null;
+  }
+  if (hidePreviewTimeout) {
+    clearTimeout(hidePreviewTimeout);
+    hidePreviewTimeout = null;
+  }
+}
+
+// Clean up old cache entries periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of previewCache.entries()) {
+    if (now - value.timestamp > PREVIEW_CACHE_DURATION) {
+      previewCache.delete(key);
+    }
+  }
+}, PREVIEW_CACHE_DURATION);
+
+
+
+// Fixed: History tracking now happens automatically in did-finish-load event
+

@@ -4,7 +4,17 @@ set -e  # Exit on any error
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-PYTHON_BUNDLE_DIR="$ROOT_DIR/python-bundle"
+
+# Use provided directory or default to local python-bundle
+if [ -n "$1" ]; then
+    PYTHON_BUNDLE_DIR="$1"
+    echo "🎯 Using custom bundle directory: $PYTHON_BUNDLE_DIR"
+elif [ -n "$PYTHON_BUNDLE_DIR" ]; then
+    echo "🎯 Using environment variable bundle directory: $PYTHON_BUNDLE_DIR"
+else
+    PYTHON_BUNDLE_DIR="$ROOT_DIR/python-bundle"
+    echo "📦 Using default bundle directory: $PYTHON_BUNDLE_DIR"
+fi
 
 echo "🐍 Preparing Python bundle for Browzer..."
 echo "=========================================="
@@ -27,36 +37,71 @@ else
     echo "💻 Detected Intel (x86_64)"
 fi
 
-# Download portable Python (using Python.org's embeddable distribution approach)
-PYTHON_VERSION="3.11.7"
-echo "⬇️  Downloading Python $PYTHON_VERSION for $PYTHON_ARCH..."
+# Use Python 3.13 for consistency across all builds
+PYTHON_VERSION="3.13"
+PYTHON_FULL_VERSION="3.13.5"
+echo "🔧 Using Python $PYTHON_FULL_VERSION for consistent builds..."
 
 # Create a minimal Python environment using the system Python
 echo "🔧 Creating portable Python environment..."
 
-# Use Python's venv to create a relocatable environment
-python3 -m venv "$PYTHON_BUNDLE_DIR/python-runtime" --copies
+# Create directory structure for Python 3.13
+mkdir -p "$PYTHON_BUNDLE_DIR/python-runtime/lib/python$PYTHON_VERSION/site-packages"
+mkdir -p "$PYTHON_BUNDLE_DIR/python-runtime/bin"
 
-# Activate the environment
-source "$PYTHON_BUNDLE_DIR/python-runtime/bin/activate"
+# Create a Python wrapper script instead of copying the binary
+# Get the actual Python executable path
+ACTUAL_PYTHON=$(which python$PYTHON_VERSION || which python3)
+echo "Using Python executable: $ACTUAL_PYTHON"
 
-# Upgrade pip
-pip install --upgrade pip
+cat > "$PYTHON_BUNDLE_DIR/python-runtime/bin/python" << EOF
+#!/bin/bash
+# Python wrapper for Browzer bundle
+SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+BUNDLE_DIR="\$(dirname "\$SCRIPT_DIR")"
+export PYTHONPATH="\$BUNDLE_DIR/lib/python$PYTHON_VERSION/site-packages:\$PYTHONPATH"
+exec "$ACTUAL_PYTHON" "\$@"
+EOF
+chmod +x "$PYTHON_BUNDLE_DIR/python-runtime/bin/python"
+
+# Set PYTHONPATH for installations
+export PYTHONPATH="$PYTHON_BUNDLE_DIR/python-runtime/lib/python$PYTHON_VERSION/site-packages:$PYTHONPATH"
+
+# Install pip to our custom location
+python3 -m pip install --target "$PYTHON_BUNDLE_DIR/python-runtime/lib/python$PYTHON_VERSION/site-packages" --upgrade pip
 
 echo "📦 Installing required packages..."
-# Install all required packages
-pip install \
+
+# First install packages without binary dependencies
+python3 -m pip install --target "$PYTHON_BUNDLE_DIR/python-runtime/lib/python$PYTHON_VERSION/site-packages" \
     requests==2.32.3 \
     beautifulsoup4==4.13.4 \
     python-dotenv==1.1.0 \
     openai==1.82.0 \
     anthropic==0.52.0 \
-    nltk==3.8.1 \
     --no-cache-dir
+
+# Install regex separately with forced compilation
+echo "🔧 Installing regex with forced compilation..."
+python3 -m pip install --target "$PYTHON_BUNDLE_DIR/python-runtime/lib/python$PYTHON_VERSION/site-packages" \
+    regex \
+    --no-cache-dir \
+    --force-reinstall \
+    --no-binary=regex \
+    --compile
+
+# Install NLTK separately with forced compilation
+echo "🔧 Installing NLTK with forced compilation..."
+python3 -m pip install --target "$PYTHON_BUNDLE_DIR/python-runtime/lib/python$PYTHON_VERSION/site-packages" \
+    nltk==3.8.1 \
+    --no-cache-dir \
+    --force-reinstall \
+    --no-binary=nltk \
+    --compile
 
 # Download NLTK data needed by the agents
 echo "📚 Downloading NLTK data..."
-python -c "
+PYTHONPATH="$PYTHON_BUNDLE_DIR/python-runtime/lib/python$PYTHON_VERSION/site-packages:$PYTHONPATH" python3 -c "
 import nltk
 import ssl
 try:
@@ -73,12 +118,12 @@ print('NLTK data downloaded successfully')
 "
 
 # Create a simple Python launcher script
-cat > "$PYTHON_BUNDLE_DIR/python-runtime/python-launcher.sh" << 'EOF'
+cat > "$PYTHON_BUNDLE_DIR/python-runtime/python-launcher.sh" << EOF
 #!/bin/bash
 # Portable Python launcher for Browzer
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export PYTHONPATH="$SCRIPT_DIR/lib/python3.11/site-packages:$PYTHONPATH"
-exec "$SCRIPT_DIR/bin/python" "$@"
+SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+export PYTHONPATH="\$SCRIPT_DIR/lib/python$PYTHON_VERSION/site-packages:\$PYTHONPATH"
+exec "\$SCRIPT_DIR/bin/python" "\$@"
 EOF
 
 chmod +x "$PYTHON_BUNDLE_DIR/python-runtime/python-launcher.sh"
@@ -114,23 +159,23 @@ except Exception as e:
 print("🎉 Python bundle verification complete!")
 EOF
 
-deactivate
-
 echo "✅ Testing the Python bundle..."
 "$PYTHON_BUNDLE_DIR/python-runtime/bin/python" "$PYTHON_BUNDLE_DIR/python-runtime/verify.py"
 
-# Make the bundle more portable by removing absolute paths
+# Make the bundle more portable
 echo "🔄 Making bundle portable..."
 
-# Find and replace absolute paths in pyvenv.cfg
-if [ -f "$PYTHON_BUNDLE_DIR/python-runtime/pyvenv.cfg" ]; then
-    sed -i '' 's|home = .*|home = .|' "$PYTHON_BUNDLE_DIR/python-runtime/pyvenv.cfg"
-fi
+# Create a simple pyvenv.cfg for compatibility
+cat > "$PYTHON_BUNDLE_DIR/python-runtime/pyvenv.cfg" << EOF
+home = .
+include-system-site-packages = false
+version = $PYTHON_FULL_VERSION
+EOF
 
 # Create bundle info
 cat > "$PYTHON_BUNDLE_DIR/bundle-info.json" << EOF
 {
-    "version": "$PYTHON_VERSION",
+    "version": "$PYTHON_FULL_VERSION",
     "architecture": "$PYTHON_ARCH",
     "created": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
     "packages": [

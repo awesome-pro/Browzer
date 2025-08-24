@@ -16,6 +16,20 @@ import tempfile
 from typing import Dict, List, Optional, Any, Callable
 from dataclasses import dataclass
 from pathlib import Path
+import numpy as np
+
+class NumpyJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles NumPy data types"""
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif hasattr(obj, 'item'):  # Handle numpy scalars
+            return obj.item()
+        return super().default(obj)
 
 @dataclass
 class WorkflowStep:
@@ -72,7 +86,7 @@ class ExtensionProcess:
         
         try:
             # Send request
-            request = json.dumps(input_data) + '\n'
+            request = json.dumps(input_data, cls=NumpyJSONEncoder) + '\n'
             self.process.stdin.write(request)
             self.process.stdin.flush()
             
@@ -238,7 +252,8 @@ class OptimizedWorkflowExecutor:
                 'selectedProvider': data.get('selectedProvider', 'anthropic'),
                 'selectedModel': data.get('selectedModel', 'claude-3-7-sonnet-latest'),
                 'isQuestion': data.get('isQuestion', False),
-                'conversationHistory': data.get('conversationHistory', [])
+                'conversationHistory': data.get('conversationHistory', []),
+                'pageContent': data.get('pageContent')  # Preserve page content for all workflow steps
             }
             
             current_data = {**preserved_data, **step_result.data}
@@ -348,7 +363,7 @@ class OptimizedWorkflowExecutor:
         if self.progress_callback:
             self.progress_callback(event)
         else:
-            print(f"WORKFLOW_PROGRESS: {json.dumps(event)}", file=sys.stderr, flush=True)
+            print(f"WORKFLOW_PROGRESS: {json.dumps(event, cls=NumpyJSONEncoder)}", file=sys.stderr, flush=True)
     
     def cleanup(self):
         """Clean up resources"""

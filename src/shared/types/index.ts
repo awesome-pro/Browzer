@@ -129,6 +129,7 @@ export const IPC_CHANNELS = {
   
   // Menu actions
   MENU_NEW_TAB: 'menu-new-tab',
+  MENU_NEW_TAB_WITH_URL: 'menu-new-tab-with-url',
   MENU_CLOSE_TAB: 'menu-close-tab',
   MENU_RELOAD: 'menu-reload',
   MENU_BACK: 'menu-back',
@@ -136,9 +137,9 @@ export const IPC_CHANNELS = {
   
   // Settings menu actions
   MENU_SETTINGS_API_KEYS: 'menu-settings-api-keys',
+  MENU_SETTINGS_INTERFACE: 'menu-settings-interface',
   MENU_SETTINGS_AI_MEMORY: 'menu-settings-ai-memory',
+  MENU_SETTINGS_PRIVACY: 'menu-settings-privacy',
   MENU_SETTINGS_CACHE: 'menu-settings-cache',
-  MENU_SETTINGS_EXTENSIONS: 'menu-settings-extensions',
-  MENU_SETTINGS_GENERAL: 'menu-settings-general',
-  MENU_SETTINGS_ADVANCED: 'menu-settings-advanced'
+  MENU_SETTINGS_GENERAL: 'menu-settings-general'
 } as const; 

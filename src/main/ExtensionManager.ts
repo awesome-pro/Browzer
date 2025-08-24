@@ -1,4 +1,4 @@
-import { session, ipcMain, IpcMainInvokeEvent } from 'electron';
+import { session, ipcMain, IpcMainInvokeEvent, app } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as https from 'https';
@@ -22,9 +22,19 @@ export class ExtensionManager {
   private currentSelectedProvider: string = 'openai';
 
   constructor() {
-    // Use process.cwd() to get the correct path in both dev and built versions
-    this.extensionsDir = path.join(process.cwd(), 'extensions');
-    console.log('Extensions directory set to:', this.extensionsDir);
+    // Proper path resolution for both development and packaged apps
+    let appPath: string;
+    if (app.isPackaged) {
+      // In packaged app, use app.asar.unpacked for Python files
+      appPath = path.dirname(app.getAppPath());
+      this.extensionsDir = path.join(appPath, 'app.asar.unpacked', 'extensions');
+    } else {
+      // In development, use current working directory
+      appPath = process.cwd();
+      this.extensionsDir = path.join(appPath, 'extensions');
+    }
+    console.log('[ExtensionManager] App path:', appPath);
+    console.log('[ExtensionManager] Extensions directory set to:', this.extensionsDir);
     
     // Initialize the new extension framework
     const frameworkConfig: ExtensionFrameworkConfig = {
@@ -34,11 +44,39 @@ export class ExtensionManager {
       storageQuota: 200,
       securityLevel: SecurityLevel.MODERATE,
       pythonExecutable: process.platform === 'win32' ? 'python' : 'python3',
-      pythonVirtualEnv: path.join(process.cwd(), '.venv'),
+      pythonVirtualEnv: path.join(appPath, '.venv'),
       trustedSources: ['browzer-store.com', 'localhost']
     };
     
     this.extensionFramework = new ExtensionFramework(frameworkConfig, this.extensionsDir);
+  }
+
+  private getPythonEnvironment(pythonPath: string): NodeJS.ProcessEnv {
+    const env = { ...process.env };
+    
+    // If using Application Support Python bundle
+    if (pythonPath.includes(app.getPath('userData'))) {
+      const appSupportPath = app.getPath('userData');
+      const sitePackagesPath = path.join(appSupportPath, 'python-bundle', 'python-runtime', 'lib', 'python3.13', 'site-packages');
+      
+      // Set PYTHONPATH to include the bundled site-packages
+      const existingPythonPath = env.PYTHONPATH || '';
+      env.PYTHONPATH = existingPythonPath ? `${sitePackagesPath}:${existingPythonPath}` : sitePackagesPath;
+      
+      console.log('[ExtensionManager] Set PYTHONPATH for Application Support Python:', env.PYTHONPATH);
+    } else if (pythonPath.includes('venv')) {
+      // If using development venv
+      const venvSitePackagesPath = path.join(process.cwd(), 'agents', 'venv', 'lib', 'python3.9', 'site-packages');
+      
+      const existingPythonPath = env.PYTHONPATH || '';
+      env.PYTHONPATH = existingPythonPath ? `${venvSitePackagesPath}:${existingPythonPath}` : venvSitePackagesPath;
+      
+      console.log('[ExtensionManager] Set PYTHONPATH for venv Python:', env.PYTHONPATH);
+    } else {
+      console.log('[ExtensionManager] Using system Python, no PYTHONPATH modification needed');
+    }
+    
+    return env;
   }
 
   async initialize(): Promise<void> {
@@ -154,9 +192,47 @@ export class ExtensionManager {
   // Route request to appropriate extension based on user intent
   async routeRequest(userRequest: string): Promise<{extensionId: string, confidence: number, reason: string, matchedKeywords: string[]} & {type?: string, success?: boolean, error?: string, data?: any, workflow_info?: any}> {
     try {
-      // Use the smart router for better semantic understanding
-      const routerPath = path.join(__dirname, '../../extensions-framework/core/smart_extension_router.py');
-      const pythonExecutable = process.platform === 'win32' ? 'python' : 'python3';
+      // Use proper path resolution for the smart router
+      let routerPath: string;
+      let pythonExecutable: string;
+      
+      if (app.isPackaged) {
+        // In packaged app, use app.asar.unpacked for Python files
+        const appPath = path.dirname(app.getAppPath());
+        routerPath = path.join(appPath, 'app.asar.unpacked', 'extensions-framework', 'core', 'smart_extension_router.py');
+      } else {
+        // In development
+        routerPath = path.join(process.cwd(), 'extensions-framework', 'core', 'smart_extension_router.py');
+      }
+      
+      // First try Application Support Python
+      const appSupportPath = app.getPath('userData');
+      pythonExecutable = path.join(appSupportPath, 'python-bundle', 'python-runtime', 'bin', 'python');
+      
+      console.log('[ExtensionManager] Router path:', routerPath);
+      console.log('[ExtensionManager] Checking Application Support Python:', pythonExecutable);
+      
+      // Fallback logic
+      if (!fs.existsSync(pythonExecutable)) {
+        console.warn('[ExtensionManager] Application Support Python not found');
+        
+        // In development, try local venv
+        if (!app.isPackaged) {
+          const venvPythonPath = path.join(process.cwd(), 'agents', 'venv', 'bin', 'python');
+          if (fs.existsSync(venvPythonPath)) {
+            console.log('[ExtensionManager] Using development venv Python');
+            pythonExecutable = venvPythonPath;
+          } else {
+            console.warn('[ExtensionManager] No Python found, using system Python');
+            pythonExecutable = process.platform === 'win32' ? 'python' : 'python3';
+          }
+        } else {
+          console.warn('[ExtensionManager] Using system Python as fallback');
+          pythonExecutable = process.platform === 'win32' ? 'python' : 'python3';
+        }
+      } else {
+        console.log('[ExtensionManager] Using Application Support Python bundle');
+      }
       
       console.log(`[ExtensionManager] Routing request: "${userRequest}"`);
       
@@ -176,12 +252,22 @@ export class ExtensionManager {
       return new Promise((resolve, reject) => {
         const { spawn } = require('child_process');
         // Add --routing-only flag to ensure the smart router only does routing, not execution
-        const python = spawn(pythonExecutable, [routerPath, this.extensionsDir, userRequest, '--routing-only'], {
+        // Set up Python environment with proper PYTHONPATH
+        const pythonEnv = this.getPythonEnvironment(pythonExecutable);
+        
+        const python = spawn(pythonExecutable, [routerPath, this.extensionsDir, '--routing-only'], {
           env: {
-            ...process.env,
+            ...pythonEnv,
             WORKFLOW_DATA: JSON.stringify(workflowData)
-          }
+          },
+          stdio: ['pipe', 'pipe', 'pipe']
         });
+        
+        // Pass user request via stdin to avoid E2BIG error with long queries
+        if (python.stdin) {
+          python.stdin.write(userRequest);
+          python.stdin.end();
+        }
         
         let output = '';
         let errorOutput = '';
