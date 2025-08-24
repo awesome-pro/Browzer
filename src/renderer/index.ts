@@ -6,6 +6,7 @@ import WorkflowProgressIndicator from './components/WorkflowProgress';
 import { devToolsManager } from './components/DevToolsManager';
 import { MemoryService } from './services/MemoryService';
 import { TextProcessing } from './utils/textProcessing';
+import { McpClientManager } from './services/McpClientManager';
 
 // Import Electron APIs
 // Use electronAPI from preload script instead of direct electron access
@@ -47,6 +48,90 @@ let activeTabId: string = '';
 let nextTabId = 1;
 let webviewsContainer: HTMLElement | null = null;
 let urlBar: HTMLInputElement | null = null;
+
+// Global MCP Manager instance
+let mcpManager: McpClientManager | null = null;
+
+// Initialize MCP Manager
+function initializeMcpManager(): void {
+  try {
+    if (!mcpManager) {
+      console.log('[MCP] Initializing MCP Manager for Ask queries...');
+      mcpManager = new McpClientManager();
+      console.log('[MCP] MCP Manager initialized successfully');
+    }
+  } catch (error) {
+    console.error('[MCP] Failed to initialize MCP Manager:', error);
+    mcpManager = null;
+  }
+}
+
+// Test MCP integration (global function for debugging)
+(window as any).testMcpIntegration = async function() {
+  console.log('🧪 Testing MCP Integration in Ask Pipeline...');
+  
+  try {
+    const tools = await getMcpToolsForAsk();
+    console.log('✅ MCP Tools Retrieved:', tools.length);
+    
+    if (tools.length > 0) {
+      console.log('📋 Available MCP Tools:');
+      tools.forEach((tool, i) => {
+        console.log(`   ${i + 1}. ${tool.name} (${tool.serverName})`);
+        console.log(`      Description: ${tool.description || 'No description'}`);
+      });
+      
+      console.log('\n💡 To test: Ask a question that could use these tools');
+      console.log('   Example: "Find my latest email" (if gmail tools available)');
+      console.log('   Example: "Create a Trello card" (if trello tools available)');
+    } else {
+      console.log('⚠️ No MCP tools found. Make sure you have:');
+      console.log('   1. Added MCP servers in Settings → MCP Servers');
+      console.log('   2. Enabled the servers');
+      console.log('   3. Servers are connected successfully');
+    }
+    
+    return tools;
+  } catch (error) {
+    console.error('❌ MCP Integration test failed:', error);
+    return [];
+  }
+};
+
+// Get available MCP tools for Ask queries
+async function getMcpToolsForAsk(): Promise<any[]> {
+  if (!mcpManager) {
+    console.log('[MCP] No MCP Manager available, returning empty tools list');
+    return [];
+  }
+
+  try {
+    const toolNames = await mcpManager.listAllTools();
+    const tools = [];
+    
+    for (const toolName of toolNames) {
+      const toolInfo = mcpManager.getToolInfo(toolName);
+      if (toolInfo) {
+        tools.push({
+          name: toolName,
+          description: toolInfo.description || '',
+          inputSchema: toolInfo.inputSchema || {},
+          serverName: toolInfo.serverName
+        });
+      }
+    }
+    
+    console.log(`[MCP] Retrieved ${tools.length} tools for Ask query`);
+    if (tools.length > 0) {
+      console.log('[MCP] Available tools:', tools.map(t => t.name).join(', '));
+    }
+    return tools;
+  } catch (error) {
+    console.error('[MCP] Error getting MCP tools:', error);
+    return [];
+  }
+}
+
 let backBtn: HTMLButtonElement | null = null;
 let forwardBtn: HTMLButtonElement | null = null;
 let reloadBtn: HTMLButtonElement | null = null;
@@ -317,6 +402,9 @@ document.addEventListener('DOMContentLoaded', () => {
   initializeUI();
   setupEventListeners();
   setupWorkflowEventListeners();
+  
+  // Initialize MCP Manager for Ask queries
+  initializeMcpManager();
   // setupExtensionsPanel(); // Deprecated - settings now open in new tab
   initializeSidebar(); // Initialize sidebar layout from saved settings
   setupAgentControls();
@@ -2923,7 +3011,8 @@ async function executeAgent(): Promise<void> {
           selectedProvider: provider,
           selectedModel: 'claude-3-5-sonnet-20241022', // Always use Claude 3.5 Sonnet
           isQuestion: false,
-          conversationHistory: await buildConversationHistoryWithMemories(url, query)
+          conversationHistory: await buildConversationHistoryWithMemories(url, query),
+          mcpTools: await getMcpToolsForAsk() // Add MCP tools to workflow data
         };
 
         await ipcRenderer.invoke('execute-workflow', {
@@ -2983,7 +3072,8 @@ async function executeAgent(): Promise<void> {
       query,
       pageContent,
       isQuestion: false,
-      conversationHistory: await buildConversationHistoryWithMemories(url, query)
+      conversationHistory: await buildConversationHistoryWithMemories(url, query),
+      mcpTools: await getMcpToolsForAsk() // Add MCP tools to extension data
     };
     
     console.log(`Executing single extension: ${extensionId} (confidence: ${routingResult.confidence}) with action: ${action}`);
@@ -3496,7 +3586,8 @@ async function processFollowupQuestion(question: string): Promise<void> {
           selectedProvider: provider,
           selectedModel: 'claude-3-5-sonnet-20241022', // Always use Claude 3.5 Sonnet
           isQuestion: true,
-          conversationHistory: await buildConversationHistoryWithMemories(currentUrl, question)
+          conversationHistory: await buildConversationHistoryWithMemories(currentUrl, question),
+          mcpTools: await getMcpToolsForAsk() // Add MCP tools to workflow data
         };
 
         await ipcRenderer.invoke('execute-workflow', {
@@ -3552,7 +3643,8 @@ async function processFollowupQuestion(question: string): Promise<void> {
       query: questionRequest,
       pageContent,
       isQuestion: true,
-      conversationHistory: await buildConversationHistoryWithMemories(currentUrl, question)
+      conversationHistory: await buildConversationHistoryWithMemories(currentUrl, question),
+      mcpTools: await getMcpToolsForAsk() // Add MCP tools to extension data
     };
     
     console.log(`[processFollowupQuestion] Executing extension with question: ${extensionId} (confidence: ${routingResult.confidence}) - ${question}`);
@@ -3781,7 +3873,8 @@ async function processFollowupQuestionWithContexts(question: string, contexts: W
           selectedProvider: provider,
           selectedModel: 'claude-3-5-sonnet-20241022', // Always use Claude 3.5 Sonnet
           isQuestion: true,
-          conversationHistory: await buildConversationHistoryWithMemories(currentUrl, question)
+          conversationHistory: await buildConversationHistoryWithMemories(currentUrl, question),
+          mcpTools: await getMcpToolsForAsk() // Add MCP tools to workflow data
         };
 
         await ipcRenderer.invoke('execute-workflow', {
@@ -3834,7 +3927,8 @@ async function processFollowupQuestionWithContexts(question: string, contexts: W
       query: questionRequest,
       pageContent: enhancedPageContent,
       isQuestion: true,
-      conversationHistory: await buildConversationHistoryWithMemories(currentUrl, question)
+      conversationHistory: await buildConversationHistoryWithMemories(currentUrl, question),
+      mcpTools: await getMcpToolsForAsk() // Add MCP tools to extension data
     };
     
     console.log(`[processFollowupQuestionWithContexts] Executing extension with question: ${extensionId} (confidence: ${routingResult.confidence}) - ${question}`);

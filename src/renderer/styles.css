@@ -24,6 +24,132 @@ html, body {
     overflow: hidden;
 }
 
+/* ============ MCP SERVERS STYLES ============ */
+.mcp-server-list {
+    margin: 16px 0;
+}
+
+.mcp-row {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    background: #fafafa;
+}
+
+.mcp-name {
+    font-weight: 500;
+    min-width: 120px;
+    color: #1a73e8;
+}
+
+.mcp-url {
+    flex: 1;
+    font-family: monospace;
+    font-size: 12px;
+    color: #5f6368;
+    margin: 0 16px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mcp-toggle {
+    display: flex;
+    align-items: center;
+    margin-right: 12px;
+    font-size: 12px;
+}
+
+.mcp-toggle input[type="checkbox"] {
+    margin-right: 6px;
+}
+
+.mcp-remove {
+    min-width: 80px;
+}
+
+.mcp-status {
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: #f5f5f5;
+    border: 1px solid #ddd;
+    min-width: 100px;
+    text-align: center;
+}
+
+/* MCP Tools Display */
+.mcp-tools-list {
+    margin-top: 12px;
+    padding: 16px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border-left: 4px solid #007acc;
+}
+
+.mcp-tools-header h4 {
+    margin: 0 0 12px 0;
+    color: #333;
+    font-size: 16px;
+}
+
+.mcp-tools-grid {
+    display: grid;
+    gap: 12px;
+}
+
+.mcp-tool-card {
+    background: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 12px;
+}
+
+.mcp-tool-name {
+    font-weight: 600;
+    color: #007acc;
+    margin-bottom: 4px;
+}
+
+.mcp-tool-description {
+    color: #666;
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+
+.mcp-tool-schema details {
+    margin-top: 8px;
+}
+
+.mcp-tool-schema summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: #888;
+    padding: 4px 0;
+}
+
+.mcp-tool-schema pre {
+    background: #f5f5f5;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    overflow-x: auto;
+    margin: 4px 0 0 0;
+}
+
+.mcp-tools-loading, .mcp-tools-empty, .mcp-tools-error {
+    text-align: center;
+    padding: 20px;
+    color: #666;
+}
+
+.mcp-tools-error {
+    color: #d32f2f;
+}
+
 /* ============ CHROME-LIKE BROWSER CONTAINER ============ */
 .browser-container {
     display: flex;

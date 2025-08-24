@@ -94,7 +94,8 @@ export class AgentManager {
         selectedProvider: data.selectedProvider || 'anthropic',
         selectedModel: data.selectedModel || 'claude-3-7-sonnet-latest',
         isQuestion: data.isQuestion || false,
-        conversationHistory: data.conversationHistory || []
+        conversationHistory: data.conversationHistory || [],
+        mcpTools: data.mcpTools || [] // Pass MCP tools to Python workflow
       };
 
       // Execute the workflow with progress monitoring
