@@ -1,5 +1,7 @@
 // Shared types across main and renderer processes
 
+import { RecordingContext } from './recording';
+
 export interface Tab {
   id: string;
   url: string;
@@ -143,3 +145,30 @@ export const IPC_CHANNELS = {
   MENU_SETTINGS_CACHE: 'menu-settings-cache',
   MENU_SETTINGS_GENERAL: 'menu-settings-general'
 } as const; 
+
+// IPC Communication types
+export interface BrowserIPC {
+  // Navigation
+  'browser:navigate': (url: string) => void;
+  'browser:back': () => void;
+  'browser:forward': () => void;
+  'browser:reload': () => void;
+  'browser:stop': () => void;
+  
+  // Tabs
+  'tab:create': (url?: string) => void;
+  'tab:close': (tabId: string) => void;
+  'tab:switch': (tabId: string) => void;
+  
+  // Recording (future)
+  'recording:start': (sessionName: string) => void;
+  'recording:stop': () => void;
+  'recording:save': (context: RecordingContext) => void;
+  
+  // Events from main process
+  'tab:updated': (tab: Tab) => void;
+  'recording:event': (event: any) => void;
+}
+
+
+export * from './recording';

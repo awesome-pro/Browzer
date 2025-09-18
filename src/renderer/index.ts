@@ -1,4 +1,5 @@
 import './styles.css';
+import './recording.css';
 import './components/ExtensionStore.css';
 import './components/WorkflowProgress.css';
 import { ExtensionStore } from './components/ExtensionStore';
@@ -7,6 +8,10 @@ import { devToolsManager } from './components/DevToolsManager';
 import { MemoryService } from './services/MemoryService';
 import { TextProcessing } from './utils/textProcessing';
 import { McpClientManager } from './services/McpClientManager';
+import { RecordingControls } from './components/RecordingControls';
+import { RecordingIndicator } from './components/RecordingIndicator';
+import { SessionManager } from './components/SessionManager';
+import { RecordingEngine } from './components/RecordingEngine';
 
 // Import Electron APIs
 // Use electronAPI from preload script instead of direct electron access
@@ -135,6 +140,13 @@ async function getMcpToolsForAsk(): Promise<any[]> {
 let backBtn: HTMLButtonElement | null = null;
 let forwardBtn: HTMLButtonElement | null = null;
 let reloadBtn: HTMLButtonElement | null = null;
+let startRecordingBtn: HTMLButtonElement | null = null;
+let recordingActiveControls: HTMLElement | null = null;
+let pauseRecordingBtn: HTMLButtonElement | null = null;
+let resumeRecordingBtn: HTMLButtonElement | null = null;
+let stopRecordingBtn: HTMLButtonElement | null = null;
+let recordingTimer: HTMLElement | null = null;
+let recordingEventCount: HTMLElement | null = null;
 let addTabBtn: HTMLButtonElement | null = null;
 let modelSelector: HTMLSelectElement | null = null;
 let agentResults: HTMLElement | null = null;
@@ -470,12 +482,202 @@ function initializeUI(): void {
   // The restoration timeout will either restore saved tabs or create a fallback tab
   // DO NOT create tabs here - this interferes with restoration!
   
+  // Initialize recording system
+  initializeRecordingSystem();
+  
   // Sync API keys with backend
   syncApiKeysWithBackend().catch(error => {
     console.error('Failed to sync API keys during initialization:', error);
   });
   
   console.log('UI initialization complete');
+}
+
+let recordingControls: RecordingControls;
+let recordingIndicator: RecordingIndicator;
+let sessionManager: SessionManager;
+
+function initializeRecordingSystem(): void {
+  console.log('Initializing recording system...');
+  
+  try {
+    // Initialize recording components
+    recordingControls = new RecordingControls();
+    recordingIndicator = new RecordingIndicator();
+    sessionManager = new SessionManager();
+    
+    // Make session manager globally available for button callbacks
+    window.sessionManager = sessionManager;
+    
+    // Add session manager button to toolbar (optional - can be accessed via context menu)
+    addSessionManagerButton();
+    
+    // Listen for recording state changes
+    window.addEventListener('recording:start', () => {
+      setupRecordingForAllWebviews();
+    });
+    
+    // Listen for toast events from recording components
+    window.addEventListener('show-toast', (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const { message, type } = customEvent.detail;
+      showToast(message, type);
+    });
+    
+    // Listen for recording events from webviews
+    window.addEventListener('message', (e) => {
+      if (e.data && e.data.type === 'recording-event') {
+        // Dispatch the event for the recording system to pick up
+        const recordingEvent = new CustomEvent('recording:event', {
+          detail: {
+            type: e.data.eventType,
+            timestamp: e.data.timestamp,
+            data: e.data.eventData,
+            context: { url: e.data.url }
+          }
+        });
+        window.dispatchEvent(recordingEvent);
+      }
+    });
+    
+    console.log('Recording system initialized successfully');
+  } catch (error) {
+    console.error('Failed to initialize recording system:', error);
+  }
+}
+
+function addSessionManagerButton(): void {
+  // Add a button to access session manager (you can customize this)
+  debugger;
+  const toolbarActions = document.querySelector('.toolbar-actions') as HTMLDivElement;
+  if (!toolbarActions) return;
+  
+  const sessionManagerBtn = document.createElement('button');
+  sessionManagerBtn.id = 'sessionManagerBtn';
+  sessionManagerBtn.className = 'action-btn';
+  sessionManagerBtn.title = 'Recording Sessions';
+  sessionManagerBtn.innerHTML = `
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M2 3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3zm1 0v10h10V3H3z"/>
+      <path d="M5 5.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5z"/>
+    </svg>
+  `;
+  
+  sessionManagerBtn.addEventListener('click', () => {
+    sessionManager.show();
+  });
+  
+  // Insert before the extensions button
+  const extensionsBtn = document.getElementById('extensionsBtn') as HTMLButtonElement;
+  if (extensionsBtn) {
+    toolbarActions.insertBefore(sessionManagerBtn, extensionsBtn);
+  } else {
+    toolbarActions.appendChild(sessionManagerBtn);
+  }
+}
+
+function setupRecordingForWebview(webview: any): void {
+  console.log('Setting up recording for webview:', webview.id);
+  
+  try {
+    const recordingEngine = RecordingEngine.getInstance();
+    
+    // Only setup if recording is active
+    if (!recordingEngine.isCurrentlyRecording()) {
+      return;
+    }
+    
+    console.log('📹 Recording is active - webview will be monitored');
+    
+    // The RecordingEngine automatically monitors DOM and events on the page
+    // We just need to inject the recording script into the webview
+    webview.addEventListener('dom-ready', () => {
+      injectRecordingScript(webview);
+    });
+    
+    console.log('✅ Recording setup complete for webview:', webview.id);
+  } catch (error) {
+    console.error('Failed to setup recording for webview:', error);
+  }
+}
+
+function injectRecordingScript(webview: any): void {
+  try {
+    // Inject script to forward events from webview to the main recording engine
+    const script = `
+      (function() {
+        console.log('📹 Recording script injected');
+        
+        // Forward events to parent window
+        function forwardEvent(eventType, eventData) {
+          try {
+            window.parent.postMessage({
+              type: 'recording-event',
+              eventType: eventType,
+              eventData: eventData,
+              timestamp: Date.now(),
+              url: window.location.href
+            }, '*');
+          } catch (e) {
+            console.log('Failed to forward event:', e);
+          }
+        }
+        
+        // Monitor clicks
+        document.addEventListener('click', function(e) {
+          forwardEvent('click', {
+            x: e.clientX,
+            y: e.clientY,
+            target: e.target.tagName,
+            selector: e.target.id ? '#' + e.target.id : e.target.tagName
+          });
+        }, true);
+        
+        // Monitor inputs
+        document.addEventListener('input', function(e) {
+          if (e.target.type !== 'password') {
+            forwardEvent('input', {
+              target: e.target.tagName,
+              selector: e.target.id ? '#' + e.target.id : e.target.tagName,
+              value: e.target.value?.substring(0, 50) // Limit length
+            });
+          }
+        }, true);
+        
+        // Monitor page navigation
+        let currentUrl = window.location.href;
+        setInterval(function() {
+          if (window.location.href !== currentUrl) {
+            currentUrl = window.location.href;
+            forwardEvent('navigation', { url: currentUrl });
+          }
+        }, 1000);
+        
+        console.log('📹 Recording monitoring active');
+      })();
+    `;
+    
+    webview.executeJavaScript(script).catch((error: any) => {
+      console.log('Could not inject recording script:', error);
+    });
+  } catch (error) {
+    console.error('Failed to inject recording script:', error);
+  }
+}
+
+function setupRecordingForAllWebviews(): void {
+  console.log('Setting up recording for all active webviews');
+  
+  try {
+    const webviews = document.querySelectorAll('webview');
+    webviews.forEach((webview) => {
+      setupRecordingForWebview(webview);
+    });
+    
+    console.log(`✅ Recording setup for ${webviews.length} webviews`);
+  } catch (error) {
+    console.error('Failed to setup recording for all webviews:', error);
+  }
 }
 
 function setupWorkflowEventListeners(): void {
@@ -751,7 +953,7 @@ function setupEventListeners(): void {
   // Settings button (renamed from Extensions)
   if (extensionsBtn) {
     extensionsBtn.addEventListener('click', () => {
-      // Open settings in a new tab
+      // sessionManager.show();
       createNewTab('file://browzer-settings');
     });
   }
@@ -1793,6 +1995,9 @@ function setupWebviewEvents(webview: any): void {
     
     updateTabTitle(webview, webview.getTitle());
     updateNavigationButtons();
+    
+    // Setup recording integration for this webview
+    setupRecordingForWebview(webview);
     
     // Track page visit in history - THIS IS THE KEY FIX!
     const url = webview.src;
