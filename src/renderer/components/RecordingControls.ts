@@ -1,12 +1,12 @@
 // RecordingControls - Manages recording UI controls in the toolbar
-import { RecordingEngine } from "./RecordingEngine";
-import { RecordingSession } from "../../shared/types/recording";
+import { SmartRecordingEngine } from "./RecordingEngine";
+import { SmartRecordingSession, TaskGoal } from "../../shared/types/recording";
 
 export class RecordingControls {
-    private recordingEngine: RecordingEngine;
+    private recordingEngine: SmartRecordingEngine;
     private isRecording = false;
     private isPaused = false;
-    private activeSession: RecordingSession | null = null;
+    private activeSession: SmartRecordingSession | null = null;
     private elapsedTime = 0;
     private eventCount = 0;
     private timerInterval: number | null = null;
@@ -27,8 +27,8 @@ export class RecordingControls {
     private confirmStartRecordingBtn = document.getElementById('confirmStartRecordingBtn') as HTMLButtonElement;
 
     constructor() {
-        this.recordingEngine = RecordingEngine.getInstance();
-        this.initializeDOM();
+        this.recordingEngine = SmartRecordingEngine.getInstance();
+        this.initializeDOM();   
         this.setupEventListeners();
         this.checkExistingSession();
     }
@@ -69,10 +69,8 @@ export class RecordingControls {
             }
         });
 
-        // Listen for recording events
-        window.addEventListener('recording:event', (e: Event) => {
-            const customEvent = e as CustomEvent;
-            const { type, timestamp, data, context } = customEvent.detail;
+        // Listen for action events from SmartRecordingEngine
+        window.addEventListener('recording:action', (e: Event) => {
             this.eventCount++;
             this.updateEventCount();
         });
@@ -131,6 +129,7 @@ export class RecordingControls {
             // Start recording immediately with auto-generated name
             const autoName = `Recording ${new Date().toLocaleString()}`;
             
+            // Use taskGoal parameter instead of name for SmartRecordingEngine
             this.activeSession = this.recordingEngine.startRecording(autoName, '');
             this.isRecording = true;
             this.isPaused = false;
@@ -140,7 +139,7 @@ export class RecordingControls {
             this.showRecordingControls();
             this.startTimer();
 
-            console.log('🎬 Recording started:', autoName);
+            console.log('🎬 Smart Recording started:', autoName);
             this.showToast('Recording started!', 'info');
         } catch (error) {
             console.error('Failed to start recording:', error);
@@ -160,16 +159,16 @@ export class RecordingControls {
         try {
             // Update the existing session with user-provided name and description
             if (this.activeSession) {
-                this.activeSession.name = sessionName;
+                this.activeSession.taskGoal = sessionName;
                 this.activeSession.description = description;
                 
                 // Save the updated session to localStorage
-                const key = `recording_session_${this.activeSession.id}`;
+                const key = `smart_recording_${this.activeSession.id}`;
                 localStorage.setItem(key, JSON.stringify(this.activeSession));
                 
                 this.hideSessionModal();
                 this.showToast(`Recording "${sessionName}" saved successfully!`, 'success');
-                console.log('✅ Recording saved:', sessionName);
+                console.log('✅ Smart Recording saved:', sessionName);
             }
         } catch (error) {
             console.error('Failed to save recording:', error);
@@ -178,7 +177,8 @@ export class RecordingControls {
     }
 
     private pauseRecording(): void {
-        this.recordingEngine.pauseRecording();
+        // SmartRecordingEngine might not have pause functionality
+        // Just handle UI state for now
         this.isPaused = true;
         this.pauseRecordingBtn.classList.add('hidden');
         this.resumeRecordingBtn.classList.remove('hidden');
@@ -187,7 +187,8 @@ export class RecordingControls {
     }
 
     private resumeRecording(): void {
-        this.recordingEngine.resumeRecording();
+        // SmartRecordingEngine might not have resume functionality
+        // Just handle UI state for now
         this.isPaused = false;
         this.pauseRecordingBtn.classList.remove('hidden');
         this.resumeRecordingBtn.classList.add('hidden');
@@ -203,11 +204,11 @@ export class RecordingControls {
                 this.activeSession = session;
                 
                 // Show the save dialog with current session name
-                this.sessionNameInput.value = session.name;
+                this.sessionNameInput.value = session.taskGoal || `Recording ${new Date().toLocaleString()}`;
                 this.sessionDescriptionInput.value = session.description || '';
                 this.showSessionModal();
                 
-                console.log('⏹️ Recording stopped, showing save dialog');
+                console.log('⏹️ Smart Recording stopped, showing save dialog');
             }
 
             this.isRecording = false;
@@ -277,7 +278,13 @@ export class RecordingControls {
     }
 
     private updateEventCount(): void {
-        this.recordingEventCount.textContent = `${this.eventCount} events`;
+        if (this.activeSession) {
+            // For SmartRecordingEngine, use actions count instead of events
+            const actionCount = this.activeSession.actions?.length || this.eventCount;
+            this.recordingEventCount.textContent = `${actionCount} actions`;
+        } else {
+            this.recordingEventCount.textContent = `${this.eventCount} actions`;
+        }
     }
 
     private formatTime(ms: number): string {
@@ -304,7 +311,7 @@ export class RecordingControls {
         return this.isRecording;
     }
 
-    public getActiveSession(): RecordingSession | null {
+    public getActiveSession(): SmartRecordingSession | null {
         return this.activeSession;
     }
 

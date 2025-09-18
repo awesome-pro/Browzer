@@ -1,11 +1,12 @@
 // SessionManager - Manages and displays recording sessions
-import { RecordingEngine } from './RecordingEngine';
-import { RecordingSession, MLContext, EventType } from '../../shared/types/recording';
+import { SmartRecordingEngine } from './RecordingEngine';
+import { SmartRecordingSession, ActionType } from '../../shared/types/recording';
+import { AIPromptGenerator } from './PropmtGenerator';
 
 export class SessionManager {
-    private recordingEngine: RecordingEngine;
-    private sessions: RecordingSession[] = [];
-    private selectedSession: RecordingSession | null = null;
+    private recordingEngine: SmartRecordingEngine;
+    private sessions: SmartRecordingSession[] = [];
+    private selectedSession: SmartRecordingSession | null = null;
 
     // DOM elements
     private sessionModal = document.getElementById('sessionManagerModal') as HTMLElement;
@@ -15,7 +16,7 @@ export class SessionManager {
     private closeBtn = document.getElementById('closeSessionManagerBtn') as HTMLButtonElement;
 
     constructor() {
-        this.recordingEngine = RecordingEngine.getInstance();
+        this.recordingEngine = SmartRecordingEngine.getInstance();
         this.initializeDOM();
         this.setupEventListeners();
     }
@@ -59,6 +60,7 @@ export class SessionManager {
 
     private async loadSessions(): Promise<void> {
         try {
+            // For SmartRecordingEngine, we need to manually load sessions from localStorage
             this.sessions = this.recordingEngine.getAllSessions();
             this.renderSessionsList();
             
@@ -85,14 +87,14 @@ export class SessionManager {
         this.sessionsList.innerHTML = this.sessions.map(session => `
             <div class="session-item" data-session-id="${session.id}">
                 <div class="session-item-header">
-                    <div class="session-item-name">${this.escapeHtml(session.name)}</div>
+                    <div class="session-item-name">${this.escapeHtml(session.taskGoal)}</div>
                     <div class="session-item-date">${this.formatDate(session.startTime)}</div>
                 </div>
                 ${session.description ? `<div class="session-item-description">${this.escapeHtml(session.description)}</div>` : ''}
                 <div class="session-item-stats">
-                    <span>${this.formatDuration(session.metadata.totalDuration)}</span>
-                    <span>${session.metadata.totalEvents} events</span>
-                    <span>${session.metadata.userInteractions} interactions</span>
+                    <span>${this.formatDuration(session.metadata.duration)}</span>
+                    <span>${session.metadata.totalActions} actions</span>
+                    <span>${session.metadata.complexity} complexity</span>
                 </div>
             </div>
         `).join('');
@@ -124,18 +126,18 @@ export class SessionManager {
         this.renderSessionDetails(session);
     }
 
-    private renderSessionDetails(session: RecordingSession): void {
-        const recentEvents = session.events.slice(-10).reverse();
+    private renderSessionDetails(session: SmartRecordingSession): void {
+        const recentActions = session.actions.slice(-10).reverse();
         
         this.sessionDetails.innerHTML = `
             <div class="session-details-header">
                 <div>
-                    <h3 class="session-details-title">${this.escapeHtml(session.name)}</h3>
+                    <h3 class="session-details-title">${this.escapeHtml(session.taskGoal)}</h3>
                     ${session.description ? `<p class="session-details-description">${this.escapeHtml(session.description)}</p>` : ''}
                 </div>
                 <div class="session-details-actions">
                     <button class="session-action-btn" onclick="sessionManager.exportSession('${session.id}')">Export</button>
-                    <button class="session-action-btn primary" onclick="sessionManager.exportMLContext('${session.id}')">Export ML</button>
+                    <button class="session-action-btn primary" onclick="sessionManager.generatePrompt('${session.id}')">Generate Prompt</button>
                     <button class="session-action-btn danger" onclick="sessionManager.deleteSession('${session.id}')">Delete</button>
                 </div>
             </div>
@@ -143,35 +145,32 @@ export class SessionManager {
             <div class="session-metadata-grid">
                 <div class="session-metadata-item">
                     <div class="session-metadata-label">Duration</div>
-                    <div class="session-metadata-value">${this.formatDuration(session.metadata.totalDuration)}</div>
+                    <div class="session-metadata-value">${this.formatDuration(session.metadata.duration)}</div>
                 </div>
                 <div class="session-metadata-item">
-                    <div class="session-metadata-label">Events</div>
-                    <div class="session-metadata-value">${session.metadata.totalEvents}</div>
+                    <div class="session-metadata-label">Actions</div>
+                    <div class="session-metadata-value">${session.metadata.totalActions}</div>
                 </div>
                 <div class="session-metadata-item">
-                    <div class="session-metadata-label">Interactions</div>
-                    <div class="session-metadata-value">${session.metadata.userInteractions}</div>
+                    <div class="session-metadata-label">Complexity</div>
+                    <div class="session-metadata-value">${session.metadata.complexity}</div>
                 </div>
                 <div class="session-metadata-item">
-                    <div class="session-metadata-label">Network</div>
-                    <div class="session-metadata-value">${session.metadata.networkRequests}</div>
+                    <div class="session-metadata-label">Pages</div>
+                    <div class="session-metadata-value">${session.metadata.pagesVisited.length}</div>
                 </div>
             </div>
 
             <div class="session-events-section">
-                <h4>Recent Events (Last 10)</h4>
+                <h4>Recent Actions (Last 10)</h4>
                 <div class="session-events-list">
-                    ${recentEvents.map(event => `
+                    ${recentActions.map(action => `
                         <div class="session-event-item">
-                            <div class="session-event-icon ${event.type}">
-                                ${this.getEventIcon(event.type)}
-                            </div>
                             <div class="session-event-content">
-                                <div class="session-event-type">${this.formatEventType(event.type)}</div>
-                                <div class="session-event-details">${this.getEventDetails(event)}</div>
+                                <div class="session-event-type">${this.formatActionType(action.type)}</div>
+                                <div class="session-event-details">${action.description}</div>
                             </div>
-                            <div class="session-event-time">${this.formatTime(event.timestamp)}</div>
+                            <div class="session-event-time">${this.formatTime(action.timestamp)}</div>
                         </div>
                     `).join('')}
                 </div>
@@ -209,30 +208,39 @@ export class SessionManager {
         
         const link = document.createElement('a');
         link.href = url;
-        link.download = `recording_${session.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${new Date(session.startTime).toISOString().split('T')[0]}.json`;
+        link.download = `smart_recording_${session.taskGoal.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${new Date(session.startTime).toISOString().split('T')[0]}.json`;
         link.click();
         
         URL.revokeObjectURL(url);
     }
 
-    public exportMLContext(sessionId: string): void {
-        const context = this.recordingEngine.exportToMLFormat(sessionId);
-        if (!context) {
-            alert('Failed to generate ML context for this session');
+    public generatePrompt(sessionId: string): void {
+        const session = this.sessions.find(s => s.id === sessionId);
+        if (!session) {
+            alert('Session not found');
             return;
         }
         
-        const dataStr = JSON.stringify(context, null, 2);
-        const dataBlob = new Blob([dataStr], { type: 'application/json' });
-        const url = URL.createObjectURL(dataBlob);
-        
-        const session = this.sessions.find(s => s.id === sessionId);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `ml_context_${session?.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${new Date().toISOString().split('T')[0]}.json`;
-        link.click();
-        
-        URL.revokeObjectURL(url);
+        try {
+            // Use AIPromptGenerator to create a prompt from the session
+            const prompt = AIPromptGenerator.generateTaskPrompt(session);
+            
+            // Export the prompt as a text file
+            const dataBlob = new Blob([prompt], { type: 'text/plain' });
+            const url = URL.createObjectURL(dataBlob);
+            
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `prompt_${session.taskGoal.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${new Date().toISOString().split('T')[0]}.txt`;
+            link.click();
+            
+            URL.revokeObjectURL(url);
+            
+            console.log('Prompt generated for session:', session.taskGoal);
+        } catch (error) {
+            console.error('Failed to generate prompt:', error);
+            alert('Failed to generate prompt');
+        }
     }
 
     public deleteSession(sessionId: string): void {
@@ -241,7 +249,8 @@ export class SessionManager {
         }
 
         try {
-            localStorage.removeItem(`recording_session_${sessionId}`);
+            // Use the smart_recording_ prefix for localStorage keys
+            localStorage.removeItem(`smart_recording_${sessionId}`);
             this.loadSessions();
             
             if (this.selectedSession?.id === sessionId) {
@@ -249,7 +258,7 @@ export class SessionManager {
                 this.showEmptyState();
             }
             
-            console.log('Session deleted:', sessionId);
+            console.log('Smart recording session deleted:', sessionId);
         } catch (error) {
             console.error('Failed to delete session:', error);
             alert('Failed to delete session');
@@ -276,30 +285,8 @@ export class SessionManager {
         return new Date(timestamp).toLocaleTimeString();
     }
 
-    private formatEventType(type: EventType): string {
+    private formatActionType(type: ActionType): string {
         return type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
-    }
-
-    private getEventIcon(type: EventType): string {
-        switch (type) {
-            case EventType.CLICK: return '👆';
-            case EventType.INPUT: return '⌨️';
-            case EventType.SCROLL: return '📜';
-            case EventType.DOM_MUTATION: return '🔄';
-            case EventType.NETWORK_REQUEST: return '🌐';
-            case EventType.PAGE_LOAD: return '📄';
-            default: return '📝';
-        }
-    }
-
-    private getEventDetails(event: any): string {
-        if (event.data.element?.selector) {
-            return event.data.element.selector;
-        }
-        if (event.data.network?.url) {
-            return event.data.network.url;
-        }
-        return event.context.url;
     }
 
     private escapeHtml(text: string): string {

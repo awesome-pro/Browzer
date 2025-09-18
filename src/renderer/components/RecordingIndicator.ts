@@ -1,11 +1,11 @@
 // RecordingIndicator - Shows recording status overlay with live feedback
-import { RecordingEngine } from "./RecordingEngine";
-import { RecordingEvent, EventType } from "../../shared/types/recording";
+import { SmartRecordingEngine } from "./RecordingEngine";
+import { SemanticAction, ActionType } from "../../shared/types/recording";
 
 export class RecordingIndicator {
-    private recordingEngine: RecordingEngine;
+    private recordingEngine: SmartRecordingEngine;
     private isRecording = false;
-    private lastEvent: RecordingEvent | null = null;
+    private lastEvent: SemanticAction | null = null;
     private eventCount = 0;
 
     // DOM elements
@@ -15,7 +15,7 @@ export class RecordingIndicator {
     private lastEventDisplay = document.getElementById('recordingLastEvent') as HTMLElement;
 
     constructor() {
-        this.recordingEngine = RecordingEngine.getInstance();
+        this.recordingEngine = SmartRecordingEngine.getInstance();
         this.initializeDOM();
         this.setupEventListeners();
         this.checkInitialState();
@@ -32,7 +32,7 @@ export class RecordingIndicator {
         // Listen for recording events
         window.addEventListener('recording:event', (e: Event) => {
             const customEvent = e as CustomEvent;
-            const recordingEvent = customEvent.detail as RecordingEvent;
+            const recordingEvent = customEvent.detail as SemanticAction;
             this.handleRecordingEvent(recordingEvent);
         });
 
@@ -87,7 +87,7 @@ export class RecordingIndicator {
         this.startTimer();
     }
 
-    private handleRecordingEvent(recordingEvent: RecordingEvent): void {
+    private handleRecordingEvent(recordingEvent: SemanticAction): void {
         if (!this.isRecording) return;
 
         this.lastEvent = recordingEvent;
@@ -117,10 +117,10 @@ export class RecordingIndicator {
     }
 
     private updateEventCount(): void {
-        this.indicatorEvents.textContent = `${this.eventCount} events`;
+        this.indicatorEvents.textContent = `${this.eventCount} actions`;
     }
 
-    private showLastEvent(event: RecordingEvent): void {
+    private showLastEvent(event: SemanticAction): void {
         const eventDescription = this.getEventDescription(event);
         this.lastEventDisplay.textContent = eventDescription;
         
@@ -139,58 +139,26 @@ export class RecordingIndicator {
         }, 200);
     }
 
-    private getEventDescription(event: RecordingEvent): string {
-        const icon = this.getEventIcon(event.type);
+    private getEventDescription(event: SemanticAction): string {
         
         switch (event.type) {
-            case EventType.CLICK:
-                return `${icon} Clicked ${event.data.element?.tagName || 'element'}`;
-            case EventType.INPUT:
-                return `${icon} Typed in ${event.data.element?.tagName || 'input'}`;
-            case EventType.SCROLL:
-                return `${icon} Scrolled page`;
-            case EventType.DOM_MUTATION:
-                return `${icon} DOM changed`;
-            case EventType.NETWORK_REQUEST:
-                return `${icon} Network request`;
-            case EventType.PAGE_LOAD:
-                return `${icon} Page loaded`;
-            case EventType.NAVIGATION:
-                return `${icon} Navigation`;
-            case EventType.KEY_DOWN:
-                return `${icon} Key pressed`;
-            case EventType.FORM_SUBMIT:
-                return `${icon} Form submitted`;
+            case ActionType.CLICK:
+                return `Clicked ${event.target.description || 'element'}`;
+            case ActionType .TEXT_INPUT:
+                return `Typed in ${event.target.description || 'input'}`;
+            case ActionType.SCROLL:
+                return `Scrolled page`;
+            case ActionType.NAVIGATION:
+                return `DOM changed`;
+            case ActionType.FORM_SUBMIT:
+                return `Form submitted`;
+            case ActionType.SELECT:
+                return `Selected ${event.target.description || 'element'}`;
+            case ActionType.TOGGLE:
+                return `Toggled ${event.target.description || 'element'}`;
+            case ActionType.WAIT:
             default:
-                return `${icon} ${event.type.replace('_', ' ')}`;
-        }
-    }
-
-    private getEventIcon(eventType: EventType): string {
-        switch (eventType) {
-            case EventType.CLICK:
-            case EventType.DOUBLE_CLICK:
-                return '👆';
-            case EventType.INPUT:
-            case EventType.KEY_DOWN:
-            case EventType.KEY_UP:
-                return '⌨️';
-            case EventType.SCROLL:
-                return '📜';
-            case EventType.DOM_MUTATION:
-                return '🔄';
-            case EventType.NETWORK_REQUEST:
-                return '🌐';
-            case EventType.PAGE_LOAD:
-            case EventType.NAVIGATION:
-                return '📄';
-            case EventType.FORM_SUBMIT:
-                return '📝';
-            case EventType.FOCUS:
-            case EventType.BLUR:
-                return '🎯';
-            default:
-                return '📝';
+                return `${event.type.replace('_', ' ')}`;
         }
     }
 

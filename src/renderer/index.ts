@@ -12,7 +12,7 @@ import { McpClientManager } from './services/McpClientManager';
 import { RecordingControls } from './components/RecordingControls';
 import { RecordingIndicator } from './components/RecordingIndicator';
 import { SessionManager } from './components/SessionManager';
-import { RecordingEngine } from './components/RecordingEngine';
+import { SmartRecordingEngine } from './components/RecordingEngine';
 import { initializeSessionList, processExecuteWithRecording } from './components/ExecuteModeHandlers';
 
 // Import Electron APIs
@@ -582,7 +582,7 @@ function setupRecordingForWebview(webview: any): void {
   console.log('Setting up recording for webview:', webview.id);
   
   try {
-    const recordingEngine = RecordingEngine.getInstance();
+    const recordingEngine = SmartRecordingEngine.getInstance();
     
     // Only setup if recording is active
     if (!recordingEngine.isCurrentlyRecording()) {
@@ -591,7 +591,7 @@ function setupRecordingForWebview(webview: any): void {
     
     console.log('📹 Recording is active - webview will be monitored');
     
-    // The RecordingEngine automatically monitors DOM and events on the page
+    // The SmartRecordingEngine automatically monitors DOM and events on the page
     // We just need to inject the recording script into the webview
     webview.addEventListener('dom-ready', () => {
       injectRecordingScript(webview);

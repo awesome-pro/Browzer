@@ -4,13 +4,13 @@
  * Handlers for the Execute mode in the chat sidebar
  */
 
-import { RecordingSession } from '../../shared/types/recording';
+import { SmartRecordingSession } from '../../shared/types/recording';
 import { RecordingSessionList } from './RecordingSessionList';
 import { RecordingExecutor } from './RecordingExecutor';
 
 // Global variables
 let sessionListComponent: RecordingSessionList | null = null;
-let selectedRecordingSession: RecordingSession | null = null;
+let selectedRecordingSession: SmartRecordingSession | null = null;
 
 /**
  * Initialize the session list sidebar for Execute mode
@@ -48,13 +48,13 @@ export function initializeSessionList(): void {
     sessionListComponent = new RecordingSessionList(
       sessionListContainer as HTMLElement,
       (session) => {
-        console.log('[SessionList] Session selected:', session.name);
+        console.log('[SessionList] Session selected:', session.taskGoal);
         selectedRecordingSession = session;
         
         // Update the input placeholder to reflect selected session
         const chatInput = document.getElementById('chatInput') as HTMLInputElement;
         if (chatInput) {
-          chatInput.placeholder = `Execute task using "${session.name}"...`;
+          chatInput.placeholder = `Execute task using "${session.taskGoal}"...`;
         }
       }
     );
@@ -115,19 +115,19 @@ export async function processExecuteWithRecording(instruction: string): Promise<
         if (lastMessage) {
           // If it's a loading message, replace it
           if (lastMessage.innerHTML.includes('class="loading"')) {
-            lastMessage.innerHTML = `Executing based on "${selectedRecordingSession?.name}":\n\n${message}`;
+            lastMessage.innerHTML = `Executing based on "${selectedRecordingSession?.taskGoal}":\n\n${message}`;
             progressMessage = message;
           } else {
             // Add to existing message
             progressMessage += `\n${message}`;
-            lastMessage.innerHTML = `Executing based on "${selectedRecordingSession?.name}":\n\n${progressMessage}`;
+            lastMessage.innerHTML = `Executing based on "${selectedRecordingSession?.taskGoal}":\n\n${progressMessage}`;
           }
         }
       }
     };
     
     // Execute the task
-    console.log('[processExecuteWithRecording] Executing task with recording:', selectedRecordingSession.name);
+    console.log('[processExecuteWithRecording] Executing task with recording:', selectedRecordingSession.taskGoal);
     const result = await RecordingExecutor.executeTask(
       selectedRecordingSession,
       instruction,
@@ -283,7 +283,7 @@ function getActiveWebviewElement(): HTMLElement | null {
 /**
  * Get the currently selected recording session
  */
-export function getSelectedRecordingSession(): RecordingSession | null {
+export function getSelectedRecordingSession(): SmartRecordingSession | null {
   return selectedRecordingSession;
 }
 

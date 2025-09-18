@@ -5,7 +5,7 @@
  * to understand and execute similar tasks with variations.
  */
 
-import { RecordingSession, RecordingEvent, EventType } from '../../shared/types/recording';
+import { SmartRecordingSession, SemanticAction, ActionType } from '../../shared/types/recording';
 import { DoAgent } from '../services/DoAgent';
 
 // Interface for the context provided to DoAgent
@@ -36,15 +36,15 @@ export class RecordingExecutor {
   /**
    * Convert a recording session to a context format that can be used by DoAgent
    */
-  public static convertSessionToContext(session: RecordingSession, taskDescription?: string): RecordingContext {
+  public static convertSessionToContext(session: SmartRecordingSession, taskDescription?: string): RecordingContext {
     // Filter out relevant events (clicks, inputs, navigation)
-    const relevantEvents = session.events.filter(event => {
+    const relevantEvents = session.actions.filter(event => {
       return [
-        EventType.CLICK, 
-        EventType.INPUT, 
-        EventType.NAVIGATION, 
-        EventType.FORM_SUBMIT, 
-        EventType.PAGE_LOAD
+        ActionType.CLICK, 
+        ActionType.TEXT_INPUT, 
+        ActionType.NAVIGATION, 
+        ActionType.FORM_SUBMIT, 
+        ActionType.SCROLL
       ].includes(event.type);
     });
 
@@ -54,13 +54,13 @@ export class RecordingExecutor {
     });
 
     return {
-      taskDescription: taskDescription || session.name,
+      taskDescription: taskDescription || session.taskGoal,
       recordedSteps: steps,
       metadata: {
-        recordingDuration: session.metadata.totalDuration,
-        totalEvents: session.metadata.totalEvents,
-        url: session.url,
-        browser: session.userAgent || 'Unknown',
+        recordingDuration: session.metadata.duration,
+        totalEvents: session.metadata.totalActions,
+        url: session.initialContext.url,
+        browser: session.initialContext.userAgent || 'Unknown',
         recordedAt: new Date(session.startTime).toISOString()
       }
     };
@@ -69,7 +69,7 @@ export class RecordingExecutor {
   /**
    * Convert a recording event to a simplified step
    */
-  private static convertEventToStep(event: RecordingEvent, stepNumber: number): RecordedStep {
+  private static convertEventToStep(event: SemanticAction, stepNumber: number): RecordedStep {
     const step: RecordedStep = {
       stepNumber,
       action: this.mapEventTypeToAction(event.type),
@@ -83,35 +83,35 @@ export class RecordingExecutor {
 
     // Add specific properties based on event type
     switch (event.type) {
-      case EventType.CLICK:
-        if (event.data.element) {
-          step.selector = event.data.element.selector;
-          step.target = event.data.element.tagName || 'element';
+      case ActionType.CLICK:
+        if (event.target) {
+          step.selector = event.target.selector;
+          step.target = event.target.description || 'element';
         }
         break;
 
-      case EventType.INPUT:
-        if (event.data.element) {
-          step.selector = event.data.element.selector;
-          step.target = event.data.element.tagName || 'input';
+      case ActionType.TEXT_INPUT:
+        if (event.target) {
+          step.selector = event.target.selector;
+          step.target = event.target.description || 'input';
         }
-        if (event.data.value) {
-          step.value = typeof event.data.value === 'string' 
-            ? event.data.value 
-            : JSON.stringify(event.data.value);
+        if (event.value) {
+          step.value = typeof event.value === 'string' 
+            ? event.value 
+            : JSON.stringify(event.value);
         }
         break;
 
-      case EventType.NAVIGATION:
-      case EventType.PAGE_LOAD:
+      case ActionType.NAVIGATION:
+      case ActionType.SCROLL:
         if (event.context?.url) {
           step.target = event.context.url;
         }
         break;
 
-      case EventType.FORM_SUBMIT:
-        if (event.data.element) {
-          step.selector = event.data.element.selector;
+      case ActionType.FORM_SUBMIT:
+        if (event.target) {
+          step.selector = event.target.selector;
           step.target = 'form';
         }
         break;
@@ -123,13 +123,13 @@ export class RecordingExecutor {
   /**
    * Map EventType to a more readable action name for the agent
    */
-  private static mapEventTypeToAction(eventType: EventType): string {
+  private static mapEventTypeToAction(eventType: ActionType): string {
     switch (eventType) {
-      case EventType.CLICK: return 'click';
-      case EventType.INPUT: return 'type';
-      case EventType.NAVIGATION: return 'navigate';
-      case EventType.PAGE_LOAD: return 'load_page';
-      case EventType.FORM_SUBMIT: return 'submit_form';
+      case ActionType.CLICK: return 'click';
+      case ActionType.TEXT_INPUT: return 'type';
+      case ActionType.NAVIGATION: return 'navigate';
+      case ActionType.SCROLL: return 'load_page';
+      case ActionType.FORM_SUBMIT: return 'submit_form';
       default: return eventType.toLowerCase();
     }
   }
@@ -188,7 +188,7 @@ export class RecordingExecutor {
    * Execute a task based on a recording session and user instruction
    */
   public static async executeTask(
-    session: RecordingSession, 
+    session: SmartRecordingSession, 
     userInstruction: string, 
     webview: any,
     onProgress?: (message: string) => void
@@ -199,7 +199,7 @@ export class RecordingExecutor {
       }
       
       // Convert session to context
-      const context = this.convertSessionToContext(session, session.name);
+      const context = this.convertSessionToContext(session, session.taskGoal);
       
       // Generate prompt
       const prompt = this.generateAgentPrompt(context, userInstruction);

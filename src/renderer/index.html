@@ -76,15 +76,9 @@
                     
                     <!-- Recording Active Controls (hidden by default) -->
                     <div id="recordingActiveControls" class="recording-active-controls hidden">
-                        <div class="recording-status">
-                            <div class="recording-indicator">
-                                <div class="recording-dot"></div>
-                                <span class="recording-text">REC</span>
-                            </div>
-                            <div class="recording-info">
-                                <span id="recordingTimer" class="recording-timer">00:00</span>
-                                <span id="recordingEventCount" class="recording-event-count">0 events</span>
-                            </div>
+                        <div class="recording-info">
+                            <span id="recordingTimer" class="recording-timer">00:00</span>
+                            <span id="recordingEventCount" class="recording-event-count">0 actions</span>
                         </div>
                         <div class="recording-buttons">
                             <button id="pauseRecordingBtn" class="action-btn recording-control-btn" title="Pause Recording">
@@ -441,23 +435,6 @@
                 <button id="cancelRecordingBtn" class="recording-modal-btn recording-modal-btn-secondary">Cancel</button>
                 <button id="confirmStartRecordingBtn" class="recording-modal-btn recording-modal-btn-primary">Start Recording</button>
             </div>
-        </div>
-    </div>
-
-    <!-- Recording Indicator (Global Overlay) -->
-    <div id="recordingIndicator" class="recording-indicator-overlay hidden">
-        <div class="recording-indicator-content">
-            <div class="recording-indicator-main">
-                <div class="recording-indicator-dot"></div>
-                <span class="recording-indicator-text">REC</span>
-            </div>
-            <div class="recording-indicator-stats">
-                <span id="recordingIndicatorTimer">00:00</span>
-                <span id="recordingIndicatorEvents">0 events</span>
-            </div>
-        </div>
-        <div class="recording-last-event" id="recordingLastEvent">
-            <!-- Last event will be shown here -->
         </div>
     </div>
 

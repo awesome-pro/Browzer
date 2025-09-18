@@ -2,18 +2,18 @@
  * RecordingSessionList - Component for displaying and selecting recorded sessions in the chat sidebar
  */
 
-import { RecordingEngine } from './RecordingEngine';
-import { RecordingSession } from '../../shared/types/recording';
+import { SmartRecordingEngine } from './RecordingEngine';
+import { SmartRecordingSession } from '../../shared/types/recording';
 
 export class RecordingSessionList {
-  private recordingEngine: RecordingEngine;
-  private sessions: RecordingSession[] = [];
+  private recordingEngine: SmartRecordingEngine;
+  private sessions: SmartRecordingSession[] = [];
   private selectedSessionId: string | null = null;
   private container: HTMLElement | null = null;
-  private onSessionSelected: (session: RecordingSession) => void;
+  private onSessionSelected: (session: SmartRecordingSession) => void;
 
-  constructor(container: HTMLElement, onSessionSelected: (session: RecordingSession) => void) {
-    this.recordingEngine = RecordingEngine.getInstance();
+  constructor(container: HTMLElement, onSessionSelected: (session: SmartRecordingSession) => void) {
+    this.recordingEngine = SmartRecordingEngine.getInstance();
     this.container = container;
     this.onSessionSelected = onSessionSelected;
     this.initialize();
@@ -38,7 +38,7 @@ export class RecordingSessionList {
     }
   }
 
-  public getSelectedSession(): RecordingSession | null {
+  public getSelectedSession(): SmartRecordingSession | null {
     if (!this.selectedSessionId) return null;
     return this.sessions.find(s => s.id === this.selectedSessionId) || null;
   }
@@ -84,15 +84,15 @@ export class RecordingSessionList {
         sessionItem.classList.add('selected');
       }
       
-      const duration = this.formatDuration(session.metadata.totalDuration);
+      const duration = this.formatDuration(session.metadata.duration);
       const date = this.formatDate(session.startTime);
       
       sessionItem.innerHTML = `
-        <div class="session-item-name">${this.escapeHtml(session.name)}</div>
+        <div class="session-item-name">${this.escapeHtml(session.taskGoal)}</div>
         <div class="session-item-info">
           <span class="session-item-date">${date}</span>
           <span class="session-item-duration">${duration}</span>
-          <span class="session-item-events">${session.metadata.totalEvents} events</span>
+          <span class="session-item-events">${session.metadata.totalActions} actions</span>
         </div>
       `;
       
