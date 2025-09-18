@@ -1,5 +1,6 @@
 import './styles.css';
 import './recording.css';
+import './recording-session-list.css';
 import './components/ExtensionStore.css';
 import './components/WorkflowProgress.css';
 import { ExtensionStore } from './components/ExtensionStore';
@@ -12,6 +13,7 @@ import { RecordingControls } from './components/RecordingControls';
 import { RecordingIndicator } from './components/RecordingIndicator';
 import { SessionManager } from './components/SessionManager';
 import { RecordingEngine } from './components/RecordingEngine';
+import { initializeSessionList, processExecuteWithRecording } from './components/ExecuteModeHandlers';
 
 // Import Electron APIs
 // Use electronAPI from preload script instead of direct electron access
@@ -2469,170 +2471,6 @@ function trackPageVisit(url: string, title: string): void {
 
 // ========================= EXTENSIONS PANEL =========================
 
-function setupExtensionsPanel(): void {
-  if (!extensionsPanel) return;
-
-  // Load saved API keys
-  const providers = ['openai', 'anthropic', 'perplexity', 'chutes'];
-  providers.forEach(provider => {
-    const savedKey = localStorage.getItem(`${provider}_api_key`);
-    const input = document.getElementById(`${provider}ApiKey`) as HTMLInputElement;
-    if (savedKey && input) {
-      input.value = savedKey;
-    }
-  });
-
-  // Add save event listeners for API keys
-  document.querySelectorAll('.save-api-key').forEach(button => {
-    button.addEventListener('click', () => {
-      const provider = (button as HTMLElement).dataset.provider;
-      if (provider) {
-        const input = document.getElementById(`${provider}ApiKey`) as HTMLInputElement;
-        const apiKey = input?.value.trim();
-        if (apiKey) {
-          localStorage.setItem(`${provider}_api_key`, apiKey);
-          showToast(`${provider} API key saved!`, 'success');
-        }
-      }
-    });
-  });
-
-  // Memory management
-  updateMemoryCount();
-  
-  const clearMemoryBtn = document.getElementById('clearMemoryBtn');
-  if (clearMemoryBtn) {
-    clearMemoryBtn.addEventListener('click', () => {
-      if (confirm('Are you sure you want to clear all AI memory? This cannot be undone.')) {
-        localStorage.removeItem(MEMORY_KEY);
-        updateMemoryCount();
-        showToast('Memory cleared successfully.', 'success');
-      }
-    });
-  }
-
-  // Export memory
-  const exportMemoryBtn = document.getElementById('exportMemoryBtn');
-  if (exportMemoryBtn) {
-    exportMemoryBtn.addEventListener('click', () => {
-      try {
-        const memory = localStorage.getItem(MEMORY_KEY) || '[]';
-        const blob = new Blob([memory], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'ai_memory_export.json';
-        a.click();
-        
-        URL.revokeObjectURL(url);
-        showToast('Memory exported successfully.', 'success');
-      } catch (e) {
-        console.error('Error exporting memory:', e);
-        showToast('Error exporting memory: ' + (e as Error).message, 'error');
-      }
-    });
-  }
-
-  // Import memory
-  const importMemoryBtn = document.getElementById('importMemoryBtn');
-  if (importMemoryBtn) {
-    importMemoryBtn.addEventListener('click', () => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.json';
-      
-      input.onchange = (e) => {
-        const file = (e.target as HTMLInputElement).files?.[0];
-        if (!file) return;
-        
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          try {
-            const contents = event.target?.result as string;
-            const parsed = JSON.parse(contents);
-            
-            if (Array.isArray(parsed)) {
-              localStorage.setItem(MEMORY_KEY, contents);
-              updateMemoryCount();
-              showToast('Memory imported successfully.', 'success');
-            } else {
-              showToast('Invalid memory file format.', 'error');
-            }
-          } catch (e) {
-            showToast('Error parsing memory file: ' + (e as Error).message, 'error');
-          }
-        };
-        
-        reader.readAsText(file);
-      };
-      
-      input.click();
-    });
-  }
-
-  // Sidebar setting
-  const sidebarEnabledCheckbox = document.getElementById('sidebarEnabled') as HTMLInputElement;
-  if (sidebarEnabledCheckbox) {
-    // Load saved sidebar preference for UI display
-    const savedSidebarEnabled = localStorage.getItem('sidebarEnabled') === 'true';
-    sidebarEnabledCheckbox.checked = savedSidebarEnabled;
-    
-    // Handle sidebar toggle (layout is already applied on startup)
-    sidebarEnabledCheckbox.addEventListener('change', () => {
-      const isEnabled = sidebarEnabledCheckbox.checked;
-      localStorage.setItem('sidebarEnabled', isEnabled.toString());
-      applySidebarLayout(isEnabled);
-      showToast(isEnabled ? 'Sidebar enabled' : 'Sidebar disabled', 'success');
-    });
-  }
-
-  // Clear any stuck loading states IMMEDIATELY
-  clearStuckLoadingStates();
-  
-  // Set up periodic cleanup every 5 seconds to prevent stuck states
-  setInterval(() => {
-    clearStuckLoadingStates();
-  }, 5000);
-
-  // Homepage setting
-  const homepageInput = document.getElementById('homepageInput') as HTMLInputElement;
-  const saveHomepageBtn = document.getElementById('saveHomepageBtn');
-  
-  if (homepageInput) {
-    homepageInput.value = homepageUrl;
-  }
-  
-  if (saveHomepageBtn && homepageInput) {
-    saveHomepageBtn.addEventListener('click', () => {
-      let url = homepageInput.value.trim();
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        url = 'https://' + url;
-      }
-      homepageUrl = url;
-      localStorage.setItem(HOMEPAGE_KEY, url);
-      showToast('Homepage saved!', 'success');
-    });
-  }
-}
-
-function updateMemoryCount(): void {
-  try {
-    const memory = JSON.parse(localStorage.getItem(MEMORY_KEY) || '[]');
-    const memoryCountSpan = document.getElementById('memoryCount');
-    if (memoryCountSpan) {
-      memoryCountSpan.textContent = memory.length.toString();
-    }
-    console.log('[Memory] Updated memory count display:', memory.length);
-  } catch (e) {
-    console.error('Error updating memory count:', e);
-    const memoryCountSpan = document.getElementById('memoryCount');
-    if (memoryCountSpan) {
-      memoryCountSpan.textContent = '0';
-    }
-  }
-}
-
 function setupAgentControls(): void {
   console.log('[setupAgentControls] Starting setup...');
   // Initialize chat UI in the fixed container
@@ -2655,6 +2493,10 @@ function setupAgentControls(): void {
           <label class="mode-option">
             <input type="radio" name="chatMode" value="do" />
             <span>Do</span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="chatMode" value="execute" />
+            <span>Execute</span>
           </label>
           ` : ''}
         </div>
@@ -2716,7 +2558,12 @@ function setupChatInputHandlers(): void {
         console.log('[sendMessage] Selected mode:', mode);
         
         // Update placeholder based on mode
-        const placeholderText = mode === 'do' ? 'Enter a task to perform...' : 'Ask a follow-up question...';
+        let placeholderText = 'Ask a follow-up question...';
+        if (mode === 'do') {
+          placeholderText = 'Enter a task to perform...';
+        } else if (mode === 'execute') {
+          placeholderText = 'Describe what to do with the recording...';
+        }
         chatInput.placeholder = placeholderText;
         
         // Add user message to chat
@@ -2727,6 +2574,12 @@ function setupChatInputHandlers(): void {
           // Use DoAgent for automation tasks
           console.log('[sendMessage] Using DoAgent for automation task');
           processDoTask(message);
+        } else if (mode === 'execute') {
+
+          processExecuteWithRecording(message).catch(error => {
+            console.error('Failed to execute with recording:', error);
+            addMessageToChat('assistant', 'Error: Failed to execute with recording.');
+          })
         } else {
           // Use existing ask mode logic
           if (selectedWebpageContexts.length > 0) {
@@ -2766,12 +2619,6 @@ function setupChatInputHandlers(): void {
     chatInput.addEventListener('input', (e) => {
       const value = chatInput.value;
       const cursorPosition = chatInput.selectionStart || 0;
-      
-      console.log('🚨 [INPUT HANDLER] Input event triggered');
-      console.log('🚨 [INPUT HANDLER] Value:', value);
-      console.log('🚨 [INPUT HANDLER] Cursor position:', cursorPosition);
-      console.log('🚨 [INPUT HANDLER] Character at cursor-1:', value.charAt(cursorPosition - 1));
-      
       // Check if user just typed @
       if (value.charAt(cursorPosition - 1) === '@') {
         console.log('🔍 [MENTION] @ detected, showing dropdown');
@@ -2850,8 +2697,24 @@ function setupChatInputHandlers(): void {
         console.log('[setupChatInputHandlers] Mode changed to:', mode);
         
         // Update placeholder based on mode
-        const placeholderText = mode === 'do' ? 'Enter a task to perform...' : 'Ask a follow-up question...';
+        let placeholderText = 'Ask a follow-up question...';
+        if (mode === 'do') {
+          placeholderText = 'Enter a task to perform...';
+        } else if (mode === 'execute') {
+          placeholderText = 'Describe what to do with the recording...';
+        }
         chatInput.placeholder = placeholderText;
+        
+        // Toggle sidebar content based on mode
+        const sidebarContent = document.querySelector('.chat-sidebar-content');
+        if (sidebarContent) {
+          if (mode === 'execute') {
+            sidebarContent.classList.add('execute-mode');
+            initializeSessionList();
+          } else {
+            sidebarContent.classList.remove('execute-mode');
+          }
+        }
       });
     });
     
@@ -3158,6 +3021,10 @@ async function executeAgent(): Promise<void> {
           <label class="mode-option">
             <input type="radio" name="chatMode" value="do" />
             <span>Do</span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="chatMode" value="execute" />
+            <span>Execute</span>
           </label>
           ` : ''}
         </div>
@@ -3589,6 +3456,10 @@ function addMessageToChat(role: string, content: string, timing?: number): void 
           <label class="mode-option">
             <input type="radio" name="chatMode" value="do" />
             <span>Do</span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="chatMode" value="execute" />
+            <span>Execute</span>
           </label>
           ` : ''}
         </div>

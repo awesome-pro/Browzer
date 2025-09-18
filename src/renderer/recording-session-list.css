@@ -1,0 +1,229 @@
+/* Recording Session List Styles */
+
+.session-list-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background-color: var(--bg-secondary);
+  background-color: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
+  overflow: hidden; /* Container itself shouldn't scroll */
+}
+
+.session-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 15px;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-primary, #ffffff);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  min-height: 50px;
+}
+
+.session-list-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.refresh-btn {
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.session-list-items {
+  overflow-y: auto;
+  flex: 1;
+  max-height: calc(100% - 50px); /* Subtract header height */
+  display: flex;
+  flex-direction: column;
+}
+
+.session-list-item {
+  padding: 12px 15px;
+  border-bottom: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  min-height: 60px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.session-list-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.session-list-item:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.session-list-item.selected {
+  border-left: 3px solid var(--accent-color);
+  font-weight: 600;
+  position: relative;
+  padding-left: 12px; /* Compensate for the border */
+}
+
+.session-list-item.selected::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+}
+
+.session-item-name {
+  font-weight: 500;
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 14px;
+}
+
+.session-item-info {
+  display: flex;
+  font-size: 12px;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.session-item-date {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.session-item-date::before {
+  content: '📅';
+  margin-right: 3px;
+  font-size: 10px;
+}
+
+.session-item-duration {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.session-item-duration::before {
+  content: '⏱️';
+  margin-right: 3px;
+  font-size: 10px;
+}
+
+.session-item-events {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.session-item-events::before {
+  content: '🔄';
+  margin-right: 3px;
+  font-size: 10px;
+}
+
+.session-list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 15px;
+  text-align: center;
+}
+
+.session-list-empty svg {
+  margin-bottom: 15px;
+  opacity: 0.5;
+}
+
+.session-list-empty p {
+  margin: 5px 0;
+}
+
+.session-list-empty-hint {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.session-list-error {
+  padding: 20px 15px;
+  text-align: center;
+}
+
+.retry-btn {
+  background-color: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 5px 10px;
+  margin-top: 10px;
+  cursor: pointer;
+}
+
+/* Chat sidebar structure */
+.chat-sidebar {
+  flex: 0 0 250px;
+  min-width: 250px;
+  max-width: 300px;
+  border-right: 1px solid var(--border-color);
+  overflow: hidden; 
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  position: relative;
+  z-index: 10;
+}
+
+.chat-sidebar-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  position: relative;
+}
+
+.chat-history {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+/* Chat sidebar modifications for Execute mode */
+.chat-sidebar-content.execute-mode .chat-history {
+  display: none;
+}
+
+.chat-sidebar-content.execute-mode .session-list-container {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  visibility: visible;
+  opacity: 1;
+}
+
+.chat-sidebar-content:not(.execute-mode) .session-list-container {
+  display: none;
+  visibility: hidden;
+  opacity: 0;
+  height: 0;
+}
