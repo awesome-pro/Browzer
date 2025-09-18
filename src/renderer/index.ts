@@ -10,7 +10,6 @@ import { TextProcessing } from './utils/textProcessing';
 import { McpClientManager } from './services/McpClientManager';
 import { RecordingControls } from './components/RecordingControls';
 import { RecordingIndicator } from './components/RecordingIndicator';
-import { SessionManager } from './components/SessionManager';
 import { RecordingEngine } from './components/RecordingEngine';
 
 // Import Electron APIs
@@ -495,7 +494,6 @@ function initializeUI(): void {
 
 let recordingControls: RecordingControls;
 let recordingIndicator: RecordingIndicator;
-let sessionManager: SessionManager;
 
 function initializeRecordingSystem(): void {
   console.log('Initializing recording system...');
@@ -504,10 +502,6 @@ function initializeRecordingSystem(): void {
     // Initialize recording components
     recordingControls = new RecordingControls();
     recordingIndicator = new RecordingIndicator();
-    sessionManager = new SessionManager();
-    
-    // Make session manager globally available for button callbacks
-    window.sessionManager = sessionManager;
     
     // Add session manager button to toolbar (optional - can be accessed via context menu)
     addSessionManagerButton();
@@ -564,7 +558,8 @@ function addSessionManagerButton(): void {
   `;
   
   sessionManagerBtn.addEventListener('click', () => {
-    sessionManager.show();
+    // Open settings page with recording-sessions section
+    createNewTab('file://browzer-settings#recording-sessions');
   });
   
   // Insert before the extensions button

@@ -52,15 +52,15 @@ export class RecordingControls {
 
     private setupEventListeners(): void {
         // Main recording controls
-        this.startRecordingBtn.addEventListener('click', () => this.showSessionModal());
+        this.startRecordingBtn.addEventListener('click', () => this.startRecordingDirectly());
         this.pauseRecordingBtn.addEventListener('click', () => this.pauseRecording());
         this.resumeRecordingBtn.addEventListener('click', () => this.resumeRecording());
-        this.stopRecordingBtn.addEventListener('click', () => this.stopRecording());
+        this.stopRecordingBtn.addEventListener('click', () => this.stopRecordingWithDialog());
 
         // Modal controls
         this.confirmStartRecordingBtn.addEventListener('click', () => this.startRecording());
-        document.getElementById('cancelRecordingBtn')?.addEventListener('click', () => this.hideSessionModal());
-        document.getElementById('closeRecordingModal')?.addEventListener('click', () => this.hideSessionModal());
+        document.getElementById('cancelRecordingBtn')?.addEventListener('click', () => this.cancelSaveDialog());
+        document.getElementById('closeRecordingModal')?.addEventListener('click', () => this.cancelSaveDialog());
 
         // Modal backdrop click
         this.sessionModal.addEventListener('click', (e) => {
@@ -96,9 +96,15 @@ export class RecordingControls {
     }
 
     private showSessionModal(): void {
+        // Update modal content for save workflow
+        const modalTitle = this.sessionModal.querySelector('h3');
+        const confirmButton = this.confirmStartRecordingBtn;
+        
+        if (modalTitle) modalTitle.textContent = 'Save Recording Session';
+        if (confirmButton) confirmButton.textContent = 'Save Recording';
+        
         this.sessionModal.classList.remove('hidden');
         this.sessionNameInput.focus();
-        this.sessionNameInput.value = `Recording ${new Date().toLocaleString()}`;
         this.sessionNameInput.select();
     }
 
@@ -106,6 +112,40 @@ export class RecordingControls {
         this.sessionModal.classList.add('hidden');
         this.sessionNameInput.value = '';
         this.sessionDescriptionInput.value = '';
+    }
+
+    private cancelSaveDialog(): void {
+        // User cancelled saving - discard the recording
+        if (this.activeSession) {
+            console.log('🗑️ Recording discarded by user');
+            this.showToast('Recording discarded', 'info');
+        }
+        
+        this.activeSession = null;
+        this.hideSessionModal();
+        this.stopRecording();
+    }
+
+    private startRecordingDirectly(): void {
+        try {
+            // Start recording immediately with auto-generated name
+            const autoName = `Recording ${new Date().toLocaleString()}`;
+            
+            this.activeSession = this.recordingEngine.startRecording(autoName, '');
+            this.isRecording = true;
+            this.isPaused = false;
+            this.elapsedTime = 0;
+            this.eventCount = 0;
+
+            this.showRecordingControls();
+            this.startTimer();
+
+            console.log('🎬 Recording started:', autoName);
+            this.showToast('Recording started!', 'info');
+        } catch (error) {
+            console.error('Failed to start recording:', error);
+            alert('Failed to start recording. Please try again.');
+        }
     }
 
     private startRecording(): void {
@@ -118,20 +158,22 @@ export class RecordingControls {
         }
 
         try {
-            this.activeSession = this.recordingEngine.startRecording(sessionName, description);
-            this.isRecording = true;
-            this.isPaused = false;
-            this.elapsedTime = 0;
-            this.eventCount = 0;
-
-            this.hideSessionModal();
-            this.showRecordingControls();
-            this.startTimer();
-
-            console.log('🎬 Recording started:', sessionName);
+            // Update the existing session with user-provided name and description
+            if (this.activeSession) {
+                this.activeSession.name = sessionName;
+                this.activeSession.description = description;
+                
+                // Save the updated session to localStorage
+                const key = `recording_session_${this.activeSession.id}`;
+                localStorage.setItem(key, JSON.stringify(this.activeSession));
+                
+                this.hideSessionModal();
+                this.showToast(`Recording "${sessionName}" saved successfully!`, 'success');
+                console.log('✅ Recording saved:', sessionName);
+            }
         } catch (error) {
-            console.error('Failed to start recording:', error);
-            alert('Failed to start recording. Please try again.');
+            console.error('Failed to save recording:', error);
+            alert('Failed to save recording. Please try again.');
         }
     }
 
@@ -153,14 +195,37 @@ export class RecordingControls {
         console.log('▶️ Recording resumed');
     }
 
-    private stopRecording(): void {
+    private stopRecordingWithDialog(): void {
         try {
+            // Stop the recording engine (this saves it automatically with temp name)
             const session = this.recordingEngine.stopRecording();
             if (session) {
-                console.log('⏹️ Recording stopped:', session.name, `(${session.metadata.totalEvents} events)`);
-                this.showToast(`Recording "${session.name}" saved successfully!`, 'success');
+                this.activeSession = session;
+                
+                // Show the save dialog with current session name
+                this.sessionNameInput.value = session.name;
+                this.sessionDescriptionInput.value = session.description || '';
+                this.showSessionModal();
+                
+                console.log('⏹️ Recording stopped, showing save dialog');
             }
 
+            this.isRecording = false;
+            this.isPaused = false;
+            this.elapsedTime = 0;
+            this.eventCount = 0;
+
+            this.hideRecordingControls();
+            this.stopTimer();
+        } catch (error) {
+            console.error('Failed to stop recording:', error);
+            alert('Failed to stop recording. Please try again.');
+        }
+    }
+
+    private stopRecording(): void {
+        // This method is now only used internally for cleanup
+        try {
             this.isRecording = false;
             this.isPaused = false;
             this.activeSession = null;
@@ -170,8 +235,7 @@ export class RecordingControls {
             this.hideRecordingControls();
             this.stopTimer();
         } catch (error) {
-            console.error('Failed to stop recording:', error);
-            alert('Failed to stop recording. Please try again.');
+            console.error('Failed to cleanup recording state:', error);
         }
     }
 
