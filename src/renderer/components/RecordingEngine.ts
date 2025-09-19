@@ -16,13 +16,9 @@ export class SmartRecordingEngine {
   
   // Action aggregation
   private pendingActions: Map<string, any> = new Map();
-  private actionTimeout: NodeJS.Timeout | null = null;
   private lastPageContext: PageContext | null = null;
   private currentTaskGoal: TaskGoal | null = null;
   
-  // Event batching and filtering
-  private eventBuffer: any[] = [];
-  private keyboardBuffer: string = '';
   private lastSignificantAction = 0;
   private readonly ACTION_TIMEOUT = 1500; // 1.5s to aggregate actions
   private readonly MIN_ACTION_GAP = 500; // Minimum gap between significant actions
@@ -31,7 +27,10 @@ export class SmartRecordingEngine {
   private observers: Map<string, any> = new Map();
   private eventListeners: Map<string, EventListener> = new Map();
 
-  private constructor() {}
+  private constructor() {
+    this.initializeWebviewEventHandlers()
+    console.log('🟠[RecordingEngine] SmartRecordingEngine initialized');
+  }
 
   static getInstance(): SmartRecordingEngine {
     if (!SmartRecordingEngine.instance) {
@@ -39,6 +38,224 @@ export class SmartRecordingEngine {
     }
     return SmartRecordingEngine.instance;
   }
+
+  private initializeWebviewEventHandlers(): void {
+    console.log('🟠[RecordingEngine] Setting up webview event handlers');
+    
+    const ipcRenderer = (window as any).electronAPI;
+    
+    if (ipcRenderer && ipcRenderer.ipcOn) {
+      ipcRenderer.ipcOn('webview-recording-action', (actionData: any) => {
+        console.log('🟠[RecordingEngine] Received webview recording action:', actionData);
+        this.handleWebviewAction(actionData);
+      });
+      
+      ipcRenderer.ipcOn('webview-recording-context', (contextData: any) => {
+        console.log('🟠[RecordingEngine] Received webview recording context:', contextData);
+        this.handleWebviewContext(contextData);
+      });
+      
+      ipcRenderer.ipcOn('webview-recording-network', (networkData: any) => {
+        console.log('🟠[RecordingEngine] Received webview recording network:', networkData);
+        this.handleWebviewNetwork(networkData);
+      });
+      
+      console.log('🟠[RecordingEngine] Webview event handlers registered');
+    } else {
+      console.warn('[RecordingEngine] IPC renderer not available for webview events');
+    }
+  }
+
+private handleWebviewAction(actionData: any): void {
+  if (!this.isRecording || !this.activeSession) {
+    console.log('🟠[RecordingEngine] Not recording, ignoring webview action');
+    return;
+  }
+  
+  console.log('🟠[RecordingEngine] Processing webview action:', actionData.type);
+  
+  try {
+    const action: SemanticAction = {
+      id: this.generateId(),
+      type: this.mapEventTypeToActionType(actionData.type),
+      timestamp: actionData.timestamp,
+      description: this.generateWebviewActionDescription(actionData),
+      target: this.convertWebviewElementToElementContext(actionData.target),
+      value: actionData.value,
+      coordinates: actionData.coordinates,
+      context: this.convertWebviewPageContext(actionData.pageContext),
+      intent: this.inferIntent(
+        this.mapEventTypeToActionType(actionData.type),
+        this.convertWebviewElementToElementContext(actionData.target),
+        actionData.value
+      )
+    };
+    
+    this.recordAction(action);
+  } catch (error) {
+    console.error('🟠[RecordingEngine] Error processing webview action:', error);
+  }
+}
+
+private handleWebviewContext(contextData: any): void {
+  if (!this.isRecording || !this.activeSession) return;
+  
+  console.log('🟠[RecordingEngine] Processing webview context:', contextData.subtype);
+  
+  if (contextData.subtype === 'navigation') {
+    const pageContext = this.convertWebviewPageContext(contextData);
+    this.handleWebviewNavigation(pageContext);
+  }
+}
+
+private handleWebviewNetwork(networkData: any): void {
+  if (!this.isRecording || !this.activeSession) return;
+  
+  console.log('🟠[RecordingEngine] Processing webview network event:', networkData.type);
+  
+  this.recordNetworkInteraction({
+    id: this.generateId(),
+    timestamp: networkData.timestamp,
+    type: networkData.type,
+    url: networkData.url,
+    method: networkData.method,
+    status: networkData.status,
+    duration: networkData.duration,
+    context: this.convertWebviewPageContext(networkData.pageContext),
+    // source: 'webview'
+  });
+}
+
+private convertWebviewElementToElementContext(webviewElement: any): ElementContext {
+  return {
+    description: this.generateElementDescriptionFromWebview(webviewElement),
+    selector: webviewElement.selector || '',
+    xpath: webviewElement.xpath || '',
+    role: webviewElement.tagName || 'unknown',
+    boundingRect: webviewElement.boundingRect || { x: 0, y: 0, width: 0, height: 0 },
+    isVisible: webviewElement.isVisible !== false,
+    isInteractive: true,
+    context: 'in webview',
+    // attributes: webviewElement.attributes || {}
+  };
+}
+
+private convertWebviewPageContext(webviewContext: any): PageContext {
+  return {
+    url: webviewContext.url || 'unknown',
+    title: webviewContext.title || 'unknown',
+    timestamp: webviewContext.timestamp || Date.now(),
+    viewport: webviewContext.viewport || { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+    userAgent: navigator.userAgent,
+    keyElements: []
+  };
+}
+
+private generateWebviewActionDescription(actionData: any): string {
+  const element = actionData.target;
+  const type = actionData.type;
+  
+  const elementDesc = element.text ? 
+    `${element.tagName}${element.id ? '#' + element.id : ''} "${element.text.substring(0, 30)}"` :
+    `${element.tagName}${element.id ? '#' + element.id : ''}`;
+  
+  switch (type) {
+    case 'click':
+      return `Click ${elementDesc}`;
+    case 'input':
+      return `Enter text in ${elementDesc}`;
+    case 'change':
+      return `Change value in ${elementDesc}`;
+    case 'submit':
+      return `Submit form with ${elementDesc}`;
+    case 'focus':
+      return `Focus on ${elementDesc}`;
+    case 'blur':
+      return `Blur from ${elementDesc}`;
+    default:
+      return `${type} on ${elementDesc}`;
+  }
+}
+
+private generateElementDescriptionFromWebview(element: any): string {
+  const tagName = element.tagName || 'unknown';
+  const text = element.text || '';
+  const id = element.id;
+  
+  if (id) return `${tagName}#${id}${text ? ` (${text})` : ''}`;
+  if (text && text.length > 3) return `${tagName} "${text}"`;
+  
+  const className = element.className;
+  if (className && typeof className === 'string') {
+    const mainClass = className.split(' ')[0];
+    return `${tagName}.${mainClass}`;
+  }
+  
+  return tagName;
+}
+
+private handleWebviewNavigation(pageContext: PageContext): void {
+  if (!this.activeSession) return;
+  
+  console.log('🟠[RecordingEngine] Webview navigation to:', pageContext.url);
+  
+  if (!this.activeSession.metadata.pagesVisited.includes(pageContext.url)) {
+    this.activeSession.metadata.pagesVisited.push(pageContext.url);
+  }
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.NAVIGATION,
+    timestamp: Date.now(),
+    description: `Navigate to ${pageContext.title || pageContext.url} (webview)`,
+    target: {
+      description: `Webview Page: ${pageContext.title}`,
+      selector: '',
+      xpath: '',
+      role: 'page',
+      isVisible: true,
+      isInteractive: false,
+      context: 'webview navigation'
+    },
+    context: pageContext,
+    intent: 'navigate_to_page'
+  };
+  
+  this.recordAction(action);
+  this.lastPageContext = pageContext;
+}
+
+public initializeWebviewRecording(): void {
+  console.log('🟠[RecordingEngine] Initializing webview recording integration');
+  this.initializeWebviewEventHandlers();
+}
+
+public setupWebviewRecording(webview: any): void {
+  const webviewId = webview.id;
+  console.log(`[RecordingEngine] Setting up recording for webview: ${webviewId}`);
+  
+  if (this.isRecording && this.activeSession) {
+    try {
+      console.log(`[RecordingEngine] Sending start-recording command to webview ${webviewId}`);
+      webview.send('start-recording', this.activeSession.id);
+    } catch (error) {
+      console.error('[RecordingEngine] Failed to send start-recording command:', error);
+    }
+  }
+}
+
+private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
+  console.log(`[RecordingEngine] Notifying webviews of recording state: ${commandType}`);
+  
+  // Dispatch custom event that index.ts can listen for
+  if (commandType === 'start') {
+    window.dispatchEvent(new CustomEvent('recording:start', {
+      detail: { sessionId: this.activeSession?.id }
+    }));
+  } else {
+    window.dispatchEvent(new CustomEvent('recording:stop'));
+  }
+}
 
   // Session Management
   startRecording(taskGoal: string, description?: string): SmartRecordingSession {
@@ -71,7 +288,8 @@ export class SmartRecordingEngine {
     this.currentTaskGoal = { goal: taskGoal, steps: [], completed: false };
     
     this.initializeRecording();
-    this.captureInitialScreenshot();
+    // this.captureInitialScreenshot();
+    this.notifyWebviewsRecordingState('start');
 
     console.log('🎯 Smart Recording started:', taskGoal);
     return session;
@@ -92,8 +310,8 @@ export class SmartRecordingEngine {
     this.activeSession.metadata.complexity = this.calculateComplexity();
     
     // Capture final screenshot
-    this.captureScreenshot('final_state');
-    
+    // this.captureScreenshot('final_state');
+    this.notifyWebviewsRecordingState('stop');
     this.cleanupRecording();
     
     const session = this.activeSession;
@@ -204,7 +422,6 @@ export class SmartRecordingEngine {
     if (!target || !this.isInteractiveElement(target)) return;
 
     const elementContext = this.captureElementContext(target);
-    const inputType = target.type?.toLowerCase();
     
     // Aggregate text input over time
     if (event.type === 'keydown') {
@@ -505,9 +722,6 @@ export class SmartRecordingEngine {
     }
   }
 
-  private async captureInitialScreenshot(): Promise<void> {
-    await this.captureScreenshot('initial');
-  }
 
   // Intent Inference
   private inferIntent(actionType: ActionType, elementContext: ElementContext, value?: string): string {
@@ -570,7 +784,7 @@ export class SmartRecordingEngine {
   }
 
   private processPendingActions(): void {
-    this.pendingActions.forEach((timeout, key) => {
+    this.pendingActions.forEach((timeout) => {
       clearTimeout(timeout);
     });
     this.pendingActions.clear();
@@ -884,4 +1098,19 @@ export class SmartRecordingEngine {
   isCurrentlyRecording(): boolean {
     return this.isRecording;
   }
+
+  private mapEventTypeToActionType(eventType: string): ActionType {
+    switch (eventType) {
+      case 'click': return ActionType.CLICK;
+      case 'input': return ActionType.TEXT_INPUT;
+      case 'change': return ActionType.SELECT;
+      case 'submit': return ActionType.FORM_SUBMIT;
+      case 'focus': return ActionType.FOCUS;
+      case 'blur': return ActionType.BLUR;
+      case 'scroll': return ActionType.SCROLL;
+      
+      default: return ActionType.CLICK;
+    }
+  }
+
 }

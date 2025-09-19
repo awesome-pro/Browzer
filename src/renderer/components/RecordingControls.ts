@@ -14,8 +14,8 @@ export class RecordingControls {
     // DOM elements
     private startRecordingBtn = document.getElementById('startRecordingBtn') as HTMLButtonElement;
     private recordingActiveControls = document.getElementById('recordingActiveControls') as HTMLElement;
-    private pauseRecordingBtn = document.getElementById('pauseRecordingBtn') as HTMLButtonElement;
-    private resumeRecordingBtn = document.getElementById('resumeRecordingBtn') as HTMLButtonElement;
+    // private pauseRecordingBtn = document.getElementById('pauseRecordingBtn') as HTMLButtonElement;
+    // private resumeRecordingBtn = document.getElementById('resumeRecordingBtn') as HTMLButtonElement;
     private stopRecordingBtn = document.getElementById('stopRecordingBtn') as HTMLButtonElement;
     private recordingTimer = document.getElementById('recordingTimer') as HTMLElement;
     private recordingEventCount = document.getElementById('recordingEventCount') as HTMLElement;
@@ -37,8 +37,8 @@ export class RecordingControls {
         // Main controls
         this.startRecordingBtn = document.getElementById('startRecordingBtn') as HTMLButtonElement;
         this.recordingActiveControls = document.getElementById('recordingActiveControls') as HTMLElement;
-        this.pauseRecordingBtn = document.getElementById('pauseRecordingBtn') as HTMLButtonElement;
-        this.resumeRecordingBtn = document.getElementById('resumeRecordingBtn') as HTMLButtonElement;
+        // this.pauseRecordingBtn = document.getElementById('pauseRecordingBtn') as HTMLButtonElement;
+        // this.resumeRecordingBtn = document.getElementById('resumeRecordingBtn') as HTMLButtonElement;
         this.stopRecordingBtn = document.getElementById('stopRecordingBtn') as HTMLButtonElement;
         this.recordingTimer = document.getElementById('recordingTimer') as HTMLElement;
         this.recordingEventCount = document.getElementById('recordingEventCount') as HTMLElement;
@@ -53,8 +53,8 @@ export class RecordingControls {
     private setupEventListeners(): void {
         // Main recording controls
         this.startRecordingBtn.addEventListener('click', () => this.startRecordingDirectly());
-        this.pauseRecordingBtn.addEventListener('click', () => this.pauseRecording());
-        this.resumeRecordingBtn.addEventListener('click', () => this.resumeRecording());
+        // this.pauseRecordingBtn.addEventListener('click', () => this.pauseRecording());
+        // this.resumeRecordingBtn.addEventListener('click', () => this.resumeRecording());
         this.stopRecordingBtn.addEventListener('click', () => this.stopRecordingWithDialog());
 
         // Modal controls
@@ -176,26 +176,6 @@ export class RecordingControls {
         }
     }
 
-    private pauseRecording(): void {
-        // SmartRecordingEngine might not have pause functionality
-        // Just handle UI state for now
-        this.isPaused = true;
-        this.pauseRecordingBtn.classList.add('hidden');
-        this.resumeRecordingBtn.classList.remove('hidden');
-        this.stopTimer();
-        console.log('⏸️ Recording paused');
-    }
-
-    private resumeRecording(): void {
-        // SmartRecordingEngine might not have resume functionality
-        // Just handle UI state for now
-        this.isPaused = false;
-        this.pauseRecordingBtn.classList.remove('hidden');
-        this.resumeRecordingBtn.classList.add('hidden');
-        this.startTimer();
-        console.log('▶️ Recording resumed');
-    }
-
     private stopRecordingWithDialog(): void {
         try {
             // Stop the recording engine (this saves it automatically with temp name)
@@ -248,8 +228,8 @@ export class RecordingControls {
     private hideRecordingControls(): void {
         this.startRecordingBtn.classList.remove('hidden');
         this.recordingActiveControls.classList.add('hidden');
-        this.pauseRecordingBtn.classList.remove('hidden');
-        this.resumeRecordingBtn.classList.add('hidden');
+        // this.pauseRecordingBtn.classList.remove('hidden');
+        // this.resumeRecordingBtn.classList.add('hidden');
     }
 
     private startTimer(): void {

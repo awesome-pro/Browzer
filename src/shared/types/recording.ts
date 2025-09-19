@@ -51,7 +51,9 @@ export enum ActionType {
   SCROLL = 'scroll',              // Significant scroll action
   WAIT = 'wait',                   // Explicit wait for something
   FOCUS = 'focus',                // User focused on an element
-  BLUR = 'blur'                   // User blurred from an element
+  BLUR = 'blur',                   // User blurred from an element
+  NETWORK_REQUEST = 'network_request',
+  NETWORK_ERROR = 'network_error',
 }
 
 export interface ElementContext {

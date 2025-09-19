@@ -99,11 +99,11 @@ export class RecordingIndicator {
     }
 
     private showIndicator(): void {
-        this.indicatorOverlay.classList.remove('hidden');
+        this.indicatorOverlay?.classList.remove('hidden');
     }
 
     private hideIndicator(): void {
-        this.indicatorOverlay.classList.add('hidden');
+        this.indicatorOverlay?.classList.add('hidden');
         this.lastEventDisplay.textContent = '';
     }
 
@@ -133,9 +133,9 @@ export class RecordingIndicator {
     }
 
     private flashEventIndicator(): void {
-        this.lastEventDisplay.classList.add('flash');
+        this.lastEventDisplay?.classList.add('flash');
         setTimeout(() => {
-            this.lastEventDisplay.classList.remove('flash');
+            this.lastEventDisplay?.classList.remove('flash');
         }, 200);
     }
 

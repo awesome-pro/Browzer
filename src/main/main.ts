@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, IpcMainInvokeEvent, session } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { AppManager } from '../main/AppManager';
@@ -121,8 +121,8 @@ class BrowzerApp {
     
     // Create the main window first
     const mainWindow = await this.windowManager.createMainWindow();
-    
-    // Initialize agent manager with main window reference for workflow progress
+
+
     this.agentManager.initialize(mainWindow);
     this.menuManager.initialize();
     
@@ -211,24 +211,17 @@ class BrowzerApp {
     // LLM API call handler
     ipcMain.handle('call-llm', async (event, request: LLMRequest) => {
       try {
-        console.log('[Main] Handling LLM call for provider:', request.provider);
-        const response = await this.llmService.callLLM(request);
-        console.log('[Main] LLM call completed, success:', response.success);
-        return response;
+        return await this.llmService.callLLM(request);
       } catch (error) {
         console.error('[Main] LLM call failed:', error);
-        return {
-          success: false,
-          error: (error as Error).message
-        };
+        return { success: false, error: (error as Error).message };
       }
     });
 
     // LLM logging handlers
     ipcMain.handle('log-llm-request', async (event, logData) => {
       try {
-        const logger = LLMLogger.getInstance();
-        logger.logRequest(logData);
+        LLMLogger.getInstance().logRequest(logData);
       } catch (error) {
         console.error('[Main] Failed to log LLM request:', error);
       }
@@ -502,7 +495,88 @@ class BrowzerApp {
       }
     });
 
-    console.log('[Main] IPC handlers set up for LLM service, onboarding, email, user services, and browser import');
+  // Webview Recording IPC Handlers
+    ipcMain.on('recording-action', (event, actionData) => {      
+      // Forward to all renderer processes (main windows)
+      BrowserWindow.getAllWindows().forEach(window => {
+        try {
+          window.webContents.send('webview-recording-action', actionData);
+        } catch (error) {
+          console.warn('[Main] Failed to forward recording action to window:', error);
+        }
+      });
+    });
+
+      ipcMain.on('recording-context', (event, contextData) => {
+        
+        // Forward to all renderer processes
+        BrowserWindow.getAllWindows().forEach(window => {
+          try {
+            window.webContents.send('webview-recording-context', contextData);
+          } catch (error) {
+            console.warn('[Main] Failed to forward recording context to window:', error);
+          }
+        });
+      });
+
+      ipcMain.on('recording-network', (event, networkData) => {
+        
+        BrowserWindow.getAllWindows().forEach(window => {
+          try {
+            window.webContents.send('webview-recording-network', networkData);
+          } catch (error) {
+            console.warn('[Main] Failed to forward recording network event to window:', error);
+          }
+        });
+      });
+
+      ipcMain.handle('get-webview-preload-path', () => {
+        let preloadPath: string;
+        
+        if (app.isPackaged) {
+          // For packaged apps - FIXED PATH
+          preloadPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'preload', 'webview-preload.js');
+        } else {
+          // For development - use process.cwd() to get the project root
+          preloadPath = path.join(process.cwd(), 'dist', 'preload', 'webview-preload.js');
+        }    
+    // Check if file exists and provide detailed logging
+    const fs = require('fs');
+    if (fs.existsSync(preloadPath)) {
+
+    } else {
+      
+      // Try alternative paths with detailed logging
+      const alternativePaths = [
+        path.join(process.cwd(), 'dist', 'preload', 'webview-preload.js'),
+        path.join(__dirname, 'webview-preload.js'),
+        path.join(__dirname, '..', '..', 'dist', 'preload', 'webview-preload.js'),
+        path.resolve('./dist/preload/webview-preload.js')
+      ];
+      for (const altPath of alternativePaths) {
+        if (fs.existsSync(altPath)) {
+          return altPath;
+        }
+      }
+    
+      
+      // List contents of dist directory for debugging
+      try {
+        const distPath = path.join(process.cwd(), 'dist');
+        if (fs.existsSync(distPath)) {
+          const distContents = fs.readdirSync(distPath);
+          distContents.forEach((item: string) => {
+            const itemPath = path.join(distPath, item);
+            if (fs.statSync(itemPath).isDirectory()) {
+            }
+          });
+        }
+      } catch (e) {
+      }
+    }
+    
+    return preloadPath;
+  });
   }
 }
 
@@ -523,6 +597,11 @@ app.whenReady().then(async () => {
     logStartup('BrowzerApp instance created');
     await browzerApp.initialize();
     logStartup('BrowzerApp initialization completed successfully');
+
+    const filter = { urls: ['*://*/*'] };
+    session.defaultSession.webRequest.onBeforeRequest(filter, (details: any, callback: any) => {
+      callback({});
+    });
   } catch (error) {
     logStartup(`FATAL ERROR - Failed to initialize application: ${error}`);
     console.error('Failed to initialize application:', error);
@@ -557,7 +636,6 @@ app.on('before-quit', async (event) => {
         await mainWindow.webContents.executeJavaScript(`
           (function() {
             try {
-              // Try multiple ways to access the function
               let saveFn = null;
               if (typeof autoSaveTabs === 'function') {
                 saveFn = autoSaveTabs;
