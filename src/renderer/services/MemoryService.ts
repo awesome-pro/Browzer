@@ -32,7 +32,7 @@ export class MemoryService {
     }
   }
 
-  storeMemory(url: string, question: string, answer: string, title: string = ''): void {
+  public storeMemory(url: string, question: string, answer: string, title: string = ''): void {
     try {
       const now = Date.now();
       const id = `memory_${now}_${Math.random().toString(36).substr(2, 9)}`;

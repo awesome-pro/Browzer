@@ -1,10 +1,14 @@
+import CONSTANTS from '../../constants';
 import { HistoryItem } from '../../shared/types';
+import { TabManager } from './TabManager';
 
 export class HistoryService {
   private readonly HISTORY_STORAGE_KEY = 'browser_history';
+  private tabManager: TabManager;
   private history: HistoryItem[] = [];
 
-  constructor() {
+  constructor(tabManager: TabManager) {
+    this.tabManager = tabManager;
     this.loadHistory();
   }
 
@@ -244,6 +248,28 @@ export class HistoryService {
     }
   }
 
+  exportMemory(): void {
+    try {
+      const memory = localStorage.getItem(CONSTANTS.MEMORY_KEY) || '[]';
+      const blob = new Blob([memory], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `browzer-memory-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      
+      URL.revokeObjectURL(url);
+      // this.showToast('History exported successfully.', 'success');
+    } catch (e) {
+      console.error('Error exporting memory:', e);
+      // this.showToast('Error exporting memory: ' + (e as Error).message, 'error');
+    }
+  }
+
+
   importHistory(jsonData: string): boolean {
     try {
       const importData = JSON.parse(jsonData);
@@ -270,6 +296,124 @@ export class HistoryService {
     } catch (error) {
       console.error('Error importing history:', error);
       return false;
+    }
+  }
+
+  public showHistoryPage(): void {
+    console.log('=== SHOW HISTORY PAGE CALLED ===');
+    
+    try {
+      const webview = this.tabManager.getActiveWebview();
+      console.log('Active webview found:', !!webview);
+      
+      if (webview) {
+        // For packaged apps, use getResourcePath instead of cwd
+        window.electronAPI.getResourcePath('src/renderer/history.html').then(historyFilePath => {
+          const historyURL = `file://${historyFilePath}`;
+          console.log('[History] Resource path:', historyFilePath);
+          console.log('[History] Loading history URL:', historyURL);
+          
+          const historyLoadHandler = () => {
+            console.log('History page loaded, injecting data...');
+            
+            try {
+              const historyData = localStorage.getItem(this.HISTORY_STORAGE_KEY) || '[]';
+              const parsedHistory = JSON.parse(historyData);
+              console.log('Injecting history data:', parsedHistory.length, 'items');
+              
+              webview.executeJavaScript(`
+                if (window.receiveHistoryData) {
+                  window.receiveHistoryData(${historyData});
+                } else {
+                  window.__pendingHistoryData = ${historyData};
+                  setTimeout(() => {
+                    if (window.receiveHistoryData && window.__pendingHistoryData) {
+                      window.receiveHistoryData(window.__pendingHistoryData);
+                      delete window.__pendingHistoryData;
+                    }
+                  }, 500);
+                }
+              `).then(() => {
+                console.log('History data injected successfully');
+              }).catch((err: any) => {
+                console.error('Error injecting history data:', err);
+              });
+              
+            } catch (error) {
+              console.error('Error preparing history data:', error);
+            }
+            
+            webview.removeEventListener('did-finish-load', historyLoadHandler);
+          };
+            
+          webview.addEventListener('did-finish-load', historyLoadHandler);
+          webview.loadURL(historyURL);
+          console.log('History URL loaded successfully');
+        }).catch(error => {
+          console.error('[History] Failed to get resource path:', error);
+          // Fallback to development path
+          const cwd = window.electronAPI.cwd();
+          const historyURL = `file://${window.electronAPI.path.join(cwd, 'src/renderer/history.html')}`;
+          console.log('[History] Fallback to CWD path:', historyURL);
+          
+          const historyLoadHandler = () => {
+            console.log('History page loaded, injecting data...');
+            
+            try {
+              const historyData = localStorage.getItem(this.HISTORY_STORAGE_KEY) || '[]';
+              const parsedHistory = JSON.parse(historyData);
+              console.log('Injecting history data:', parsedHistory.length, 'items');
+              
+              webview.executeJavaScript(`
+                if (window.receiveHistoryData) {
+                  window.receiveHistoryData(${historyData});
+                } else {
+                  window.__pendingHistoryData = ${historyData};
+                  setTimeout(() => {
+                    if (window.receiveHistoryData && window.__pendingHistoryData) {
+                      window.receiveHistoryData(window.__pendingHistoryData);
+                      delete window.__pendingHistoryData;
+                    }
+                  }, 500);
+                }
+              `).then(() => {
+                console.log('History data injected successfully');
+              }).catch((err: any) => {
+                console.error('Error injecting history data:', err);
+              });
+              
+            } catch (error) {
+              console.error('Error preparing history data:', error);
+            }
+            
+            webview.removeEventListener('did-finish-load', historyLoadHandler);
+          };
+          
+          webview.addEventListener('did-finish-load', historyLoadHandler);
+          webview.loadURL(historyURL);
+          console.log('History URL loaded successfully (fallback)');
+        });
+        
+      } else {
+        console.log('[History] No active webview, creating new tab...');
+        // For packaged apps, use getResourcePath instead of cwd
+        window.electronAPI.getResourcePath('src/renderer/history.html').then(historyFilePath => {
+          const historyURL = `file://${historyFilePath}`;
+          console.log('[History] Resource path:', historyFilePath);
+          console.log('[History] Creating new history tab with URL:', historyURL);
+          this.tabManager.createTab(historyURL);
+        }).catch(error => {
+          console.error('[History] Failed to get resource path:', error);
+          // Fallback to development path
+          const cwd = window.electronAPI.cwd();
+          const historyURL = `file://${window.electronAPI.path.join(cwd, 'src/renderer/history.html')}`;
+          console.log('[History] Fallback to CWD path:', historyURL);
+          this.tabManager.createTab(historyURL);
+        });
+      }
+    } catch (error) {
+      console.error('[History] ⚠️ Error in showHistoryPage:', error);
+      // this.showToast('Error opening history page: ' + (error as Error).message, 'error');
     }
   }
 } 

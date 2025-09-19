@@ -80,7 +80,7 @@ export interface IAgentService {
 
 export interface IChatService {
   initialize(): void;
-  addMessage(role: string, content: string, timing?: number): void;
+  addMessageToChat(role: string, content: string, timing?: number): void;
   processFollowupQuestion(question: string): Promise<void>;
   destroy(): void;
 }
@@ -94,6 +94,14 @@ export interface IExtensionStore {
 
 export interface IRecordingService {
   initialize(): Promise<void>;
+  setupWebviewRecording(webview: any): void;
+  getRecordingEngine(): any;
+  getRecordingControls(): any;
+  getRecordingIndicator(): any;
+  isRecording(): boolean;
+  getActiveSession(): any;
+  startRecording(taskGoal: string, description?: string): any;
+  stopRecording(): any;
   destroy(): void;
 }
 
@@ -211,14 +219,16 @@ export interface Destroyable {
   destroy(): void;
 }
 
-// ========================= CONSTANTS =========================
-
-export const CONSTANTS = {
-  NEW_TAB_URL: 'about:blank',
-  SAVED_TABS_KEY: 'saved_tabs',
-  HOMEPAGE_KEY: 'homepage_url',
-  EXTENSION_STORE_URL: 'file://browzer-store',
-  DEFAULT_HOMEPAGE: 'https://www.google.com'
-} as const;
-
-export type ConstantKeys = keyof typeof CONSTANTS;
+export interface WebpageContext {
+  id: string;
+  title: string;
+  url: string;
+  timestamp: number;
+  content?: {
+    title: string;
+    description: string;
+    content: string;
+    html: string;
+    url: string;
+  };
+}

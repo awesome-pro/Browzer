@@ -1,178 +1,838 @@
-import { AgentParams, AgentResult, PageContent, ConversationMessage } from '../../shared/types';
-import { ContentExtraction } from '../utils/contentExtraction';
-import { URLUtils } from '../utils/urlUtils';
+import CONSTANTS from '../../constants';
+import { IAgentService, IpcRenderer } from '../types';
+import { extractPageContent, getBrowserApiKeys, getExtensionDisplayName, markdownToHtml } from '../utils';
+import { McpClientManager } from './McpClientManager';
+import { MemoryService } from './MemoryService';
+import { TabManager } from './TabManager';
+import { WorkflowService } from './WorkflowService';
 
-export class AgentService {
-  private currentConversation: ConversationMessage[] = [];
-  private isExecuting = false;
+/**
+ * AgentService handles AI agent execution and related functionality
+ */
+export class AgentService implements IAgentService {
+  private ipcRenderer: IpcRenderer;
+  private isExecuting: boolean = false;
+  private tabManager: TabManager;
+  private mcpManager: McpClientManager;
+  private memoryService: MemoryService;
+  private workflowService: WorkflowService;
 
-  async executeAgent(agentType: string, params: AgentParams): Promise<AgentResult> {
-    if (this.isExecuting) {
-      return { success: false, error: 'Agent is already executing' };
-    }
+  private globalQueryTracker: Map<string, number>;
 
-    this.isExecuting = true;
-    const startTime = Date.now();
+  constructor(ipcRenderer: IpcRenderer, tabManager: TabManager, mcpManager: McpClientManager, memoryService: MemoryService, workflowService: WorkflowService) {
+    this.ipcRenderer = ipcRenderer;
+    this.tabManager = tabManager;
+    this.mcpManager = mcpManager;
+    this.memoryService = memoryService;
+    this.workflowService = workflowService;
+    this.globalQueryTracker = new Map<string, number>();
+  }
 
+  public setupControls(): void {
     try {
-      console.log(`Executing ${agentType} agent with params:`, params);
-      
-      const agentPath = this.getAgentPath(agentType);
-      if (!agentPath) {
-        throw new Error(`Unknown agent type: ${agentType}`);
-      }
-
-      // Use the electronAPI from preload
-      const result = await (window as any).electronAPI.executeAgent(agentPath, params);
-      
-      const endTime = Date.now();
-      const duration = endTime - startTime;
-
-      if (result.success) {
-        // Add to conversation history
-        this.addToConversation('user', params.query, startTime);
-        if (result.data && result.data.summary) {
-          this.addToConversation('assistant', result.data.summary, endTime);
-        }
-
-        return {
-          ...result,
-          timing: {
-            start: startTime,
-            end: endTime,
-            duration: duration
-          }
-        };
-      } else {
-        console.error('Agent execution failed:', result.error);
-        return result;
-      }
+      this.setupAgentControls();
+      console.log('[AgentService] Controls setup successfully');
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error('Agent execution error:', errorMessage);
+      console.error('[AgentService] Failed to setup controls:', error);
+    }
+  }
+
+  private isQueryRecentlyProcessed(query: string, windowMs: number = 3000): boolean {
+    const normalizedQuery = query.toLowerCase().trim();
+    const currentTime = Date.now();
+    const lastProcessedTime = this.globalQueryTracker.get(normalizedQuery) || 0;
+    
+    if (currentTime - lastProcessedTime < windowMs) {
+      console.log('🚨 [GLOBAL DUPLICATE FIX] Query recently processed, skipping:', normalizedQuery.substring(0, 50));
+      return true;
+    }
+    
+    this.globalQueryTracker.set(normalizedQuery, currentTime);
+    
+    // Clean up old entries to prevent memory leaks
+    if (this.globalQueryTracker.size > 100) {
+      const cutoffTime = currentTime - (windowMs * 10);
+      for (const [key, time] of this.globalQueryTracker.entries()) {
+        if (time < cutoffTime) {
+          this.globalQueryTracker.delete(key);
+        }
+      }
+    }
+    
+    return false;
+  }
+
+  private setupAgentControls(): void {
+    // Initialize chat UI in the fixed container
+    const chatInputContainer = document.querySelector('.chat-input-container');
+    if (chatInputContainer) {
+      console.log('[AgentService] Chat input container found');   
+      let chatInputArea = document.querySelector('.chat-input-area');
+      if (!chatInputArea) {
+        console.log('[AgentService] Creating chat input area');
+        chatInputArea = document.createElement('div');
+        chatInputArea.className = 'chat-input-area';
+        chatInputArea.innerHTML = `
+          <div class="chat-mode-selector">
+            <label class="mode-option">
+              <input type="radio" name="chatMode" value="ask" checked />
+              <span>Ask</span>
+            </label>
+            <label class="mode-option">
+              <input type="radio" name="chatMode" value="do" />
+              <span>Do</span>
+            </label>
+            <label class="mode-option">
+              <input type="radio" name="chatMode" value="execute" />
+              <span>Execute</span>
+            </label>
+          </div>
+          <div class="chat-input-row">
+            <input type="text" id="chatInput" placeholder="Ask a follow-up question..." />
+            <button id="sendMessageBtn" class="chat-send-btn">Send</button>
+          </div>
+        `;
+        
+        chatInputContainer.appendChild(chatInputArea);
+        this.setupChatInputHandlers();
+      } else {
+        console.log('[AgentService] Chat input area already exists, ensuring handlers are set up');
+        this.setupChatInputHandlers();
+      }
+    }
+  }
+
+  private setupChatInputHandlers(): void {
+    console.log('[AgentService] Setting up chat input handlers...');
+    
+    setTimeout(() => {
+      const sendButton = document.getElementById('sendMessageBtn');
+      const chatInput = document.getElementById('chatInput') as HTMLInputElement;
       
-      return {
-        success: false,
-        error: errorMessage,
-        timing: {
-          start: startTime,
-          end: Date.now(),
-          duration: Date.now() - startTime
+      if (!sendButton || !chatInput) {
+        console.error('[AgentService] Chat input elements not found');
+        return;
+      }
+      
+      console.log('[AgentService] Found chat elements, attaching handlers...');
+      
+      if ((sendButton as any).hasHandlers) {
+        console.log('[AgentService] Handlers already set up, skipping');
+        return;
+      }
+      
+      const sendMessage = () => {
+        const message = chatInput.value.trim();
+        if (message) {
+          const selectedMode = document.querySelector('input[name="chatMode"]:checked') as HTMLInputElement;
+          const mode = selectedMode ? selectedMode.value : 'ask';
+          console.log('[AgentService] Selected mode:', mode);
+          
+          let placeholderText = 'Ask a follow-up question...';
+          if (mode === 'do') {
+            placeholderText = 'Enter a task to perform...';
+          } else if (mode === 'execute') {
+            placeholderText = 'Describe what to do with the recording...';
+          }
+          chatInput.placeholder = placeholderText;
+          
+          this.addMessageToChat('user', message);
+          
+          if (mode === 'do') {
+            console.log('[AgentService] Using DoAgent for automation task');
+            // processDoTask(message); // TODO: Implement DoAgent functionality
+          } else if (mode === 'execute') {
+            this.processExecuteWithRecording(message).catch(error => {
+              console.error('Failed to execute with recording:', error);
+              this.addMessageToChat('assistant', 'Error: Failed to execute with recording.');
+            });
+          } else {
+            this.processFollowupQuestion(message);
+          }
+          
+          chatInput.value = '';
         }
       };
-    } finally {
-      this.isExecuting = false;
-    }
+      
+      sendButton.addEventListener('click', (e) => {
+        e.preventDefault();
+        // this.hideMentionDropdown();
+        sendMessage();
+      });
+      
+      chatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          // this.hideMentionDropdown();
+          sendMessage();
+        }
+      });    
+      
+      const modeRadios = document.querySelectorAll('input[name="chatMode"]');
+      modeRadios.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+          const mode = (e.target as HTMLInputElement).value;
+          
+          let placeholderText = 'Ask a follow-up question...';
+          if (mode === 'do') {
+            placeholderText = 'Enter a task to perform...';
+          } else if (mode === 'execute') {
+            placeholderText = 'Describe what to do with the recording...';
+          }
+          chatInput.placeholder = placeholderText;
+          
+          const sidebarContent = document.querySelector('.chat-sidebar-content');
+          if (sidebarContent) {
+            if (mode === 'execute') {
+              sidebarContent.classList.add('execute-mode');
+              // initializeSessionList(); // TODO: Import and use
+            } else {
+              sidebarContent.classList.remove('execute-mode');
+            }
+          }
+        });
+      });
+      
+      (sendButton as any).hasHandlers = true;
+    }, 100); 
   }
 
-  private getAgentPath(agentType: string): string | null {
-    const agentPaths: Record<string, string> = {
-      'crypto': './agents/crypto_agent.py',
-      'topic': './agents/topic_agent.py',
-      'flight': './agents/flight_agent.py'
-    };
-
-    return agentPaths[agentType] || null;
-  }
-
-  private addToConversation(role: 'user' | 'assistant', content: string, timestamp: number): void {
-    this.currentConversation.push({
-      role,
-      content,
-      timestamp
-    });
-
-    // Keep only the last 20 messages to prevent memory bloat
-    if (this.currentConversation.length > 20) {
-      this.currentConversation = this.currentConversation.slice(-20);
-    }
-  }
-
-  async extractPageContent(webview: any, options: { 
-    includeHtml?: boolean; 
-    preserveLinks?: boolean;
-    detectContentType?: boolean;
-  } = {}): Promise<PageContent | null> {
-    try {
-      const extracted = await ContentExtraction.extractPageContent(webview, options);
-      return extracted ? {
-        title: extracted.title,
-        content: extracted.content,
-        url: extracted.url
-      } : null;
-    } catch (error) {
-      console.error('Error extracting page content:', error);
-      return null;
-    }
-  }
-
-  async autoSummarizePage(url: string, webview: any): Promise<void> {
-    if (!url || !url.startsWith('http')) {
-      console.log('Skipping auto-summarize for non-HTTP URL:', url);
+  public async execute(): Promise<void> {
+    if (this.isExecuting) {
+      console.log('[AgentService] Agent already executing, skipping');
       return;
     }
 
-    try {
-      console.log('Auto-summarizing page:', url);
-      
-      // Extract page content
-      const pageContent = await this.extractPageContent(webview, {
-        includeHtml: false,
-        preserveLinks: true,
-        detectContentType: true
-      });
+    this.isExecuting = true;
 
-      if (!pageContent || !pageContent.content) {
-        console.log('No content extracted for auto-summarization');
+    try {
+      const webview = this.getActiveWebview();
+      if (!webview) {
+        throw new Error('No active webview found');
+      }
+
+      const provider = 'anthropic'; // Always use Anthropic Claude
+      
+      const url = webview.src || '';
+      let title = '';
+      try {
+        title = webview.getTitle ? webview.getTitle() : '';
+      } catch (e) {
+        console.error('Error getting title:', e);
+        title = '';
+      }
+      
+      if (!title) title = url;
+      
+      let query = url;
+      if (url.includes('google.com/search')) {
+        try {
+          const urlObj = new URL(url);
+          const searchParams = urlObj.searchParams;
+          if (searchParams.has('q')) {
+            query = searchParams.get('q') || '';
+          }
+        } catch (e) {
+          console.error('Error extracting search query:', e);
+        }
+      } else {
+        query = title;
+      }
+
+      if (this.isQueryRecentlyProcessed(query)) {
+        console.log('🚨 [GLOBAL DUPLICATE FIX] Duplicate query detected in executeAgent, aborting');
+        this.showToast('This query was just processed, skipping duplicate', 'info');
+        return;
+      }
+      
+      // Prevent duplicate execution
+      const currentTime = Date.now();
+      const queryKey = `${query}-${url}`;
+      const lastProcessedKey = `lastProcessed_${queryKey}`;
+      const lastProcessedTime = parseInt(localStorage.getItem(lastProcessedKey) || '0');
+      
+      if (currentTime - lastProcessedTime < 5000) {
+        this.showToast('This query was just processed, skipping duplicate execution', 'info');
+        return;
+      }
+      
+      localStorage.setItem(lastProcessedKey, currentTime.toString());
+      
+      // Ensure chat input area exists
+      this.ensureChatInputArea();
+
+      this.addMessageToChat('assistant', '<div class="loading">Analyzing request and routing to appropriate agent...</div>');
+      
+      const pageContent = await extractPageContent(webview);
+      const routingResult = await this.ipcRenderer.invoke('route-extension-request', query);
+      
+      this.clearLoadingMessages();
+
+      if (routingResult.type === 'workflow') {
+        // Execute workflow asynchronously - progress events will update the UI
+        // The workflow-complete event listener will call displayAgentResults when done
+        try {
+          const workflowData = {
+            pageContent,
+            browserApiKeys: getBrowserApiKeys(),
+            selectedProvider: provider,
+            selectedModel: 'claude-3-5-sonnet-20241022', // Always use Claude 3.5 Sonnet
+            isQuestion: false,
+            conversationHistory: await this.buildConversationHistoryWithMemories(url, query),
+            mcpTools: await this.getMcpToolsForAsk() // Add MCP tools to workflow data
+          };
+  
+          await this.ipcRenderer.invoke('execute-workflow', {
+            query,
+            data: workflowData
+          });
+          
+          // Workflow execution is async - progress events will handle UI updates
+          // The workflow-complete event listener will call displayAgentResults when done
+          
+        } catch (workflowError) {
+          console.error('Workflow execution failed:', workflowError);
+          this.addMessageToChat('assistant', `Workflow execution failed: ${(workflowError as Error).message}`);
+        } finally {
+          // Always clear the execution flag
+          this.isExecuting = false;
+          console.log('[executeAgent] Workflow execution finished, clearing execution flag');
+        }
+        
+        return; // Don't execute single extension path
+      }
+      
+      
+      const extensionId = routingResult.extensionId;
+      if (!extensionId) {
+        this.addMessageToChat('assistant', 'Error: No extension available for your request');
         return;
       }
 
-      // Determine appropriate agent based on content
-      let agentType = 'topic'; // default
-      if (url.includes('crypto') || url.includes('bitcoin') || url.includes('ethereum')) {
-        agentType = 'crypto';
-      } else if (url.includes('flight') || url.includes('airline') || url.includes('travel')) {
-        agentType = 'flight';
-      }
-
-      // Prepare agent parameters
-      const agentParams: AgentParams = {
-        query: `Summarize this page: ${pageContent.title}`,
-        pageContent: pageContent,
-        isQuestion: false
+      const singleExtensionWorkflowData = {
+        workflowId: `single-${Date.now()}`,
+        type: 'single_extension',
+        steps: [{
+          extensionId: extensionId,
+          extensionName: getExtensionDisplayName(extensionId)
+        }]
       };
-
-      // Execute summarization
-      const result = await this.executeAgent(agentType, agentParams);
       
-      if (result.success) {
-        console.log('Auto-summarization completed');
-        // The result will be handled by the UI components
-      } else {
-        console.error('Auto-summarization failed:', result.error);
+      console.log('🚨 [SINGLE EXTENSION DEBUG] Creating progress indicator for single extension:', singleExtensionWorkflowData);
+      const progressElement = this.workflowService.addWorkflowProgressToChat(singleExtensionWorkflowData);
+      
+      // Start the progress indicator
+      if (progressElement && (progressElement as any).progressIndicator) {
+        (progressElement as any).progressIndicator.startWorkflow(singleExtensionWorkflowData);
+        
+        // Update to running state
+        (progressElement as any).progressIndicator.updateProgress({
+          workflowId: singleExtensionWorkflowData.workflowId,
+          currentStep: 0,
+          stepStatus: 'running'
+        });
+      }
+      
+      const action = 'process_page';
+      const data = {
+        query,
+        pageContent,
+        isQuestion: false,
+        conversationHistory: await this.buildConversationHistoryWithMemories(url, query),
+        mcpTools: await this.getMcpToolsForAsk()
+      };
+      
+      try {
+        const result = await this.ipcRenderer.invoke('execute-python-extension', {
+          extensionId,
+          action,
+          data,
+          browserApiKeys: this.getBrowserApiKeys(),
+          selectedProvider: provider
+        });      
+
+        if (progressElement && (progressElement as any).progressIndicator) {
+          (progressElement as any).progressIndicator.updateProgress({
+            workflowId: singleExtensionWorkflowData.workflowId,
+            currentStep: 0,
+            stepStatus: 'completed',
+            stepResult: result.data
+          });
+          
+          (progressElement as any).progressIndicator.completeWorkflow({
+            workflowId: singleExtensionWorkflowData.workflowId,
+            result: result.data
+          });
+        }
+        
+        if (result.success === false) {
+          this.addMessageToChat('assistant', `Error: ${result.error}`);
+        } else {
+          this.displayAgentResults(result.data);
+        }
+
+        if (this.memoryService && result.data) {
+          let summary = '';
+          let memoryQuery = query || 'Agent Query';
+          
+          // Try different content sources in order of preference
+          if (result.data.consolidated_summary) {
+            summary = result.data.consolidated_summary;
+          } else if (result.data.summaries && result.data.summaries.length > 0) {
+            summary = result.data.summaries.map((s: any) => `${s.title}: ${s.summary}`).join('\n\n');
+          } else if (typeof result.data === 'string') {
+            // Handle simple string responses
+            summary = result.data;
+          } else if (result.data.content) {
+            // Handle responses with content field
+            summary = result.data.content;
+          } else if (result.data.response) {
+            // Handle responses with response field
+            summary = result.data.response;
+          }
+          
+          if (summary && summary.trim()) {
+            console.log('[Memory] Storing agent result in memory from workflow-complete');
+            
+            // Get current page info for memory context
+            const webview = this.getActiveWebview();
+            const url = webview?.src || '';
+            const title = webview?.getTitle ? webview.getTitle() : '';
+            
+            this.memoryService.storeMemory(url, memoryQuery, summary, title);
+          } else {
+            console.log('[Memory] No suitable content found for memory storage in workflow-complete');
+          }
+        }
+
+      } catch (extensionError) {
+        this.addMessageToChat('assistant', `Error: ${(extensionError as Error).message}`);
       }
     } catch (error) {
-      console.error('Error in auto-summarization:', error);
+      console.error("Agent execution error:", error);
+      this.clearLoadingMessages();
+      this.addMessageToChat('assistant', `Error: ${(error as Error).message}`);
+    } finally {
+      this.isExecuting = false;
+      console.log('[AgentService] Clearing execution flag on function completion');
     }
   }
 
-  clearConversationHistory(): void {
-    this.currentConversation = [];
+  private async processExecuteWithRecording(message: string): Promise<void> {
+    // TODO: Import and use processExecuteWithRecording from ExecuteModeHandlers
+    console.log('[AgentService] Execute with recording:', message);
+    this.addMessageToChat('assistant', 'Execute with recording functionality not yet implemented');
   }
 
-  getConversationHistory(): ConversationMessage[] {
-    return [...this.currentConversation];
+  private async getMcpToolsForAsk(): Promise<any[]> {
+    const toolNames = await this.mcpManager.listAllTools();
+    const tools = [];
+    
+    for (const toolName of toolNames) {
+      const toolInfo = this.mcpManager.getToolInfo(toolName);
+      if (toolInfo) {
+        tools.push({
+          name: toolName,
+          description: toolInfo.description || '',
+          inputSchema: toolInfo.inputSchema || {},
+          serverName: toolInfo.serverName
+        });
+      }
+    }
+    
+    console.log(`[MCP] Retrieved ${tools.length} tools for Ask query`);
+    if (tools.length > 0) {
+      console.log('[MCP] Available tools:', tools.map(t => t.name).join(', '));
+    }
+    return tools;
   }
 
-  isAgentExecuting(): boolean {
-    return this.isExecuting;
+  private async processFollowupQuestion(question: string): Promise<void> {
+    const currentTime = Date.now();
+    const queryKey = `followup_${question}`;
+    const lastProcessedKey = `lastProcessed_${queryKey}`;
+    const lastProcessedTime = parseInt(localStorage.getItem(lastProcessedKey) || '0');
+    
+    if (currentTime - lastProcessedTime < 5000) {
+      this.showToast('This question was just processed, skipping duplicate execution', 'info');
+      return;
+    }
+    
+    localStorage.setItem(lastProcessedKey, currentTime.toString());
+    
+    try {
+      this.addMessageToChat('assistant', '<div class="loading">Processing your question...</div>');
+      const provider = 'anthropic'; 
+      const apiKey = localStorage.getItem(`${provider}_api_key`);
+      
+      if (!apiKey) {
+        this.clearLoadingMessages();
+        this.addMessageToChat('assistant', 'Please configure your API key in the Extensions panel.');
+        return;
+      }
+      
+      const activeWebview = this.getActiveWebview();
+      if (!activeWebview) {
+        this.clearLoadingMessages();
+        this.addMessageToChat('assistant', 'No active webview found.');
+        return;
+      }
+      
+      const pageContent = await extractPageContent(activeWebview);
+      const questionRequest = `Answer this question about the page: ${question}`;
+      const routingResult = await this.ipcRenderer.invoke('route-extension-request', questionRequest);
+      
+      this.clearLoadingMessages();
+      
+      if (routingResult.type === 'workflow') {
+        try {
+          const workflowData = {
+            pageContent,
+            browserApiKeys: this.getBrowserApiKeys(),
+            selectedProvider: provider,
+            selectedModel: 'claude-3-5-sonnet-20241022',
+            isQuestion: true,
+          };
+
+          await this.ipcRenderer.invoke('execute-workflow', {
+            query: questionRequest,
+            data: workflowData
+          });
+          
+        } catch (workflowError) {
+          console.error('Follow-up workflow execution failed:', workflowError);
+          this.addMessageToChat('assistant', `Workflow execution failed: ${(workflowError as Error).message}`);
+        }
+        
+        return; 
+      }
+      
+      const extensionId = routingResult.extensionId;
+      if (!extensionId) {
+        this.addMessageToChat('assistant', 'Error: No extension available to answer your question');
+        return;
+      }
+      
+      const action = 'process_page';
+      const data = {
+        query: questionRequest,
+        pageContent,
+        isQuestion: true,
+      };
+      
+      try {
+        const result = await this.ipcRenderer.invoke('execute-python-extension', {
+          extensionId,
+          action,
+          data,
+          browserApiKeys: this.getBrowserApiKeys(),
+          selectedProvider: provider
+        });
+        
+        if (result.success === false) {
+          this.addMessageToChat('assistant', `Error: ${result.error || 'Unknown error'}`);
+          return;
+        }
+        
+        this.displayAgentResults(result.data);
+      } catch (error) {
+        console.error('Error in processFollowupQuestion:', error);
+      }
+      this.clearLoadingMessages();
+    } catch (error) {
+      console.error('Error in processFollowupQuestion:', error);
+      this.clearLoadingMessages();
+    }
   }
 
-  getModelInfo(): { provider: string; model: string } {
-    // This could be made configurable in the future
-    return {
-      provider: 'openai',
-      model: 'gpt-4'
-    };
+  private getActiveWebview(): any {
+    return this.tabManager.getActiveWebview();
   }
-} 
+
+  private getBrowserApiKeys(): Record<string, string> {
+    const providers = ['anthropic'];
+    const apiKeys: Record<string, string> = {};
+    
+    providers.forEach(provider => {
+      const key = localStorage.getItem(`${provider}_api_key`);
+      if (key) {
+        apiKeys[provider] = key;
+      }
+    });
+    
+    return apiKeys;
+  }
+
+  private ensureChatInputArea(): void {
+    const chatInputContainer = document.querySelector('.chat-input-container');
+    if (chatInputContainer && !document.querySelector('.chat-input-area')) {
+      const chatInputArea = document.createElement('div');
+      chatInputArea.className = 'chat-input-area';
+      chatInputArea.innerHTML = `
+        <div class="chat-mode-selector">
+          <label class="mode-option">
+            <input type="radio" name="chatMode" value="ask" checked />
+            <span>Ask</span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="chatMode" value="do" />
+            <span>Do</span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="chatMode" value="execute" />
+            <span>Execute</span>
+          </label>
+        </div>
+        <div class="chat-input-row">
+          <input type="text" id="chatInput" placeholder="Ask a follow-up question..." />
+          <button id="sendMessageBtn" class="chat-send-btn">Send</button>
+        </div>
+      `;
+      
+      chatInputContainer.appendChild(chatInputArea);
+      this.setupChatInputHandlers();
+    }
+  }
+
+  private addMessageToChat(role: string, content: string, timing?: number): void {
+    try {
+      let chatContainer = document.getElementById('chatContainer');
+      
+      if (!chatContainer) {
+        const agentResults = document.getElementById('agentResults');
+        if (!agentResults) {
+          return;
+        }
+        
+        const existingWelcome = agentResults.querySelector('.welcome-container');
+        if (existingWelcome) {
+          existingWelcome.remove();
+        } 
+        chatContainer = document.createElement('div');
+        chatContainer.id = 'chatContainer';
+        chatContainer.className = 'chat-container';
+        agentResults.appendChild(chatContainer);
+      }
+      
+      if (!content || content.trim() === '') {
+        return;
+      }
+      
+      const messageDiv = document.createElement('div');
+      
+      if (role === 'context') {
+        messageDiv.className = 'chat-message context-message';
+        messageDiv.innerHTML = `<div class="message-content">${markdownToHtml(content)}</div>`;
+        messageDiv.dataset.role = 'context';
+      } else if (role === 'user') {
+        messageDiv.className = 'chat-message user-message';
+        messageDiv.innerHTML = `<div class="message-content">${markdownToHtml(content)}</div>`;
+        messageDiv.dataset.role = 'user';
+        messageDiv.dataset.timestamp = new Date().toISOString();
+      } else if (role === 'assistant') {
+        messageDiv.className = 'chat-message assistant-message';
+        messageDiv.dataset.role = 'assistant';
+        messageDiv.dataset.timestamp = new Date().toISOString();
+        
+        const isLoading = content.includes('class="loading"') && !content.replace(/<div class="loading">.*?<\/div>/g, '').trim();
+        const processedContent = isLoading ? content : markdownToHtml(content);
+        
+        if (timing && !isLoading) {
+          messageDiv.innerHTML = `
+            <div class="timing-info">
+              <span>Response generated in</span>
+              <span class="time-value">${timing.toFixed(2)}s</span>
+            </div>
+            <div class="message-content">${processedContent}</div>
+          `;
+          messageDiv.dataset.genTime = timing.toFixed(2);
+        } else {
+          messageDiv.innerHTML = `<div class="message-content">${processedContent}</div>`;
+        }
+      }
+      
+      chatContainer.appendChild(messageDiv);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+      
+      this.ensureChatInputArea();
+      
+    } catch (error) {
+      console.error('[AgentService] Error adding message to chat:', error);
+    }
+  }
+
+  private displayAgentResults(data: any): void {
+    try {
+      if (!data) {
+        this.addMessageToChat('assistant', 'No data received from agent');
+        return;
+      }
+      
+      const currentTime = Date.now();
+      const contentHash = JSON.stringify(data).substring(0, 200); 
+      const lastDisplayKey = `lastDisplayed_${contentHash}`;
+      
+      localStorage.setItem(lastDisplayKey, currentTime.toString());
+
+      if (data.consolidated_summary) {
+        this.addMessageToChat('assistant', data.consolidated_summary, data.generation_time);
+      } else if (data.summaries && data.summaries.length > 0) {
+        const summariesText = data.summaries.map((s: any) => `<b>${s.title}</b>\n${s.summary}`).join('\n\n');
+        this.addMessageToChat('assistant', summariesText, data.generation_time);
+      } else {
+        this.addMessageToChat('assistant', 'No relevant information found.', data.generation_time);
+      }
+      
+    } catch (error) {
+      try {
+        this.addMessageToChat('assistant', 'Error displaying results: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      } catch (chatError) {
+        console.error('[AgentService] Error displaying results and adding chat message:', chatError);
+      }
+    }
+  }
+
+  private clearLoadingMessages(): void {
+    const loadingMessages = document.querySelectorAll('.loading');
+    loadingMessages.forEach(message => {
+      const parentMessage = message.closest('.chat-message');
+      if (parentMessage) {
+        parentMessage.remove();
+      }
+    });
+  }
+
+  private showToast(message: string, type: string = 'info'): void {
+    let toast = document.getElementById('toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'toast';
+      document.body.appendChild(toast);
+    }
+    
+    toast.textContent = message;
+    toast.className = `toast ${type} show`;
+    
+    setTimeout(() => {
+      toast!.className = 'toast';
+    }, 3000);
+  }
+
+  public async buildConversationHistoryWithMemories(currentUrl: string, query: string): Promise<any[]> {
+    const conversationHistory: any[] = [];
+    
+    try {
+      // Get recent chat messages from the UI
+      const chatContainer = document.getElementById('chatContainer');
+      if (chatContainer) {
+        const messages = chatContainer.querySelectorAll('.chat-message');
+        
+        // Add recent chat messages (last 10)
+        const recentMessages = Array.from(messages).slice(-10);
+        recentMessages.forEach(message => {
+          // Skip loading messages
+          if (message.querySelector('.loading')) return;
+          
+          // Determine role (user or assistant)
+          let role = 'assistant';
+          if (message.classList.contains('user-message')) {
+            role = 'user';
+          }
+          
+          // Get text content, stripping HTML
+          const contentEl = message.querySelector('.message-content');
+          let content = '';
+          if (contentEl) {
+            // Create a temporary div to extract text without HTML
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = contentEl.innerHTML;
+            content = tempDiv.textContent || tempDiv.innerText || '';
+          }
+          
+          if (content && !content.includes('class="loading"')) {
+            conversationHistory.push({
+              role: role,
+              content: content
+            });
+          }
+        });
+      }
+      
+      // Get relevant memories from localStorage (simple approach)
+      try {
+        const allMemories = JSON.parse(localStorage.getItem(CONSTANTS.MEMORY_KEY) || '[]');
+        if (allMemories && allMemories.length > 0) {
+          // Simple relevance scoring - get recent memories from same domain or with query keywords
+          const relevantMemories = allMemories.slice(0, 10).filter((memory: any) => {
+            if (!memory) return false;
+            
+            // Check domain match
+            const currentDomain = currentUrl ? new URL(currentUrl).hostname : '';
+            const memoryDomain = memory.domain || '';
+            if (currentDomain && memoryDomain && currentDomain === memoryDomain) {
+              return true;
+            }
+            
+            // Check keyword match in question or answer
+            const queryLower = query.toLowerCase();
+            const questionMatch = memory.question && memory.question.toLowerCase().includes(queryLower);
+            const answerMatch = memory.answer && memory.answer.toLowerCase().includes(queryLower);
+            
+            return questionMatch || answerMatch;
+          }).slice(0, 5); // Take top 5 relevant memories
+          
+          console.log(`[Memory] Found ${relevantMemories.length} relevant memories for query:`, query);
+          
+          // Format memories with proper structure expected by Python agents
+          relevantMemories.forEach((memory: any) => {
+            // Add the original question as a user message with memory flag
+            conversationHistory.push({
+              role: 'user',
+              content: memory.question,
+              isMemory: true,
+              source: {
+                url: memory.url,
+                domain: memory.domain,
+                title: memory.title,
+                timestamp: memory.timestamp,
+                topic: memory.topic
+              }
+            });
+            
+            // Add the answer as an assistant message with memory flag  
+            conversationHistory.push({
+              role: 'assistant',
+              content: memory.answer,
+              isMemory: true,
+              source: {
+                url: memory.url,
+                domain: memory.domain,
+                title: memory.title,
+                timestamp: memory.timestamp,
+                topic: memory.topic
+              }
+            });
+          });
+        }
+      } catch (memoryError) {
+        console.error('[Memory] Error retrieving memories:', memoryError);
+      }
+      
+           console.log(`[Memory] Built conversation history with ${conversationHistory.length} items (${conversationHistory.filter(item => item.isMemory).length} from memory)`);
+       return conversationHistory;
+       
+     } catch (error) {
+       console.error('[Memory] Error building conversation history with memories:', error);
+       return conversationHistory; // Return whatever we have so far
+     }
+   }
+
+  public destroy(): void {
+    try {
+      this.isExecuting = false;
+      console.log('[AgentService] Destroyed successfully');
+    } catch (error) {
+      console.error('[AgentService] Error during destruction:', error);
+    }
+  }
+}

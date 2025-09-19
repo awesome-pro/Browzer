@@ -29,7 +29,6 @@ export class SmartRecordingEngine {
 
   private constructor() {
     this.initializeWebviewEventHandlers()
-    console.log('🟠[RecordingEngine] SmartRecordingEngine initialized');
   }
 
   static getInstance(): SmartRecordingEngine {
@@ -40,27 +39,22 @@ export class SmartRecordingEngine {
   }
 
   private initializeWebviewEventHandlers(): void {
-    console.log('🟠[RecordingEngine] Setting up webview event handlers');
     
     const ipcRenderer = (window as any).electronAPI;
     
     if (ipcRenderer && ipcRenderer.ipcOn) {
       ipcRenderer.ipcOn('webview-recording-action', (actionData: any) => {
-        console.log('🟠[RecordingEngine] Received webview recording action:', actionData);
         this.handleWebviewAction(actionData);
       });
       
       ipcRenderer.ipcOn('webview-recording-context', (contextData: any) => {
-        console.log('🟠[RecordingEngine] Received webview recording context:', contextData);
         this.handleWebviewContext(contextData);
       });
       
       ipcRenderer.ipcOn('webview-recording-network', (networkData: any) => {
-        console.log('🟠[RecordingEngine] Received webview recording network:', networkData);
         this.handleWebviewNetwork(networkData);
       });
       
-      console.log('🟠[RecordingEngine] Webview event handlers registered');
     } else {
       console.warn('[RecordingEngine] IPC renderer not available for webview events');
     }
@@ -68,11 +62,9 @@ export class SmartRecordingEngine {
 
 private handleWebviewAction(actionData: any): void {
   if (!this.isRecording || !this.activeSession) {
-    console.log('🟠[RecordingEngine] Not recording, ignoring webview action');
     return;
   }
   
-  console.log('🟠[RecordingEngine] Processing webview action:', actionData.type);
   
   try {
     const action: SemanticAction = {
@@ -93,14 +85,13 @@ private handleWebviewAction(actionData: any): void {
     
     this.recordAction(action);
   } catch (error) {
-    console.error('🟠[RecordingEngine] Error processing webview action:', error);
+    console.error('Error processing webview action:', error);
   }
 }
 
 private handleWebviewContext(contextData: any): void {
   if (!this.isRecording || !this.activeSession) return;
   
-  console.log('🟠[RecordingEngine] Processing webview context:', contextData.subtype);
   
   if (contextData.subtype === 'navigation') {
     const pageContext = this.convertWebviewPageContext(contextData);
@@ -111,7 +102,6 @@ private handleWebviewContext(contextData: any): void {
 private handleWebviewNetwork(networkData: any): void {
   if (!this.isRecording || !this.activeSession) return;
   
-  console.log('🟠[RecordingEngine] Processing webview network event:', networkData.type);
   
   this.recordNetworkInteraction({
     id: this.generateId(),
@@ -197,7 +187,6 @@ private generateElementDescriptionFromWebview(element: any): string {
 private handleWebviewNavigation(pageContext: PageContext): void {
   if (!this.activeSession) return;
   
-  console.log('🟠[RecordingEngine] Webview navigation to:', pageContext.url);
   
   if (!this.activeSession.metadata.pagesVisited.includes(pageContext.url)) {
     this.activeSession.metadata.pagesVisited.push(pageContext.url);
@@ -226,17 +215,14 @@ private handleWebviewNavigation(pageContext: PageContext): void {
 }
 
 public initializeWebviewRecording(): void {
-  console.log('🟠[RecordingEngine] Initializing webview recording integration');
   this.initializeWebviewEventHandlers();
 }
 
 public setupWebviewRecording(webview: any): void {
   const webviewId = webview.id;
-  console.log(`[RecordingEngine] Setting up recording for webview: ${webviewId}`);
   
   if (this.isRecording && this.activeSession) {
     try {
-      console.log(`[RecordingEngine] Sending start-recording command to webview ${webviewId}`);
       webview.send('start-recording', this.activeSession.id);
     } catch (error) {
       console.error('[RecordingEngine] Failed to send start-recording command:', error);
@@ -245,7 +231,6 @@ public setupWebviewRecording(webview: any): void {
 }
 
 private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
-  console.log(`[RecordingEngine] Notifying webviews of recording state: ${commandType}`);
   
   // Dispatch custom event that index.ts can listen for
   if (commandType === 'start') {
@@ -291,7 +276,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     // this.captureInitialScreenshot();
     this.notifyWebviewsRecordingState('start');
 
-    console.log('🎯 Smart Recording started:', taskGoal);
     return session;
   }
 
@@ -319,7 +303,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     this.isRecording = false;
 
     this.saveSession(session);
-    console.log('✅ Smart Recording completed:', session.taskGoal, `(${session.metadata.totalActions} actions)`);
     return session;
   }
 
@@ -332,7 +315,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
 
   private setupSmartEventListeners(): void {
     // Focus on high-level user intentions
-    const meaningfulEvents = [
+    const meaningfulEvents = [  
       'click', 'submit', 'change', 'input', 'keydown', 'focus', 'blur', 'scroll'
     ];
 

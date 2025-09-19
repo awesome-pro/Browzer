@@ -137,3 +137,38 @@ export function markdownToHtml(text: string): string {
       return '';
     }
   }
+
+  export function getExtensionDisplayName(extensionId: string): string {
+    const displayNames: Record<string, string> = {
+      'topic-agent': 'Topic Agent',
+      'research-agent': 'Research Agent',
+      'conversation-agent': 'Conversation Agent'
+    };
+    
+    return displayNames[extensionId] || extensionId.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase());
+  }
+
+
+  export function getBrowserApiKeys(): Record<string, string> {
+    // Only include Anthropic API key - other providers commented out
+    const providers = ['anthropic']; // ['openai', 'anthropic', 'perplexity', 'chutes'];
+    const apiKeys: Record<string, string> = {};
+    
+    console.log('[DEBUG] Reading API keys from localStorage...');
+    
+    providers.forEach(provider => {
+      const key = localStorage.getItem(`${provider}_api_key`);
+      if (key) {
+        apiKeys[provider] = key;
+        // Log partial key for debugging (mask sensitive parts)
+        const maskedKey = key.length > 12 ? key.substring(0, 8) + '...' + key.substring(key.length - 4) : 'short_key';
+        console.log(`[DEBUG] ${provider}: ${maskedKey} (length: ${key.length})`);
+      } else {
+        console.log(`[DEBUG] ${provider}: NO KEY FOUND`);
+      }
+    });
+    
+    console.log(`[DEBUG] Total API keys found: ${Object.keys(apiKeys).length}`);
+    return apiKeys;
+  }
+  
