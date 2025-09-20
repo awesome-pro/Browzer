@@ -1,18 +1,22 @@
-import { SmartRecordingEngine } from '../components/RecordingEngine';
-import { AIPromptGenerator } from '../components/PropmtGenerator';
-import { ExecuteResult, ExecuteTask, ExecuteStep } from '../types';
-import { SessionSelector } from '../components/SessionSelector';
-import { ExecuteStepRunner } from '../components/ExecuteStepRunner';
+import { ExecuteResult, ExecuteStep, ExecuteTask } from '../types';
 import { TabManager } from './TabManager';
+import { SessionSelector } from '../components/SessionSelector';
+import { SmartRecordingEngine } from '../components/RecordingEngine';
+import { AnthropicPromptGenerator } from '../components/PropmtGenerator';
+import { ActionValidator, UnifiedActionType, UnifiedExecuteStep } from '../../shared/types';
+import { ExecuteStepRunner } from '../components/ExecuteStepRunner';
 
-export class ExecuteAgentService {  
+export class ExecuteAgentService {
   private tabManager: TabManager;
   private recordingEngine: SmartRecordingEngine;
   private isExecuting = false;
   private currentTask: ExecuteTask | null = null;
   private selectedRecordingSessionId: string | null = null;
   private sessionSelector: SessionSelector | null = null;
-  private stepCount = 0;
+  
+  private readonly MAX_EXECUTION_TIME = 300000; 
+  private readonly STEP_TIMEOUT = 60000;
+  private readonly MAX_RETRIES_PER_STEP = 3;
 
   constructor(tabManager: TabManager) {
     this.tabManager = tabManager;
@@ -20,12 +24,11 @@ export class ExecuteAgentService {
     this.sessionSelector = new SessionSelector();
   }
 
-
   public async executeTask(instruction: string): Promise<ExecuteResult> {
     if (this.isExecuting) {
       return {
         success: false,
-        error: 'Already executing a task',
+        error: 'Already executing a task. Please wait for current task to complete.',
         executionTime: 0
       };
     }
@@ -34,9 +37,13 @@ export class ExecuteAgentService {
     const startTime = Date.now();
 
     try {
+      this.addMessageToChat('assistant', '<div class="loading">Preparing to execute task...</div>');
+      
       const selectedSessionId = await this.showSessionSelectorAndWaitForSelection();
       
       if (!selectedSessionId) {
+        this.clearLoadingMessages();
+        this.addMessageToChat('assistant', 'No recording session selected. Task execution cancelled.');
         return {
           success: false,
           error: 'No recording session selected',
@@ -44,8 +51,20 @@ export class ExecuteAgentService {
         };
       }
 
-      this.selectedRecordingSessionId = selectedSessionId;
-      
+      const session = this.recordingEngine.getSession(selectedSessionId);
+      if (!session) {
+        this.clearLoadingMessages();
+        this.addMessageToChat('assistant', 'Selected recording session not found. Please try again.');
+        return {
+          success: false,
+          error: 'Recording session not found',
+          executionTime: Date.now() - startTime
+        };
+      }
+
+      this.clearLoadingMessages();
+      this.addMessageToChat('user', instruction);
+
       this.currentTask = {
         id: `execute-task-${Date.now()}`,
         instruction,
@@ -54,7 +73,7 @@ export class ExecuteAgentService {
         status: 'running'
       };
 
-      const result = await this.executeWithSession(instruction, selectedSessionId);
+      const result = await this.executeWithEnhancedPrompting(instruction, session);
       
       return {
         success: result.success,
@@ -63,7 +82,8 @@ export class ExecuteAgentService {
         executionTime: Date.now() - startTime
       };
     } catch (error) {
-      console.error('[ExecuteAgentService] Task execution failed:', error);
+      console.error('[EnhancedExecuteAgentService] Task execution failed:', error);
+      this.addMessageToChat('assistant', `Execution failed: ${(error as Error).message}`);
       return {
         success: false,
         error: (error as Error).message,
@@ -72,8 +92,6 @@ export class ExecuteAgentService {
     } finally {
       this.isExecuting = false;
       this.currentTask = null;
-      this.selectedRecordingSessionId = null;
-      this.stepCount = 0;
     }
   }
 
@@ -82,562 +100,517 @@ export class ExecuteAgentService {
     console.log('[ExecuteAgentService] Selected recording session ID:', sessionId);
   }
 
-  private async showSessionSelectorAndWaitForSelection(): Promise<string | null> {
-    return await this.sessionSelector!.show();
-  }
-
-  private async executeWithSession(instruction: string, sessionId: string): Promise<ExecuteResult> {
+  private async executeWithEnhancedPrompting(instruction: string, session: any): Promise<ExecuteResult> {
     try {
-      const session = this.recordingEngine.getSession(sessionId);
-      if (!session) {
-        throw new Error('Recording session not found');
-      }
+      this.addMessageToChat('assistant', this.generateContextAnalysis(instruction, session));
 
-      this.addMessageToChat('assistant', '<div class="loading">Analyzing recording session and planning execution steps...</div>');
+      const systemPrompt = AnthropicPromptGenerator.getSampleSystemPrompt()
+      const userPrompt = AnthropicPromptGenerator.generateClaudeUserPrompt(instruction, session);
 
-      // const generatedPrompt = AIPromptGenerator.generateTaskPrompt(session);
-      
-      const systemPrompt = `You are an expert browser automation assistant. You execute tasks by taking single atomic actions.
-IMPORTANT: You have access to a recording of a user performing a task. DO NOT ask for clarification about what task to perform. 
-Instead, use the recording context below combined with the user's instruction to generate the execution steps.
+      this.addMessageToChat('assistant', '<div class="loading">🧠 Analyzing recorded workflow and planning execution steps...</div>');
 
-RECORDING CONTEXT:
-The user has recorded a workflow for searching on Google. Here's what they did:
-1. Navigated to https://www.google.com
-2. Clicked on the textarea#APjFqb
-3. Typed a search query "abhinandan pro"
-4. Pressed Enter to submit the search
-5. Waited for search results to load
-6. Clicked on the first search result - a abhinandan.pro
-7. Extracted information from the resulting page
-
-When the user gives you an instruction like "Search for Python tutorials", you should use this recorded workflow
-and adapt it to the specific search term "Python tutorials" without asking for clarification.
-
-AVAILABLE ACTIONS:
-- navigate: Go to a URL
-- click: Click an element
-- type: Type text into an input
-- wait: Wait for milliseconds (value = milliseconds)
-- extract: Get comprehensive page data
-- select_dropdown: Select option from dropdown (value = option text)
-- wait_for_element: Wait for element to appear (value = selector to wait for)
-- wait_for_dynamic_content: Wait for dynamic content to load
-- clear: Clear an input field
-- focus: Focus an element
-- hover: Hover over an element
-- keypress: Press a key (key = key name)
-- check/uncheck: Check or uncheck a checkbox
-
-CRITICAL RULES:
-1. ALWAYS verify elements are in viewport before interacting
-2. For elements not in viewport, first use "scroll" to bring them into view
-3. ALWAYS use "wait" after actions that trigger dynamic changes
-4. Use "wait_for_element" when you expect an element to appear after an action
-5. Use "wait_for_dynamic_content" for sites with heavy JavaScript before extracting
-6. For complex forms, fill fields one by one, don't rush
-7. Use "extract" periodically to understand current page state
-8. NEVER ask the user for clarification about what task to perform - use the recording context
-
-OUTPUT FORMAT:
-You MUST respond with a JSON array of steps in this format:
-[
-  {
-    "action": "navigate|click|type|wait|extract|...",
-    "target": "URL or CSS selector",
-    "value": "text to type or option to select or milliseconds to wait",
-    "reasoning": "explanation of why this specific action is needed now"
-  },
-  {...}
-]
-
-DO NOT include any text before or after the JSON array. Your entire response should be valid JSON.`;
-      
-      // Cre
-      
-      // Get the API key for the LLM
-      const provider = 'anthropic';
-      const apiKey = localStorage.getItem(`${provider}_api_key`);
-      
+      const apiKey = localStorage.getItem('anthropic_api_key');
       if (!apiKey) {
         this.clearLoadingMessages();
-        this.addMessageToChat('assistant', 'Please configure your API key in the Extensions panel.');
-        throw new Error('API key not found');
+        this.addMessageToChat('assistant', 'Please configure your Anthropic API key in the Extensions panel before proceeding.');
+        throw new Error('Anthropic API key not configured');
       }
 
-      // Call the LLM to generate execution steps
-      const executionPlanResponse = await this.callLLM(systemPrompt, instruction, apiKey);
-      
-      // Clear loading message
+      const llmResponse = await this.callLLM(systemPrompt, userPrompt, apiKey);
       this.clearLoadingMessages();
-      
-      // Parse the execution plan
-      const executionSteps = this.parseExecutionPlan(executionPlanResponse);
+
+      const executionSteps = this.parseAndValidateSteps(llmResponse);
       
       if (!executionSteps || executionSteps.length === 0) {
-        throw new Error('Failed to generate execution steps');
+        this.addMessageToChat('assistant', 'Failed to generate valid execution steps. Please try again with a clearer instruction.');
+        throw new Error('No valid execution steps generated');
       }
 
-      // Display the execution plan
-      this.displayExecutionPlan(executionSteps);
-      
-      // Execute each step
-      const result = await this.executeSteps(executionSteps);
+      this.displayExecutionPlan(executionSteps, session);
+
+      const result = await this.executeStepsWithEnhancedMonitoring(executionSteps);
       
       return result;
     } catch (error) {
-      console.error('[ExecuteAgentService] Failed to execute with session:', error);
-      this.addMessageToChat('assistant', `Error: ${(error as Error).message}`);
-      return {
-        success: false,
-        error: (error as Error).message,
-        executionTime: 0
-      };
+      console.error('[EnhancedExecuteAgentService] Enhanced execution failed:', error);
+      throw error;
     }
   }
 
   private async callLLM(systemPrompt: string, userPrompt: string, apiKey: string): Promise<string> {
     try {
-      // Call the LLM via IPC to main process
       const response = await window.electronAPI.ipcInvoke('call-llm', {
         provider: 'anthropic',
         apiKey: apiKey,
         systemPrompt: systemPrompt,
         prompt: userPrompt,
-        maxTokens: 2000
+        maxTokens: 2000,
       });
 
       if (!response.success) {
-        throw new Error(response.error || 'LLM call failed');
+        throw new Error(response.error || 'LLM API call failed');
       }
 
       return response.response;
     } catch (error) {
-      console.error('[ExecuteAgentService] LLM call failed:', error);
-      throw error;
+      console.error('[EnhancedExecuteAgentService] LLM API call failed:', error);
+      throw new Error(`AI model call failed: ${(error as Error).message}`);
     }
   }
 
-  private parseExecutionPlan(llmResponse: string): ExecuteStep[] {
+  private parseAndValidateSteps(llmResponse: string): UnifiedExecuteStep[] {
     try {
-      console.log('[ExecuteAgentService] Parsing execution plan from LLM response:', llmResponse);
-      
-      // Clean up the response - remove any non-JSON text
-      const cleanedResponse = llmResponse.trim()
-        .replace(/^```json\s*/, '') // Remove leading ```json
-        .replace(/```\s*$/, '')     // Remove trailing ```
-        .replace(/^[^[]*(\[[\s\S]*\])[^]]*$/, '$1'); // Extract just the JSON array
-      
-      console.log('[ExecuteAgentService] Cleaned response:', cleanedResponse);
-      
-      // Try to parse the cleaned response directly
+      console.log('[EnhancedExecuteAgentService] Parsing LLM response:', llmResponse);
+
+      const cleanedResponse = this.extractJSONFromResponse(llmResponse);
+      let parsedSteps: any[];
+
       try {
-        const steps = JSON.parse(cleanedResponse);
-        console.log('[ExecuteAgentService] Successfully parsed JSON steps:', steps);
+        parsedSteps = JSON.parse(cleanedResponse);
+      } catch (parseError) {
+        console.error('[EnhancedExecuteAgentService] JSON parsing failed, trying alternative methods');
+        throw new Error('Failed to parse execution steps from AI response');
+      }
+
+      if (!Array.isArray(parsedSteps)) {
+        throw new Error('AI response is not a valid array of steps');
+      }
+
+      const validatedSteps: UnifiedExecuteStep[] = [];
+      
+      for (let i = 0; i < parsedSteps.length; i++) {
+        const rawStep = parsedSteps[i];
         
-        // Validate that we have an array of steps
-        if (!Array.isArray(steps)) {
-          throw new Error('Parsed result is not an array');
-        }
-        
-        // Convert to ExecuteStep format
-        return steps.map((step: any, index: number) => {
-          // Ensure required fields exist
-          if (!step.action) {
-            console.warn(`[ExecuteAgentService] Step ${index + 1} missing action:`, step);
-            step.action = this.inferActionFromStep(step);
+        // Convert to unified format
+        const step: UnifiedExecuteStep = {
+          id: `step-${i + 1}`,
+          action: this.normalizeActionType(rawStep.action),
+          description: rawStep.description || `Step ${i + 1}`,
+          target: rawStep.target || '',
+          value: rawStep.value,
+          reasoning: rawStep.reasoning || '',
+          status: 'pending',
+          maxRetries: this.MAX_RETRIES_PER_STEP,
+          retryCount: 0
+        };
+
+        // Validate the step
+        const validation = ActionValidator.validateStep(step);
+        if (!validation.valid) {
+          console.warn(`[EnhancedExecuteAgentService] Step ${i + 1} validation failed:`, validation.errors);
+          const fixedStep = this.attemptStepFix(step, validation.errors);
+          if (ActionValidator.validateStep(fixedStep).valid) {
+            validatedSteps.push(fixedStep);
+          } else {
+            console.error(`[EnhancedExecuteAgentService] Could not fix step ${i + 1}, skipping`);
           }
-          
-          return {
-            id: `step-${index + 1}`,
-            description: step.description || step.action || `Step ${index + 1}`,
-            status: 'pending',
-            reasoning: step.reasoning || step.rationale || '',
-            action: step.action,
-            target: step.target || step.selector || '',
-            value: step.value || ''
-          };
-        });
-      } catch (directParseError) {
-        console.warn('[ExecuteAgentService] Direct JSON parsing failed:', directParseError);
-      }
-      
-      // If direct parsing fails, try to extract a JSON array pattern
-      try {
-        const jsonMatch = llmResponse.match(/\[\s*\{[\s\S]*?\}\s*\]/g);
-        if (jsonMatch && jsonMatch[0]) {
-          const jsonStr = jsonMatch[0];
-          console.log('[ExecuteAgentService] Found JSON array pattern:', jsonStr);
-          const steps = JSON.parse(jsonStr);
-          
-          // Convert to ExecuteStep format
-          return steps.map((step: any, index: number) => ({
-            id: `step-${index + 1}`,
-            description: step.description || step.action || `Step ${index + 1}`,
-            status: 'pending',
-            reasoning: step.reasoning || step.rationale || '',
-            action: step.action || '',
-            target: step.target || step.selector || '',
-            value: step.value || ''
-          }));
-        }
-      } catch (jsonError) {
-        console.warn('[ExecuteAgentService] JSON pattern extraction failed:', jsonError);
-      }
-      
-      // Try to extract a JSON array from code blocks
-      const stepsMatch = llmResponse.match(/```(?:json)?\n([\s\S]*?)\n```/) || 
-                         llmResponse.match(/```([\s\S]*?)```/);
-      
-      if (stepsMatch) {
-        const stepsJson = stepsMatch[1];
-        console.log('[ExecuteAgentService] Found JSON in code block:', stepsJson);
-        try {
-          const steps = JSON.parse(stepsJson);
-          
-          // Convert to ExecuteStep format
-          return steps.map((step: any, index: number) => ({
-            id: `step-${index + 1}`,
-            description: step.description || step.action || `Step ${index + 1}`,
-            status: 'pending',
-            reasoning: step.reasoning || step.rationale || '',
-            action: step.action || '',
-            target: step.target || step.selector || '',
-            value: step.value || ''
-          }));
-        } catch (jsonError) {
-          console.warn('[ExecuteAgentService] JSON parsing from code block failed:', jsonError);
+        } else {
+          validatedSteps.push(step);
         }
       }
-      
-      // If no JSON found, try to parse numbered steps
-      const numberedSteps = llmResponse.match(/\d+\.\s+(.*?)(?=\n\d+\.|\n\n|$)/g);
-      if (numberedSteps && numberedSteps.length > 0) {
-        console.log('[ExecuteAgentService] Falling back to numbered steps parsing');
-        return numberedSteps.map((step, index) => {
-          const cleanStep = step.replace(/^\d+\.\s+/, '').trim();
-          
-          // Try to extract action, target, and value from the step text
-          const actionMatch = cleanStep.match(/^(navigate|click|type|wait|extract|select_dropdown|wait_for_element|wait_for_dynamic_content|clear|focus|hover|keypress|check|uncheck)\s+(.*?)(?:\s+with\s+value\s+"(.*?)"|$)/i);
-          
-          if (actionMatch) {
-            const [_, action, target, value] = actionMatch;
-            return {
-              id: `step-${index + 1}`,
-              description: cleanStep,
-              status: 'pending',
-              reasoning: '',
-              action: action.toLowerCase(),
-              target: target.trim(),
-              value: value || ''
-            };
-          }
-          
-          return {
-            id: `step-${index + 1}`,
-            description: cleanStep,
-            status: 'pending',
-            reasoning: ''
-          };
-        });
+
+      if (validatedSteps.length === 0) {
+        throw new Error('No valid execution steps could be generated');
       }
-      
-      // If all else fails, create a default Google search workflow with the instruction
-      console.log('[ExecuteAgentService] Creating default Google search workflow for:', llmResponse);
-      return this.createDefaultGoogleSearchWorkflow(llmResponse);
+
+      console.log(`[EnhancedExecuteAgentService] Successfully parsed and validated ${validatedSteps.length} steps`);
+      return validatedSteps;
     } catch (error) {
-      console.error('[ExecuteAgentService] Failed to parse execution plan:', error);
-      throw new Error('Failed to parse execution plan from LLM response');
+      console.error('[EnhancedExecuteAgentService] Step parsing failed:', error);
+      throw new Error(`Failed to parse execution steps: ${(error as Error).message}`);
     }
-  }
-  
-  private inferActionFromStep(step: any): string {
-    if (!step) return 'unknown';
-    
-    const description = (step.description || '').toLowerCase();
-    
-    if (description.includes('navigate') || description.includes('go to')) {
-      return 'navigate';
-    } else if (description.includes('click') || description.includes('select')) {
-      return 'click';
-    } else if (description.includes('type') || description.includes('enter')) {
-      return 'type';
-    } else if (description.includes('wait')) {
-      return 'wait';
-    } else if (description.includes('extract')) {
-      return 'extract';
-    }
-    
-    return 'unknown';
-  }
-  
-  private createDefaultGoogleSearchWorkflow(instruction: string): ExecuteStep[] {
-    console.log('[ExecuteAgentService] Creating default Google search workflow');
-    
-    // Extract search term from the instruction
-    let searchTerm = instruction;
-    if (instruction.toLowerCase().includes('search for ')) {
-      searchTerm = instruction.replace(/.*search for ['"]?(.*?)['"]?$/i, '$1');
-    }
-    
-    // Create a default Google search workflow
-    return [
-      {
-        id: 'step-1',
-        description: 'Navigate to Google',
-        status: 'pending',
-        reasoning: 'Starting the search workflow',
-        action: 'navigate',
-        target: 'https://www.google.com',
-        value: ''
-      },
-      {
-        id: 'step-2',
-        description: 'Wait for page to load',
-        status: 'pending',
-        reasoning: 'Ensure the page is fully loaded before interacting',
-        action: 'wait',
-        target: '',
-        value: '2000'
-      },
-      {
-        id: 'step-3',
-        description: 'Wait for search box to appear',
-        status: 'pending',
-        reasoning: 'Ensure the search box is available',
-        action: 'wait_for_element',
-        target: 'textarea[name="q"]',
-        value: ''
-      },
-      {
-        id: 'step-4',
-        description: 'Click on the search box',
-        status: 'pending',
-        reasoning: 'Focus the search box to prepare for typing',
-        action: 'click',
-        target: 'textarea[name="q"]',
-        value: ''
-      },
-      {
-        id: 'step-5',
-        description: `Type "${searchTerm}" into the search box`,
-        status: 'pending',
-        reasoning: 'Enter the search query',
-        action: 'type',
-        target: 'textarea[name="q"]',
-        value: searchTerm
-      },
-      {
-        id: 'step-6',
-        description: 'Press Enter to submit the search',
-        status: 'pending',
-        reasoning: 'Submit the search query',
-        action: 'keypress',
-        target: 'textarea[name="q"]',
-        value: 'Enter'
-      },
-      {
-        id: 'step-7',
-        description: 'Wait for search results to load',
-        status: 'pending',
-        reasoning: 'Give time for the search results to appear',
-        action: 'wait_for_dynamic_content',
-        target: '',
-        value: '3000'
-      },
-      {
-        id: 'step-8',
-        description: 'Wait for first search result to appear',
-        status: 'pending',
-        reasoning: 'Ensure search results are available',
-        action: 'wait_for_element',
-        target: 'div[data-hveid] a:not([data-jsarwt])',
-        value: '10000'
-      },
-      {
-        id: 'step-9',
-        description: 'Click on the first search result',
-        status: 'pending',
-        reasoning: 'Navigate to the first search result',
-        action: 'click',
-        target: 'div[data-hveid] a:not([data-jsarwt])',
-        value: ''
-      },
-      {
-        id: 'step-10',
-        description: 'Wait for the page to load',
-        status: 'pending',
-        reasoning: 'Ensure the result page is fully loaded',
-        action: 'wait',
-        target: '',
-        value: '2000'
-      },
-      {
-        id: 'step-11',
-        description: 'Extract page content',
-        status: 'pending',
-        reasoning: 'Get information from the result page',
-        action: 'extract',
-        target: '',
-        value: ''
-      }
-    ];
   }
 
-  private displayExecutionPlan(steps: ExecuteStep[]): void {
-    // Add the execution plan to the current task
-    if (this.currentTask) {
-      this.currentTask.steps = steps;
+  private extractJSONFromResponse(response: string): string {
+    // Try multiple patterns to extract JSON
+    const patterns = [
+      // Direct JSON array
+      /^\s*\[[\s\S]*\]\s*$/,
+      // JSON wrapped in code blocks
+      /```(?:json)?\s*(\[[\s\S]*?\])\s*```/,
+      // JSON after some text
+      /(?:steps|array|json)[:\s]*(\[[\s\S]*\])/i,
+      // Extract anything that looks like a JSON array
+      /(\[[\s\S]*\])/
+    ];
+
+    for (const pattern of patterns) {
+      const match = response.match(pattern);
+      if (match) {
+        const jsonStr = match[1] || match[0];
+        try {
+          JSON.parse(jsonStr); // Validate it's valid JSON
+          return jsonStr;
+        } catch (e) {
+          continue;
+        }
+      }
     }
+
+    // If no JSON found, try to clean up the response
+    let cleaned = response.trim()
+      .replace(/^```json\s*/, '')
+      .replace(/```\s*$/, '')
+      .replace(/^.*?(\[[\s\S]*\]).*$/, '$1');
+
+    return cleaned;
+  }
+
+  private normalizeActionType(action: string): UnifiedActionType {
+    if (!action) return UnifiedActionType.CLICK;
     
-    // Display the execution plan in the chat
-    let planMessage = `# Execution Plan\n\nI'll execute your task using the recorded workflow as a guide. Here's my plan:\n\n`;
+    const normalized = action.toLowerCase().trim();
+    const actionMap: Record<string, UnifiedActionType> = {
+      'navigate': UnifiedActionType.NAVIGATE,
+      'go_to': UnifiedActionType.NAVIGATE,
+      'visit': UnifiedActionType.NAVIGATE,
+      'type': UnifiedActionType.TYPE,
+      'input': UnifiedActionType.TYPE,
+      'enter': UnifiedActionType.TYPE,
+      'fill': UnifiedActionType.TYPE,
+      'clear': UnifiedActionType.CLEAR,
+      'click': UnifiedActionType.CLICK,
+      'press': UnifiedActionType.CLICK,
+      'tap': UnifiedActionType.CLICK,
+      'select': UnifiedActionType.SELECT,
+      'choose': UnifiedActionType.SELECT,
+      'toggle': UnifiedActionType.TOGGLE,
+      'check': UnifiedActionType.TOGGLE,
+      'uncheck': UnifiedActionType.TOGGLE,
+      'submit': UnifiedActionType.SUBMIT,
+      'wait': UnifiedActionType.WAIT,
+      'wait_for_element': UnifiedActionType.WAIT_FOR_ELEMENT,
+      'wait_element': UnifiedActionType.WAIT_FOR_ELEMENT,
+      'wait_for_dynamic_content': UnifiedActionType.WAIT_FOR_DYNAMIC_CONTENT,
+      'wait_dynamic': UnifiedActionType.WAIT_FOR_DYNAMIC_CONTENT,
+      'focus': UnifiedActionType.FOCUS,
+      'blur': UnifiedActionType.BLUR,
+      'hover': UnifiedActionType.HOVER,
+      'keypress': UnifiedActionType.KEYPRESS,
+      'key': UnifiedActionType.KEYPRESS,
+      'scroll': UnifiedActionType.SCROLL,
+      'extract': UnifiedActionType.EXTRACT,
+      'get_data': UnifiedActionType.EXTRACT,
+      'verify_element': UnifiedActionType.VERIFY_ELEMENT,
+      'verify_text': UnifiedActionType.VERIFY_TEXT,
+      'verify_url': UnifiedActionType.VERIFY_URL
+    };
+
+    return actionMap[normalized] || UnifiedActionType.CLICK;
+  }
+
+  private attemptStepFix(step: UnifiedExecuteStep, errors: string[]): UnifiedExecuteStep {
+    const fixedStep = { ...step };
+
+    // Fix common issues
+    for (const error of errors) {
+      if (error.includes('URL is required') && step.action === UnifiedActionType.NAVIGATE) {
+        if (!fixedStep.target && !fixedStep.value) {
+          // Try to extract URL from description
+          const urlMatch = step.description.match(/(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+          if (urlMatch) {
+            fixedStep.target = urlMatch[0].startsWith('http') ? urlMatch[0] : `https://${urlMatch[0]}`;
+          }
+        }
+      }
+
+      if (error.includes('Target selector required') && !fixedStep.target) {
+        // Try to extract selector from description
+        const selectorMatch = step.description.match(/['"`]([^'"`]+)['"`]/);
+        if (selectorMatch) {
+          fixedStep.target = selectorMatch[1];
+        }
+      }
+
+      if (error.includes('value required') && !fixedStep.value) {
+        // Try to extract value from description
+        const valueMatch = step.description.match(/(?:type|enter|select)\s+['"`]([^'"`]+)['"`]/i);
+        if (valueMatch) {
+          fixedStep.value = valueMatch[1];
+        }
+      }
+    }
+
+    return fixedStep;
+  }
+
+  private generateContextAnalysis(instruction: string, session: any): string {
+    const analysis = `## Task Analysis
+
+**New Task:** ${instruction}
+**Referenced Workflow:** ${session.taskGoal}
+**Session Success:** ${session.metadata.success ? 'Yes' : 'No'}
+**Complexity:** ${session.metadata.complexity}
+**Original Steps:** ${session.actions.length}
+**Pages Visited:** ${session.metadata.pagesVisited.length}
+
+### Workflow Pattern
+The recorded session shows a **${this.identifyWorkflowPattern(session)}** pattern. I'll adapt this proven workflow to execute your new task while maintaining the same reliable sequence of actions.
+
+### Adaptation Strategy
+I'll modify the specific targets, values, and selectors from the recording to match your new requirements while preserving the timing and flow that made the original workflow successful.`;
+
+    return analysis;
+  }
+
+  private identifyWorkflowPattern(session: any): string {
+    const actions = session.actions.map((a: any) => a.type);
+    const hasSearch = session.taskGoal.toLowerCase().includes('search');
+    const hasForm = actions.includes('text_input') && actions.includes('submit');
+    const hasNavigation = actions.includes('navigation');
     
+    if (hasSearch) return 'search and discovery';
+    if (hasForm) return 'form submission';
+    if (hasNavigation) return 'multi-page navigation';
+    return 'interactive workflow';
+  }
+
+  private displayExecutionPlan(steps: UnifiedExecuteStep[], session: any): void {
+    let planMessage = `## Execution Plan
+
+I've analyzed the recorded workflow and generated **${steps.length} execution steps** based on the proven pattern. Here's what I'll do:
+
+### Steps Overview:`;
+
     steps.forEach((step, index) => {
-      planMessage += `${index + 1}. ${step.description}\n`;
+      const stepIcon = this.getStepIcon(step.action);
+      planMessage += `\n${index + 1}. ${stepIcon} **${step.action}** - ${step.description}`;
       if (step.reasoning) {
-        planMessage += `   *${step.reasoning}*\n`;
+        planMessage += `\n   *${step.reasoning}*`;
       }
     });
-    
-    planMessage += `\nI'll now start executing these steps one by one.`;
-    
+
+    planMessage += `\n\n### Execution Settings
+- **Max retries per step:** ${this.MAX_RETRIES_PER_STEP}
+- **Step timeout:** ${this.STEP_TIMEOUT / 1000}s
+- **Total timeout:** ${this.MAX_EXECUTION_TIME / 1000}s
+
+I'll now begin executing these steps. You'll see real-time progress updates as each step completes.`;
+
     this.addMessageToChat('assistant', planMessage);
+
+    // Update current task
+    if (this.currentTask) {
+      this.currentTask.steps = steps as ExecuteStep[];
+    }
   }
 
-  private async executeSteps(steps: ExecuteStep[]): Promise<ExecuteResult> {
+  private getStepIcon(action: UnifiedActionType): string {
+    const iconMap: Record<UnifiedActionType, string> = {
+      [UnifiedActionType.NAVIGATE]: '🌐',
+      [UnifiedActionType.TYPE]: '⌨️',
+      [UnifiedActionType.CLEAR]: '🧹',
+      [UnifiedActionType.CLICK]: '👆',
+      [UnifiedActionType.SELECT]: '📋',
+      [UnifiedActionType.TOGGLE]: '☑️',
+      [UnifiedActionType.SUBMIT]: '📤',
+      [UnifiedActionType.WAIT]: '⏳',
+      [UnifiedActionType.WAIT_FOR_ELEMENT]: '👀',
+      [UnifiedActionType.WAIT_FOR_DYNAMIC_CONTENT]: '⚡',
+      [UnifiedActionType.FOCUS]: '🎯',
+      [UnifiedActionType.BLUR]: '💨',
+      [UnifiedActionType.HOVER]: '🖱️',
+      [UnifiedActionType.KEYPRESS]: '⌨️',
+      [UnifiedActionType.SCROLL]: '📜',
+      [UnifiedActionType.EXTRACT]: '📊',
+      [UnifiedActionType.VERIFY_ELEMENT]: '✅',
+      [UnifiedActionType.VERIFY_TEXT]: '🔍',
+      [UnifiedActionType.VERIFY_URL]: '🔗'
+    };
+
+    return iconMap[action] || '⚡';
+  }
+
+  private async executeStepsWithEnhancedMonitoring(steps: UnifiedExecuteStep[]): Promise<ExecuteResult> {
     const startTime = Date.now();
-    let success = true;
+    let successCount = 0;
+    let failureCount = 0;
     let finalResult = null;
-    
-    // Get the active webview
+
+    // Get active webview
     const webview = this.tabManager.getActiveWebview();
     if (!webview) {
-      throw new Error('No active webview found');
+      throw new Error('No active webview found. Please ensure a tab is open.');
     }
-    
-    // Execute each step
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i];
-      
-      // Update step status
-      step.status = 'running';
-      this.updateStepStatus(i, step);
-      
-      try {
-        // Execute the step
-        const stepResult = await this.executeStep(step, webview);
-        
-        // Update step status
-        step.status = 'completed';
-        step.result = stepResult;
-        this.updateStepStatus(i, step);
-        
-        // Wait a bit between steps
-        await this.wait(1000);
-      } catch (error) {
-        console.error(`[ExecuteAgentService] Step ${i + 1} failed:`, error);
-        
-        // Update step status
-        step.status = 'failed';
-        step.error = (error as Error).message;
-        this.updateStepStatus(i, step);
-        
-        // Mark task as failed
-        success = false;
-        
-        // Wait a bit before continuing
-        await this.wait(1000);
-      }
-    }
-    
-    // Display final result
-    const executionTime = Date.now() - startTime;
-    const successCount = steps.filter(step => step.status === 'completed').length;
-    const failureCount = steps.filter(step => step.status === 'failed').length;
-    
-    let resultMessage = '';
-    if (success) {
-      resultMessage = `✅ **Task completed successfully!**\n\n`;
-      resultMessage += `- Executed ${steps.length} steps in ${(executionTime / 1000).toFixed(2)} seconds\n`;
-      resultMessage += `- All steps completed successfully\n`;
-    } else {
-      resultMessage = `⚠️ **Task completed with issues**\n\n`;
-      resultMessage += `- Executed ${steps.length} steps in ${(executionTime / 1000).toFixed(2)} seconds\n`;
-      resultMessage += `- ${successCount} steps completed successfully\n`;
-      resultMessage += `- ${failureCount} steps failed\n`;
-    }
-    
-    this.addMessageToChat('assistant', resultMessage);
-    
-    return {
-      success,
-      data: finalResult,
-      executionTime
-    };
-  }
 
-  private async executeStep(step: ExecuteStep, webview: any): Promise<any> {
+    const stepRunner = new ExecuteStepRunner(webview);
+
+    // Set overall timeout
+    const executionTimeout = setTimeout(() => {
+      throw new Error(`Execution timeout after ${this.MAX_EXECUTION_TIME / 1000} seconds`);
+    }, this.MAX_EXECUTION_TIME);
+
     try {
-      // Create a step runner to execute the step
-      const stepRunner = new ExecuteStepRunner(webview);
+      // Execute steps with real-time monitoring
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
+        
+        // Update UI for current step
+        this.updateStepProgress(i, step, 'running');
+        
+        try {
+          // Set step timeout
+          const stepTimeout = setTimeout(() => {
+            throw new Error(`Step timeout after ${this.STEP_TIMEOUT / 1000} seconds`);
+          }, this.STEP_TIMEOUT);
+
+          // Execute step
+          const stepResult = await stepRunner.executeStep(step);
+          clearTimeout(stepTimeout);
+
+          // Update success
+          successCount++;
+          this.updateStepProgress(i, step, 'completed', stepResult);
+
+          // Capture extract results
+          if (step.action === UnifiedActionType.EXTRACT) {
+            finalResult = stepResult;
+          }
+
+          // Brief pause between steps
+          await this.wait(800);
+
+        } catch (error) {
+          failureCount++;
+          step.status = 'failed';
+          step.error = (error as Error).message;
+          
+          this.updateStepProgress(i, step, 'failed', null, (error as Error).message);
+
+          if (this.shouldContinueAfterFailure(step, error as Error)) {
+            await this.wait(1000);
+          } else {
+            break;
+          }
+        }
+      }
+
+      clearTimeout(executionTimeout);
+
+      // Generate execution summary
+      const executionTime = Date.now() - startTime;
+      const overallSuccess = failureCount === 0 || (successCount > failureCount);
       
-      // Execute the step
-      return await stepRunner.executeStep(step);
+      this.displayExecutionSummary(steps, successCount, failureCount, executionTime, overallSuccess);
+
+      return {
+        success: overallSuccess,
+        data: finalResult,
+        executionTime,
+        error: overallSuccess ? undefined : `${failureCount} steps failed out of ${steps.length}`
+      };
+
     } catch (error) {
-      console.error(`[ExecuteAgentService] Step execution failed:`, error);
-      throw error;
+      clearTimeout(executionTimeout);
+      
+      this.addMessageToChat('assistant', `❌ **Execution Failed**\n\nError: ${(error as Error).message}`);
+      
+      return {
+        success: false,
+        error: (error as Error).message,
+        executionTime: Date.now() - startTime
+      };
     }
   }
 
-  private updateStepStatus(index: number, step: ExecuteStep): void {
-    // Update the step in the current task
-    if (this.currentTask && this.currentTask.steps[index]) {
-      this.currentTask.steps[index] = step;
+  private shouldContinueAfterFailure(step: UnifiedExecuteStep, error: Error): boolean {
+    const criticalActions = [
+      UnifiedActionType.NAVIGATE,
+      UnifiedActionType.SUBMIT
+    ];
+
+    if (criticalActions.includes(step.action)) {
+      return false;
     }
-    
-    // Update the step in the chat
-    const chatContainer = document.getElementById('chatContainer');
-    if (!chatContainer) return;
-    
-    const lastMessage = chatContainer.querySelector('.chat-message.assistant-message:last-child .message-content');
-    if (!lastMessage) return;
-    
-    const stepElement = lastMessage.querySelector(`#step-${step.id}`);
-    if (stepElement) {
-      // Update existing step element
-      const statusClass = step.status === 'completed' ? 'completed' : 
-                         step.status === 'failed' ? 'failed' : 
-                         step.status === 'running' ? 'running' : '';
-      
-      const statusIcon = step.status === 'completed' ? '✅' : 
-                        step.status === 'failed' ? '❌' : 
-                        step.status === 'running' ? '⏳' : '⭕';
-      
-      stepElement.className = `execution-step ${statusClass}`;
-      stepElement.innerHTML = `
-        <span class="step-status">${statusIcon}</span>
-        <span class="step-description">${step.description}</span>
-        ${step.error ? `<span class="step-error">${step.error}</span>` : ''}
-      `;
-    } else {
-      // Create progress update message
-      let progressMessage = `**Step ${index + 1}:** ${step.description}`;
-      
-      if (step.status === 'completed') {
-        progressMessage += ' ✅';
-      } else if (step.status === 'failed') {
-        progressMessage += ' ❌';
-        if (step.error) {
-          progressMessage += `\n  Error: ${step.error}`;
-        }
-      } else if (step.status === 'running') {
-        progressMessage += ' ⏳';
-      }
-      
-      // Add to existing message
-      lastMessage.innerHTML += `<br/>${progressMessage}`;
+
+    if (error.message.includes('timeout')) {
+      return false;
     }
+
+    if (step.action.toString().includes('VERIFY') && error.message.includes('not found')) {
+      return true;
+    }
+
+    return true;
+  }
+
+  private updateStepProgress(index: number, step: UnifiedExecuteStep, status: string, result?: any, error?: string): void {
+    const statusIcon = status === 'completed' ? '✅' : 
+                      status === 'failed' ? '❌' : 
+                      status === 'running' ? '🔄' : '⭕';
+
+    const stepIcon = this.getStepIcon(step.action);
+    
+    let progressMessage = `**Step ${index + 1}:** ${stepIcon} ${step.description} ${statusIcon}`;
+    
+    if (status === 'running') {
+      progressMessage += '\n  *Executing...*';
+    } else if (status === 'completed' && result?.message) {
+      progressMessage += `\n  ✓ ${result.message}`;
+    } else if (status === 'failed' && error) {
+      progressMessage += `\n  ⚠️ ${error}`;
+    }
+
+    if (step.startTime && step.endTime) {
+      const duration = step.endTime - step.startTime;
+      progressMessage += `\n  ⏱️ ${duration}ms`;
+    }
+
+    this.addMessageToChat('assistant', progressMessage);
+  }
+
+  private displayExecutionSummary(
+    steps: UnifiedExecuteStep[], 
+    successCount: number, 
+    failureCount: number, 
+    executionTime: number,
+    overallSuccess: boolean
+  ): void {
+    const summary = `## Execution Summary
+
+${overallSuccess ? '🎉 **Task Completed Successfully!**' : '⚠️ **Task Completed with Issues**'}
+
+### Results:
+- **Total Steps:** ${steps.length}
+- **Successful:** ${successCount} ✅
+- **Failed:** ${failureCount} ❌
+- **Success Rate:** ${Math.round((successCount / steps.length) * 100)}%
+- **Execution Time:** ${(executionTime / 1000).toFixed(2)}s
+
+### Performance Analysis:
+${this.generatePerformanceAnalysis(steps, executionTime)}
+
+${failureCount > 0 ? `### Failed Steps:
+${steps.filter(s => s.status === 'failed').map((s, i) => 
+  `- **Step ${steps.indexOf(s) + 1}:** ${s.description}\n  Error: ${s.error}`
+).join('\n')}` : ''}
+
+The task execution is now complete. ${overallSuccess ? 'All critical steps were successful.' : 'Some steps failed, but the main workflow completed.'}`;
+
+    this.addMessageToChat('assistant', summary);
+  }
+
+  private generatePerformanceAnalysis(steps: UnifiedExecuteStep[], totalTime: number): string {
+    const avgStepTime = totalTime / steps.length;
+    const slowSteps = steps.filter(s => 
+      s.startTime && s.endTime && (s.endTime - s.startTime) > avgStepTime * 2
+    );
+
+    let analysis = `- **Average step time:** ${avgStepTime.toFixed(0)}ms`;
+    
+    if (slowSteps.length > 0) {
+      analysis += `\n- **Slower steps:** ${slowSteps.length} (primarily wait operations)`;
+    }
+
+    if (totalTime > 30000) {
+      analysis += `\n- **Note:** Extended execution time due to page loading and dynamic content`;
+    }
+
+    return analysis;
+  }
+
+  private async showSessionSelectorAndWaitForSelection(): Promise<string | null> {
+    return await this.sessionSelector!.show();
   }
 
   private addMessageToChat(role: string, content: string, timing?: number): void {
@@ -646,115 +619,75 @@ DO NOT include any text before or after the JSON array. Your entire response sho
       
       if (!chatContainer) {
         const agentResults = document.getElementById('agentResults');
-        if (!agentResults) {
-          return;
-        }
+        if (!agentResults) return;
         
         const existingWelcome = agentResults.querySelector('.welcome-container');
-        if (existingWelcome) {
-          existingWelcome.remove();
-        } 
+        if (existingWelcome) existingWelcome.remove();
+        
         chatContainer = document.createElement('div');
         chatContainer.id = 'chatContainer';
         chatContainer.className = 'chat-container';
         agentResults.appendChild(chatContainer);
       }
       
-      if (!content || content.trim() === '') {
-        return;
-      }
+      if (!content || content.trim() === '') return;
       
       const messageDiv = document.createElement('div');
+      messageDiv.className = `chat-message ${role}-message`;
+      messageDiv.dataset.role = role;
+      messageDiv.dataset.timestamp = new Date().toISOString();
       
-      if (role === 'context') {
-        messageDiv.className = 'chat-message context-message';
-        messageDiv.innerHTML = `<div class="message-content">${this.markdownToHtml(content)}</div>`;
-        messageDiv.dataset.role = 'context';
-      } else if (role === 'user') {
-        messageDiv.className = 'chat-message user-message';
-        messageDiv.innerHTML = `<div class="message-content">${this.markdownToHtml(content)}</div>`;
-        messageDiv.dataset.role = 'user';
-        messageDiv.dataset.timestamp = new Date().toISOString();
-      } else if (role === 'assistant') {
-        messageDiv.className = 'chat-message assistant-message';
-        messageDiv.dataset.role = 'assistant';
-        messageDiv.dataset.timestamp = new Date().toISOString();
-        
-        const isLoading = content.includes('class="loading"') && !content.replace(/<div class="loading">.*?<\/div>/g, '').trim();
-        const processedContent = isLoading ? content : this.markdownToHtml(content);
-        
-        if (timing && !isLoading) {
-          messageDiv.innerHTML = `
-            <div class="timing-info">
-              <span>Response generated in</span>
-              <span class="time-value">${timing.toFixed(2)}s</span>
-            </div>
-            <div class="message-content">${processedContent}</div>
-          `;
-          messageDiv.dataset.genTime = timing.toFixed(2);
-        } else {
-          messageDiv.innerHTML = `<div class="message-content">${processedContent}</div>`;
-        }
+      const isLoading = content.includes('class="loading"');
+      const processedContent = isLoading ? content : this.markdownToHtml(content);
+      
+      if (timing && !isLoading) {
+        messageDiv.innerHTML = `
+          <div class="timing-info">Response generated in ${timing.toFixed(2)}s</div>
+          <div class="message-content">${processedContent}</div>
+        `;
+      } else {
+        messageDiv.innerHTML = `<div class="message-content">${processedContent}</div>`;
       }
       
       chatContainer.appendChild(messageDiv);
       chatContainer.scrollTop = chatContainer.scrollHeight;
     } catch (error) {
-      console.error('[ExecuteAgentService] Error adding message to chat:', error);
+      console.error('[EnhancedExecuteAgentService] Error adding message to chat:', error);
     }
   }
 
   private markdownToHtml(markdown: string): string {
-    // Simple markdown to HTML conversion
-    // Replace headers
-    let html = markdown
+    return markdown
       .replace(/^### (.*$)/gim, '<h3>$1</h3>')
       .replace(/^## (.*$)/gim, '<h2>$1</h2>')
       .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-      // Replace bold
       .replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>')
-      // Replace italic
       .replace(/\*(.*?)\*/gim, '<em>$1</em>')
-      // Replace code blocks
       .replace(/```([^`]*?)```/gim, '<pre><code>$1</code></pre>')
-      // Replace inline code
       .replace(/`([^`]*?)`/gim, '<code>$1</code>')
-      // Replace lists
-      .replace(/^\s*\d+\.\s+(.*$)/gim, '<ol><li>$1</li></ol>')
-      .replace(/^\s*[\-\*]\s+(.*$)/gim, '<ul><li>$1</li></ul>')
-      // Replace paragraphs
-      .replace(/^(?!<[hou])\s*([^\n].*)$/gim, '<p>$1</p>');
-    
-    // Fix nested lists
-    html = html.replace(/<\/[ou]l>\s*<[ou]l>/g, '');
-    
-    return html;
+      .replace(/^(?!<[hou])\s*([^\n].*)$/gim, '<p>$1</p>')
+      .replace(/\n/g, '<br/>');
   }
 
   private clearLoadingMessages(): void {
     const loadingMessages = document.querySelectorAll('.loading');
     Array.from(loadingMessages).forEach(message => {
       const parentMessage = message.closest('.chat-message');
-      if (parentMessage) {
-        parentMessage.remove();
-      }
+      if (parentMessage) parentMessage.remove();
     });
   }
+
   private wait(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   public destroy(): void {
     try {
-      if (this.sessionSelector) {
-        // No explicit destroy method needed for SessionSelector
-        this.sessionSelector = null;
-      }
       this.isExecuting = false;
       this.currentTask = null;
-      this.selectedRecordingSessionId = null;
+      this.sessionSelector = null;
     } catch (error) {
-      console.error('[ExecuteAgentService] Error during destruction:', error);
+      console.error('[EnhancedExecuteAgentService] Error during destruction:', error);
     }
   }
 }
