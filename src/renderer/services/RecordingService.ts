@@ -19,34 +19,24 @@ export class RecordingService implements IRecordingService {
 
   public async initialize(): Promise<void> {
     try {
-      console.log('[RecordingService] Initializing recording system...');
-      
-      // Initialize recording components
       this.recordingControls = new RecordingControls();
       this.recordingIndicator = new RecordingIndicator();
       
-      // Make session manager available globally for backward compatibility
       (window as any).sessionManager = {
         show: () => {
-          console.log('[RecordingService] Opening session manager modal');
           this.showSessionManager();
         }
       };
       
-      // Initialize webview recording integration
       this.recordingEngine.initializeWebviewRecording();
       
-      // Setup recording event listeners for webviews
       this.setupRecordingEventListeners();
       
-      // Add session manager button to UI
       this.addSessionManagerButton();
       
-      // Setup session manager modal event listeners
       this.setupSessionManagerEventListeners();
       
-      this.isInitialized = true;
-      console.log('[RecordingService] Recording system initialized successfully');
+      this.isInitialized = true;  
     } catch (error) {
       console.error('[RecordingService] Failed to initialize recording system:', error);
       throw error;
@@ -54,9 +44,7 @@ export class RecordingService implements IRecordingService {
   }
 
   private setupRecordingEventListeners(): void {
-    // Listen for recording start/stop events and notify webviews
     window.addEventListener('recording:start', (e: Event) => {
-      console.log('[RecordingService] Recording started, notifying webviews');
       const sessionId = (e as CustomEvent).detail?.sessionId || 
         this.recordingEngine.getActiveSession()?.id || 'unknown';
       
@@ -64,7 +52,6 @@ export class RecordingService implements IRecordingService {
     });
     
     window.addEventListener('recording:stop', () => {
-      console.log('[RecordingService] Recording stopped, notifying webviews');
       this.notifyAllWebviews('stop-recording');
     });
     
@@ -78,7 +65,6 @@ export class RecordingService implements IRecordingService {
   private notifyAllWebviews(message: string, data?: any): void {
     document.querySelectorAll('webview').forEach((webview: any) => {
       try {
-        console.log(`[RecordingService] Sending ${message} to webview ${webview.id}`);
         webview.send(message, data);
       } catch (error) {
         console.error(`[RecordingService] Failed to send ${message} to webview:`, error);
@@ -93,9 +79,7 @@ export class RecordingService implements IRecordingService {
       return;
     }
     
-    // Check if button already exists
     if (document.getElementById('sessionManagerBtn')) {
-      console.log('[RecordingService] Session manager button already exists');
       return;
     }
     
@@ -116,7 +100,6 @@ export class RecordingService implements IRecordingService {
       }
     });
     
-    // Insert before extensions button if it exists, otherwise append
     const extensionsBtn = document.getElementById('extensionsBtn') as HTMLButtonElement;
     if (extensionsBtn) {
       toolbarActions.insertBefore(sessionManagerBtn, extensionsBtn);
@@ -124,19 +107,15 @@ export class RecordingService implements IRecordingService {
       toolbarActions.appendChild(sessionManagerBtn);
     }
     
-    console.log('[RecordingService] Session manager button added to toolbar');
   }
 
   public setupWebviewRecording(webview: any): void {
     if (!this.isInitialized) {
-      console.warn('[RecordingService] Recording service not initialized, skipping webview setup');
       return;
     }
 
-    console.log('[RecordingService] Setting up recording for webview:', webview.id);
     try {
       this.recordingEngine.setupWebviewRecording(webview);
-      console.log('[RecordingService] ✅ Recording setup complete for webview:', webview.id);
     } catch (error) {
       console.error('[RecordingService] Failed to setup recording for webview:', error);
     }
@@ -162,11 +141,14 @@ export class RecordingService implements IRecordingService {
     return this.recordingEngine.getActiveSession();
   }
 
+  public getAllSessions(): any[] {
+    return this.recordingEngine.getAllSessions();
+  }
+
   public startRecording(taskGoal: string, description?: string): any {
     try {
       return this.recordingEngine.startRecording(taskGoal, description);
     } catch (error) {
-      console.error('[RecordingService] Failed to start recording:', error);
       throw error;
     }
   }
@@ -175,13 +157,11 @@ export class RecordingService implements IRecordingService {
     try {
       return this.recordingEngine.stopRecording();
     } catch (error) {
-      console.error('[RecordingService] Failed to stop recording:', error);
       throw error;
     }
   }
 
   private setupSessionManagerEventListeners(): void {
-    // Close button
     const closeBtn = document.getElementById('closeSessionManagerBtn');
     if (closeBtn) {
       closeBtn.addEventListener('click', () => {
@@ -189,7 +169,6 @@ export class RecordingService implements IRecordingService {
       });
     }
 
-    // Refresh button
     const refreshBtn = document.getElementById('refreshSessionsBtn');
     if (refreshBtn) {
       refreshBtn.addEventListener('click', () => {
@@ -197,7 +176,6 @@ export class RecordingService implements IRecordingService {
       });
     }
 
-    // Modal backdrop click
     const sessionModal = document.getElementById('sessionManagerModal');
     if (sessionModal) {
       sessionModal.addEventListener('click', (e) => {
@@ -207,7 +185,6 @@ export class RecordingService implements IRecordingService {
       });
     }
 
-    // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         const sessionModal = document.getElementById('sessionManagerModal');
@@ -224,7 +201,6 @@ export class RecordingService implements IRecordingService {
       sessionModal.classList.remove('hidden');
       this.loadAndDisplaySessions();
     } else {
-      console.error('[RecordingService] Session manager modal not found in DOM');
     }
   }
 
@@ -241,7 +217,6 @@ export class RecordingService implements IRecordingService {
       const sessionsList = document.getElementById('sessionsList');
       
       if (!sessionsList) {
-        console.error('[RecordingService] Sessions list element not found');
         return;
       }
 
@@ -255,7 +230,6 @@ export class RecordingService implements IRecordingService {
         return;
       }
 
-      // Render sessions list
       sessionsList.innerHTML = sessions.map(session => `
         <div class="session-item" data-session-id="${session.id}">
           <div class="session-item-header">
@@ -271,7 +245,6 @@ export class RecordingService implements IRecordingService {
         </div>
       `).join('');
 
-      // Add click listeners to session items
       sessionsList.querySelectorAll('.session-item').forEach(item => {
         item.addEventListener('click', () => {
           const sessionId = item.getAttribute('data-session-id');
@@ -281,9 +254,7 @@ export class RecordingService implements IRecordingService {
         });
       });
 
-      console.log(`[RecordingService] Loaded ${sessions.length} sessions`);
     } catch (error) {
-      console.error('[RecordingService] Failed to load sessions:', error);
     }
   }
 
@@ -291,13 +262,11 @@ export class RecordingService implements IRecordingService {
     const session = sessions.find(s => s.id === sessionId);
     if (!session) return;
 
-    // Update selected state in UI
     document.querySelectorAll('.session-item').forEach(item => {
       item.classList.remove('selected');
     });
     document.querySelector(`[data-session-id="${sessionId}"]`)?.classList.add('selected');
 
-    // Show session details
     const sessionDetails = document.getElementById('sessionDetails');
     if (sessionDetails) {
       const recentActions = (session.actions || []).slice(-10).reverse();
@@ -371,9 +340,7 @@ export class RecordingService implements IRecordingService {
       link.click();
       
       URL.revokeObjectURL(url);
-      console.log('[RecordingService] Session exported:', sessionId);
     } catch (error) {
-      console.error('[RecordingService] Failed to export session:', error);
       alert('Failed to export session');
     }
   }
@@ -399,10 +366,8 @@ export class RecordingService implements IRecordingService {
       link.click();
       
       URL.revokeObjectURL(url);
-      console.log('[RecordingService] AI prompt exported:', sessionId);
       this.showToast('AI prompt exported successfully', 'success');
     } catch (error) {
-      console.error('[RecordingService] Failed to export AI prompt:', error);
       alert('Failed to export AI prompt');
     }
   }
@@ -416,7 +381,6 @@ export class RecordingService implements IRecordingService {
       localStorage.removeItem(`smart_recording_${sessionId}`);
       this.loadAndDisplaySessions();
       
-      // Clear session details
       const sessionDetails = document.getElementById('sessionDetails');
       if (sessionDetails) {
         sessionDetails.innerHTML = `
@@ -426,14 +390,12 @@ export class RecordingService implements IRecordingService {
         `;
       }
       
-      console.log('[RecordingService] Session deleted:', sessionId);
       this.showToast('Session deleted successfully', 'success');
     } catch (error) {
-      console.error('[RecordingService] Failed to delete session:', error);
       alert('Failed to delete session');
     }
   }
-
+  
   // Utility methods
   private formatDate(timestamp: number): string {
     return new Date(timestamp).toLocaleDateString();

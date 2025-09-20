@@ -1,6 +1,5 @@
 // ========================= IMPORTS =========================
 import './styles.css';
-import './recording.css';
 import './recording-session-list.css';
 
 // Services
@@ -8,12 +7,10 @@ import { BrowserService } from './services/BrowserService';
 import { TabManager } from './services/TabManager';
 import { WebviewManager } from './services/WebviewManager';
 import { AgentService } from './services/AgentService';
-import { ChatService } from './services/ChatService';
 import { ExtensionStore } from './services/ExtensionStore';
 import { RecordingService } from './services/RecordingService';
 import { WorkflowService } from './services/WorkflowService';
 import { MentionService } from './services/MentionService';
-import { FollowupService } from './services/FollowupService';
 import { HistoryService } from './services/HistoryService';
 import { AdBlockService } from './services/AdBlockService';
 
@@ -38,14 +35,12 @@ class BrowzerApp {
   private tabManager: TabManager;
   private webviewManager: WebviewManager;
   private agentService: AgentService;
-  private chatService: ChatService;
   private extensionStore: ExtensionStore;
   private recordingService: RecordingService;
   
   // New modular services
   private workflowService: WorkflowService;
   private mentionService: MentionService;
-  private followupService: FollowupService;
   private historyService: HistoryService;
   private adBlockService: AdBlockService;
   
@@ -72,7 +67,6 @@ class BrowzerApp {
     this.extensionStore = new ExtensionStore();
     this.historyService = new HistoryService(this.tabManager);
     this.adBlockService = new AdBlockService(this.ipcRenderer);
-    this.chatService = new ChatService();
     this.recordingService = new RecordingService();
     this.mcpManager = new McpClientManager();
     this.devToolsManager = new DevToolsManager();
@@ -89,16 +83,8 @@ class BrowzerApp {
         this.mcpManager, 
         this.memoryService, 
         this.workflowService,
+        this.recordingService,
         this.selectedWebpageContexts
-    );
-    // Initialize followup service last (needs other services)
-    this.followupService = new FollowupService(
-      this.ipcRenderer,
-      this.workflowService,
-      this.memoryService,
-      this.tabManager,
-      this.webviewManager,
-      this.mcpManager
     );
 
     // Bind methods
@@ -158,7 +144,6 @@ class BrowzerApp {
   private async initializeServices(): Promise<void> {
     await this.recordingService.initialize();
     this.agentService.setupControls();
-    this.chatService.initialize();
     this.extensionStore.initialize();
     
     this.workflowService.initialize();
@@ -596,12 +581,10 @@ class BrowzerApp {
       webviewManager: this.webviewManager,
       browserService: this.browserService,
       agentService: this.agentService,
-      chatService: this.chatService,
       extensionStore: this.extensionStore,
       recordingService: this.recordingService,
       workflowService: this.workflowService,
       mentionService: this.mentionService,
-      followupService: this.followupService,
       historyService: this.historyService,
       adBlockService: this.adBlockService,
       memoryService: this.memoryService,
@@ -628,7 +611,6 @@ class BrowzerApp {
       
       // Cleanup core services
       this.recordingService.destroy();
-      this.chatService.destroy();
       this.agentService.destroy();
       this.extensionStore.destroy();
       this.tabManager.destroy();
@@ -638,7 +620,6 @@ class BrowzerApp {
       // Cleanup new modular services
       this.workflowService.destroy();
       this.mentionService.destroy();
-      this.followupService.destroy();
       this.adBlockService.destroy();
       
       this.state.isInitialized = false;

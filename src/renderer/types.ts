@@ -232,3 +232,41 @@ export interface WebpageContext {
     url: string;
   };
 }
+
+/**
+ * Interface for Execute Task steps
+ */
+export interface ExecuteStep {
+  id: string;
+  description: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  result?: any;
+  error?: string;
+  reasoning?: string;
+  action?: string;
+  target?: string;
+  value?: string;
+}
+
+/**
+ * Interface for Execute Task
+ */
+export interface ExecuteTask {
+  id: string;
+  instruction: string;
+  recordingSessionId: string;
+  steps: ExecuteStep[];
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  result?: any;
+  error?: string;
+}
+
+/**
+ * Interface for Execute Result
+ */
+export interface ExecuteResult {
+  success: boolean;
+  data?: any;
+  error?: string;
+  executionTime: number;
+}
