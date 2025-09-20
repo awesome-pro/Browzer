@@ -2,6 +2,7 @@ import { IRecordingService } from '../types';
 import { SmartRecordingEngine } from '../components/RecordingEngine';
 import { RecordingControls } from '../components/RecordingControls';
 import { RecordingIndicator } from '../components/RecordingIndicator';
+import { AIPromptGenerator } from '../components/PropmtGenerator';
 
 /**
  * RecordingService integrates all recording-related components and functionality
@@ -308,7 +309,8 @@ export class RecordingService implements IRecordingService {
             ${session.description ? `<p class="session-details-description">${this.escapeHtml(session.description)}</p>` : ''}
           </div>
           <div class="session-details-actions">
-            <button class="session-action-btn" onclick="window.browzerApp.recordingService.exportSession('${session.id}')">Export</button>
+            <button class="session-action-btn" onclick="window.browzerApp.recordingService.exportSession('${session.id}')">Export JSON</button>
+            <button class="session-action-btn primary" onclick="window.browzerApp.recordingService.exportAIPrompt('${session.id}')">Export AI Prompt</button>
             <button class="session-action-btn danger" onclick="window.browzerApp.recordingService.deleteSession('${session.id}')">Delete</button>
           </div>
         </div>
@@ -373,6 +375,35 @@ export class RecordingService implements IRecordingService {
     } catch (error) {
       console.error('[RecordingService] Failed to export session:', error);
       alert('Failed to export session');
+    }
+  }
+
+  public exportAIPrompt(sessionId: string): void {
+    try {
+      const sessions = this.recordingEngine.getAllSessions();
+      const session = sessions.find(s => s.id === sessionId);
+      if (!session) {
+        alert('Session not found');
+        return;
+      }
+
+      // Generate AI prompt using the AIPromptGenerator
+      const aiPrompt = AIPromptGenerator.generateTaskPrompt(session);
+      
+      const dataBlob = new Blob([aiPrompt], { type: 'text/plain' });
+      const url = URL.createObjectURL(dataBlob);
+      
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `ai_prompt_${(session.taskGoal || 'session').replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${new Date(session.startTime).toISOString().split('T')[0]}.txt`;
+      link.click();
+      
+      URL.revokeObjectURL(url);
+      console.log('[RecordingService] AI prompt exported:', sessionId);
+      this.showToast('AI prompt exported successfully', 'success');
+    } catch (error) {
+      console.error('[RecordingService] Failed to export AI prompt:', error);
+      alert('Failed to export AI prompt');
     }
   }
 

@@ -196,33 +196,18 @@ export class WebviewManager implements IWebviewManager {
     if (tabElement) {
       tabElement.classList.remove('loading');
     }
-
-    // Update URL bar and title
+  
     this.updateUrlBar(webview, webview.src);
     
-    // Setup recording for this webview
     this.setupRecordingForWebview(webview);
 
-
-    // Track page visit in history - THIS IS THE KEY FIX!
     const url = webview.src;
     const webviewTitle = webview.getTitle();
 
-    console.log('🔍 [HISTORY TRACK] did-finish-load event:', {
-      webviewId: webview.id,
-      url: url,
-      webviewTitle: webviewTitle,
-      isAboutBlank: url === 'about:blank'
-    });
-
     if (url && url !== 'about:blank' && !url.startsWith('file://')) {
-      console.log('✅ [HISTORY TRACK] Tracking page visit with webview title:', { url, title: webviewTitle });
       this.historyService.addVisit(url, webviewTitle);
-    } else {
-      console.log('❌ [HISTORY TRACK] Skipping page visit - invalid URL or about:blank');
-    }
+    } 
 
-    // Inject ad block CSS
     setTimeout(() => {
       if (webview && !webview.isDestroyed && webview.executeJavaScript) {
         this.adBlockService.injectAdBlockCSS(webview);
@@ -239,8 +224,7 @@ export class WebviewManager implements IWebviewManager {
   }
 
   private handleNewWindow(webview: any, e: any): void {
-    console.log('[WebviewManager] New window requested:', e.url);
-    
+
     // For OAuth flows, open in the same tab to maintain session
     const isAuthFlow = e.url && (
       e.url.includes('accounts.google.com') ||
@@ -253,17 +237,13 @@ export class WebviewManager implements IWebviewManager {
     );
     
     if (isAuthFlow) {
-      console.log('[WebviewManager] OAuth flow detected, navigating in current tab');
       webview.src = e.url;
     } else {
-      console.log('[WebviewManager] Opening in new tab');
-      // Emit event for new tab creation
       window.dispatchEvent(new CustomEvent('webview-new-tab', { detail: { url: e.url } }));
     }
   }
 
   private handlePermissionRequest(webview: any, e: any): void {
-    console.log('[WebviewManager] Permission requested:', e.permission, 'for:', webview.src);
     
     const allowedPermissions = ['geolocation', 'notifications', 'camera', 'microphone'];
     const isAuthSite = webview.src && (
@@ -283,60 +263,35 @@ export class WebviewManager implements IWebviewManager {
   }
 
   private handleDomReady(webview: any): void {
-    console.log('[WebviewManager] DOM ready for webview:', webview.id);
     
-    // Test preload script loading
     setTimeout(async () => {
       try {
         const testResult = await webview.executeJavaScript(`
           (function() {
             if (typeof window.__webviewRecorder !== 'undefined') {
-              console.log('[WebviewManager] Preload script loaded successfully!');
               return { success: true, message: 'Preload script loaded' };
             } else {
-              console.error('[WebviewManager] Preload script NOT loaded!');
               return { success: false, message: 'Preload script missing' };
             }
           })();
         `);
-        
-        console.log('[WebviewManager] Preload test result:', testResult);
-        
-        if (!testResult.success) {
-          console.error('[WebviewManager] ⚠️ Preload script failed to load');
-          // Optional: Show visual indicator in webview
-          webview.executeJavaScript(`
-            (function() {
-              const div = document.createElement('div');
-              div.style.cssText = 'position:fixed;top:0;left:0;background:rgba(255,0,0,0.8);color:white;padding:5px;font-size:12px;z-index:9999;';
-              div.textContent = 'Recording preload failed!';
-              document.body.appendChild(div);
-              setTimeout(() => div.remove(), 3000);
-            })();
-          `).catch(() => {}); // Ignore errors
-        }
       } catch (error) {
         console.error('[WebviewManager] Failed to test preload script:', error);
       }
     }, 1000);
     
-    // Register with RecordingEngine - use the same method as handleLoadingFinish
     this.setupRecordingForWebview(webview);
-    console.log(`[WebviewManager] Webview ${webview.id} registered with RecordingEngine`);
   }
 
   private setupRecordingForWebview(webview: any): void {
     try {
-      // Get recording service from the global app
       const app = (window as any).browzerApp;
       if (app && app.recordingService) {
         app.recordingService.setupWebviewRecording(webview);
       } else {
-        // Fallback to direct engine access
         const recordingEngine = SmartRecordingEngine.getInstance();
         recordingEngine.setupWebviewRecording(webview);
       }
-      console.log('[WebviewManager] Recording setup complete for webview:', webview.id);
     } catch (error) {
       console.error('[WebviewManager] Failed to setup recording:', error);
     }
@@ -357,7 +312,6 @@ export class WebviewManager implements IWebviewManager {
               console.error('Error getting meta description:', e);
             }
             
-            // Get both text content and full HTML
             const mainContent = document.querySelector('article') || 
                               document.querySelector('main') || 
                               document.querySelector('.content') ||
@@ -396,7 +350,6 @@ export class WebviewManager implements IWebviewManager {
   }
 
   private updateUrlBar(webview: any, url: string): void {
-    // Check if this is the active webview
     if (this.isActiveWebview(webview)) {
       const urlBar = document.getElementById('urlBar') as HTMLInputElement;
       if (urlBar) {
@@ -430,10 +383,8 @@ export class WebviewManager implements IWebviewManager {
   }
 
   public notifyAllWebviews(message: string, data?: any): void {
-    console.log('[WebviewManager] Notifying all webviews:', message);
     document.querySelectorAll('webview').forEach((webview: any) => {
       try {
-        console.log(`[WebviewManager] Sending ${message} to webview ${webview.id}`);
         webview.send(message, data);
       } catch (error) {
         console.error(`[WebviewManager] Failed to send ${message} to webview:`, error);
@@ -481,7 +432,6 @@ export class WebviewManager implements IWebviewManager {
       });
     }
 
-    // Cleanup old assistant collapsed state
     localStorage.removeItem('assistantCollapsed');
     if (browserContainer) {
       browserContainer.classList.remove('assistant-collapsed');
@@ -491,7 +441,6 @@ export class WebviewManager implements IWebviewManager {
 
   public destroy(): void {
     try {
-      // Remove all webviews
       if (this.webviewsContainer) {
         const webviews = this.webviewsContainer.querySelectorAll('webview');
         webviews.forEach(webview => {
@@ -502,11 +451,7 @@ export class WebviewManager implements IWebviewManager {
           }
         });
       }
-
-      // Clear references
       this.webviewsContainer = null;
-
-      console.log('[WebviewManager] Destroyed successfully');
     } catch (error) {
       console.error('[WebviewManager] Error during destruction:', error);
     }

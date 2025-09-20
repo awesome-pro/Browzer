@@ -671,7 +671,6 @@ export class TabManager implements ITabManager {
       };
 
       localStorage.setItem(CONSTANTS.SAVED_TABS_KEY, JSON.stringify(sessionData));
-      console.log('[TabManager] Tabs saved successfully');
     } catch (err) {
       console.error('[TabManager] Error saving tabs:', err);
     }

@@ -6,7 +6,7 @@
  */
 
 import { SmartRecordingSession, SemanticAction, ActionType } from '../../shared/types/recording';
-import { DoAgent } from '../services/DoAgent';
+import { DoAgentService, DoStep, DoTask } from '../services/DoAgent';
 
 // Interface for the context provided to DoAgent
 export interface RecordingContext {
@@ -209,7 +209,7 @@ export class RecordingExecutor {
       }
       
       // Create DoAgent instance with progress callback
-      const doAgent = new DoAgent((task, step) => {
+      const doAgent = new DoAgentService(webview, (task: DoTask, step: DoStep) => {
         if (onProgress) {
           let message = `Step ${step.id}: ${step.description}`;
           if (step.status === 'completed') message += ' ✅';
@@ -219,7 +219,7 @@ export class RecordingExecutor {
       });
       
       // Execute task with the prompt
-      const result = await doAgent.executeTask(prompt, webview);
+      const result = await doAgent.executeTask(prompt);
       
       return result;
     } catch (error) {

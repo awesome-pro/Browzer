@@ -16,7 +16,6 @@ import { MentionService } from './services/MentionService';
 import { FollowupService } from './services/FollowupService';
 import { HistoryService } from './services/HistoryService';
 import { AdBlockService } from './services/AdBlockService';
-import { DoTaskService } from './services/DoTaskService';
 
 // Types
 import { IpcRenderer, WebpageContext } from './types';
@@ -49,7 +48,6 @@ class BrowzerApp {
   private followupService: FollowupService;
   private historyService: HistoryService;
   private adBlockService: AdBlockService;
-  private doTaskService: DoTaskService;
   
   // External services
   private ipcRenderer: IpcRenderer;
@@ -85,13 +83,13 @@ class BrowzerApp {
     this.mentionService = new MentionService();
     this.browserService = new BrowserService(this.ipcRenderer, this.tabManager, this.extensionStore);
     this.webviewManager = new WebviewManager(this.ipcRenderer, this.adBlockService, this.historyService);
-    this.doTaskService = new DoTaskService(this.ipcRenderer, this.tabManager, this.webviewManager);
     this.agentService = new AgentService(
         this.ipcRenderer, 
         this.tabManager, 
         this.mcpManager, 
         this.memoryService, 
-        this.workflowService
+        this.workflowService,
+        this.selectedWebpageContexts
     );
     // Initialize followup service last (needs other services)
     this.followupService = new FollowupService(
@@ -165,7 +163,6 @@ class BrowzerApp {
     
     this.workflowService.initialize();
     this.adBlockService.initialize();
-    this.doTaskService.initialize();
     
     this.setupRecordingIntegration();
     
@@ -607,7 +604,6 @@ class BrowzerApp {
       followupService: this.followupService,
       historyService: this.historyService,
       adBlockService: this.adBlockService,
-      doTaskService: this.doTaskService,
       memoryService: this.memoryService,
       mcpManager: this.mcpManager,
 
@@ -643,9 +639,7 @@ class BrowzerApp {
       this.workflowService.destroy();
       this.mentionService.destroy();
       this.followupService.destroy();
-      // this.historyService.destroy();
       this.adBlockService.destroy();
-      this.doTaskService.destroy();
       
       this.state.isInitialized = false;
       console.log('[BrowzerApp] Application destroyed');

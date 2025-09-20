@@ -9,6 +9,7 @@ const CONSTANTS = {
   MEMORY_KEY: 'browzer_memory',
   MAX_MEMORY_ITEMS: 100,
   HISTORY_STORAGE_KEY: 'history_data',
+  DOAGENT_ENABLED: true,
 } as const;
 
 export default CONSTANTS;

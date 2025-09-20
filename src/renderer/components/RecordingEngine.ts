@@ -1012,7 +1012,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
 
   // Export to AI-friendly format
   exportForAI(sessionId: string): any {
-    const session = this.loadSession(sessionId);
+    const session = this.getSession(sessionId);
     if (!session) return null;
 
     return {
@@ -1023,7 +1023,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       duration: session.metadata.duration,
       
       // High-level action sequence
-      steps: session.actions.map((action, index) => ({
+      steps: session.actions.map((action: SemanticAction, index: number) => ({
         step: index + 1,
         action: action.type,
         description: action.description,
@@ -1042,24 +1042,24 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       },
       
       // Key screenshots for visual context
-      screenshots: session.screenshots.filter(s => 
+      screenshots: session.screenshots.filter((s: ScreenshotCapture) => 
         ['initial', 'final_state', 'page_navigation'].includes(s.type)
       ),
       
       // Significant network interactions
-      networkActivity: session.networkInteractions.filter(ni => 
+      networkActivity: session.networkInteractions.filter((ni: NetworkInteraction) => 
         ni.status && ni.status < 400 // Only successful requests
       )
     };
   }
 
-  private loadSession(sessionId: string): SmartRecordingSession | null {
+  public getSession(sessionId: string): SmartRecordingSession | null {
     const key = `smart_recording_${sessionId}`;
     const data = localStorage.getItem(key);
     return data ? JSON.parse(data) : null;
   }
 
-  getAllSessions(): SmartRecordingSession[] {
+  public getAllSessions(): SmartRecordingSession[] {
     const sessions: SmartRecordingSession[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);

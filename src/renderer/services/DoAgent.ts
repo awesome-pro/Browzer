@@ -236,17 +236,23 @@ Respond with ONLY a JSON object in this format:
 
 BE PATIENT AND THOROUGH. Better to take more steps and succeed than rush and fail.`;
 
-export class DoAgent {
+export class DoAgentService {
   private currentTask: DoTask | null = null;
   private isExecuting = false;
-  private webview: any = null;
+  private webview: any;
   private maxSteps = 20;
   private stepCount = 0;
   private playwrightPage: PlaywrightPage | null = null;
 
-  constructor(private onProgress?: (task: DoTask, step: DoStep) => void) {}
+  constructor(
+    webview: any,
+    private onProgress?: (task: DoTask, step: DoStep) => void
+  ) {
+    this.webview = webview;
+    this.onProgress = onProgress;
+  }
 
-  async executeTask(instruction: string, webview: any): Promise<DoResult> {
+  async executeTask(instruction: string): Promise<DoResult> {
     if (!DOAGENT_ENABLED) {
       return {
         success: false,
@@ -259,12 +265,10 @@ export class DoAgent {
       throw new Error('DoAgent is already executing a task');
     }
 
-    this.isExecuting = true;
-    this.webview = webview;
+    this.isExecuting = true
     this.stepCount = 0;
     const startTime = Date.now();
 
-    // Initialize Playwright connection to the webview
     await this.initializePlaywright();
 
     try {

@@ -1,6 +1,7 @@
 import CONSTANTS from '../../constants';
-import { IAgentService, IpcRenderer } from '../types';
+import { IAgentService, IpcRenderer, WebpageContext } from '../types';
 import { extractPageContent, getBrowserApiKeys, getExtensionDisplayName, markdownToHtml } from '../utils';
+import { DoAgentService, DoStep, DoTask } from './DoAgent';
 import { McpClientManager } from './McpClientManager';
 import { MemoryService } from './MemoryService';
 import { TabManager } from './TabManager';
@@ -16,15 +17,23 @@ export class AgentService implements IAgentService {
   private mcpManager: McpClientManager;
   private memoryService: MemoryService;
   private workflowService: WorkflowService;
-
+  private selectedWebpageContexts: WebpageContext[];
   private globalQueryTracker: Map<string, number>;
 
-  constructor(ipcRenderer: IpcRenderer, tabManager: TabManager, mcpManager: McpClientManager, memoryService: MemoryService, workflowService: WorkflowService) {
+  constructor(
+    ipcRenderer: IpcRenderer, 
+    tabManager: TabManager, 
+    mcpManager: McpClientManager, 
+    memoryService: MemoryService, 
+    workflowService: WorkflowService,
+    selectedWebpageContexts: WebpageContext[],
+  ) {
     this.ipcRenderer = ipcRenderer;
     this.tabManager = tabManager;
     this.mcpManager = mcpManager;
     this.memoryService = memoryService;
     this.workflowService = workflowService;
+    this.selectedWebpageContexts = selectedWebpageContexts;
     this.globalQueryTracker = new Map<string, number>();
   }
 
@@ -140,14 +149,20 @@ export class AgentService implements IAgentService {
           
           if (mode === 'do') {
             console.log('[AgentService] Using DoAgent for automation task');
-            // processDoTask(message); // TODO: Implement DoAgent functionality
+            this.processDoTask(message); // TODO: Implement DoAgent functionality
           } else if (mode === 'execute') {
             this.processExecuteWithRecording(message).catch(error => {
               console.error('Failed to execute with recording:', error);
               this.addMessageToChat('assistant', 'Error: Failed to execute with recording.');
             });
           } else {
-            this.processFollowupQuestion(message);
+            if (this.selectedWebpageContexts.length > 0) {
+              console.log('🚨 [SEND DEBUG] Found contexts, calling processFollowupQuestionWithContexts');
+              this.processFollowupQuestionWithContexts(message, this.selectedWebpageContexts);
+            } else {
+              console.log('🚨 [SEND DEBUG] Calling processFollowupQuestion');
+              this.processFollowupQuestion(message);
+            }
           }
           
           chatInput.value = '';
@@ -447,7 +462,22 @@ export class AgentService implements IAgentService {
     return tools;
   }
 
+  private clearLoadingIndicators = () => {
+    const loadingMessages = document.querySelectorAll('.loading');
+    loadingMessages.forEach(message => {
+      const parentMessage = message.closest('.chat-message');
+      if (parentMessage) {
+        parentMessage.remove();
+      }
+    });
+  };
+
   private async processFollowupQuestion(question: string): Promise<void> {
+    if (this.isExecuting) {
+      console.log('[AgentService] Agent already executing, skipping');
+      return;
+    }
+
     const currentTime = Date.now();
     const queryKey = `followup_${question}`;
     const lastProcessedKey = `lastProcessed_${queryKey}`;
@@ -535,6 +565,39 @@ export class AgentService implements IAgentService {
         }
         
         this.displayAgentResults(result.data);
+
+        if (this.memoryService && result.data) {
+          let summary = '';
+          
+          // Try different content sources in order of preference
+          if (result.data.consolidated_summary) {
+            summary = result.data.consolidated_summary;
+          } else if (result.data.summaries && result.data.summaries.length > 0) {
+            summary = result.data.summaries.map((s: any) => `${s.title}: ${s.summary}`).join('\n\n');
+          } else if (typeof result.data === 'string') {
+            // Handle simple string responses
+            summary = result.data;
+          } else if (result.data.content) {
+            // Handle responses with content field
+            summary = result.data.content;
+          } else if (result.data.response) {
+            // Handle responses with response field
+            summary = result.data.response;
+          }
+          
+          if (summary && summary.trim()) {
+            console.log('[Memory] Storing followup result in memory');
+            
+            // Get current page info for memory context
+            const webview = this.getActiveWebview();
+            const url = webview?.src || '';
+            const title = webview?.getTitle ? webview.getTitle() : '';
+            
+            this.memoryService.storeMemory(url, question, summary, title);
+          } else {
+            console.log('[Memory] No suitable content found for memory storage in followup');
+          }
+        }
       } catch (error) {
         console.error('Error in processFollowupQuestion:', error);
       }
@@ -542,6 +605,218 @@ export class AgentService implements IAgentService {
     } catch (error) {
       console.error('Error in processFollowupQuestion:', error);
       this.clearLoadingMessages();
+    }
+  }
+
+  private async processFollowupQuestionWithContexts(question: string, contexts: WebpageContext[]): Promise<void> {
+    if (this.isExecuting) {
+      console.log('[AgentService] Workflow already executing, skipping follow-up execution');
+      this.showToast('Workflow already in progress...', 'info');
+      return;
+    }
+    
+    // Set execution flag immediately to prevent race conditions
+    this.isExecuting = true;
+    
+    try {
+      this.addMessageToChat('assistant', '<div class="loading">Processing your question with webpage contexts...</div>');
+      
+      const provider = 'anthropic'; // Always use Anthropic Claude
+      const apiKey = localStorage.getItem(`${provider}_api_key`);
+      
+      if (!apiKey) {
+        this.clearLoadingIndicators();
+        this.addMessageToChat('assistant', 'Please configure your API key in the Extensions panel.');
+        this.isExecuting = false;
+        return;
+      } 
+      
+      const activeWebview = this.getActiveWebview();
+      if (!activeWebview) {
+        this.clearLoadingIndicators();
+        this.addMessageToChat('assistant', 'No active webview found.');
+        this.isExecuting = false;
+        return;
+      }
+      
+      const currentUrl = activeWebview.src || '';
+      console.log('[AgentService] Extracting page content from:', currentUrl);
+      const pageContent = await extractPageContent(activeWebview);
+      
+      const enhancedPageContent = {
+        ...pageContent,
+        additionalContexts: contexts.map(ctx => ({
+          title: ctx.title,
+          url: ctx.url,
+          content: ctx.content || {}
+        }))
+      };
+      
+      const questionRequest = `Answer this question using the current page and any provided webpage contexts: ${question}`;
+
+      const routingResult = await this.ipcRenderer.invoke('route-extension-request', questionRequest);
+      
+      this.clearLoadingIndicators();
+      
+      if (routingResult.type === 'workflow') {
+        
+        try {
+          const workflowData = {
+            pageContent: enhancedPageContent,
+            browserApiKeys: this.getBrowserApiKeys(),
+            selectedProvider: provider,
+            selectedModel: 'claude-3-5-sonnet-20241022', // Always use Claude 3.5 Sonnet
+            isQuestion: true,
+            conversationHistory: await this.buildConversationHistoryWithMemories(currentUrl, question),
+            mcpTools: await this.getMcpToolsForAsk() // Add MCP tools to workflow data
+          };
+  
+          await this.ipcRenderer.invoke('execute-workflow', {
+            query: questionRequest,
+            data: workflowData
+          });
+          
+        } catch (workflowError) {
+          console.error('Follow-up workflow with contexts execution failed:', workflowError);
+          this.addMessageToChat('assistant', `Workflow execution failed: ${(workflowError as Error).message}`);
+        }
+        
+        return;
+      }
+      
+      // Handle single extension result
+      const extensionId = routingResult.extensionId;
+      if (!extensionId) {
+        this.addMessageToChat('assistant', 'Error: No extension available to answer your question');
+        return;
+      }
+      
+      // Create progress indicator for single extension execution
+      const singleExtensionWorkflowData = {
+        workflowId: `followup-context-single-${Date.now()}`,
+        type: 'single_extension',
+        steps: [{
+          extensionId: extensionId,
+          extensionName: getExtensionDisplayName(extensionId)
+        }]
+      };
+
+      const progressElement = this.workflowService.addWorkflowProgressToChat(singleExtensionWorkflowData);
+      
+      // Start the progress indicator
+      if (progressElement && (progressElement as any).progressIndicator) {
+        (progressElement as any).progressIndicator.startWorkflow(singleExtensionWorkflowData);
+        
+        // Update to running state
+        (progressElement as any).progressIndicator.updateProgress({
+          workflowId: singleExtensionWorkflowData.workflowId,
+          currentStep: 0,
+          stepStatus: 'running'
+        });
+      }
+      
+      const action = 'process_page';
+      const data = {
+        query: questionRequest,
+        pageContent: enhancedPageContent,
+        isQuestion: true,
+        conversationHistory: await this.buildConversationHistoryWithMemories(currentUrl, question),
+        mcpTools: await this.getMcpToolsForAsk() // Add MCP tools to extension data
+      };
+      
+      console.log(`[processFollowupQuestionWithContexts] Executing extension with question: ${extensionId} (confidence: ${routingResult.confidence}) - ${question}`);
+      console.log(`Follow-up with contexts routing reason: ${routingResult.reason}`);
+      
+      const startTime = Date.now();
+      
+      try {
+        const result = await this.ipcRenderer.invoke('execute-python-extension', {
+          extensionId,
+          action,
+          data,
+          browserApiKeys: this.getBrowserApiKeys(),
+          selectedProvider: provider
+        });
+        
+        const endTime = Date.now();
+        
+        console.log('[processFollowupQuestionWithContexts] Extension result received:', result);
+        
+        // Complete the progress indicator
+        if (progressElement && (progressElement as any).progressIndicator) {
+          (progressElement as any).progressIndicator.updateProgress({
+            workflowId: singleExtensionWorkflowData.workflowId,
+            currentStep: 0,
+            stepStatus: 'completed',
+            stepResult: result.data
+          });
+          
+          (progressElement as any).progressIndicator.completeWorkflow({
+            workflowId: singleExtensionWorkflowData.workflowId,
+            result: result.data
+          });
+        }
+        
+        if (result.success === false) {
+          this.addMessageToChat('assistant', `Error: ${result.error || 'Unknown error'}`);
+          return;
+        }
+        
+        console.log('[processFollowupQuestionWithContexts] Displaying results...');
+        this.displayAgentResults(result.data);
+        
+        // Store memory if available - try multiple content sources
+        if (this.memoryService && result.data) {
+          let summary = '';
+          
+          // Try different content sources in order of preference
+          if (result.data.consolidated_summary) {
+            summary = result.data.consolidated_summary;
+          } else if (result.data.summaries && result.data.summaries.length > 0) {
+            summary = result.data.summaries.map((s: any) => `${s.title}: ${s.summary}`).join('\n\n');
+          } else if (typeof result.data === 'string') {
+            // Handle simple string responses
+            summary = result.data;
+          } else if (result.data.content) {
+            // Handle responses with content field
+            summary = result.data.content;
+          } else if (result.data.response) {
+            // Handle responses with response field
+            summary = result.data.response;
+          }
+          
+          if (summary && summary.trim()) {
+            console.log('[Memory] Storing followup with contexts result in memory');
+            
+            // Get current page info for memory context
+            const webview = this.getActiveWebview();
+            const url = webview?.src || '';
+            const title = webview?.getTitle ? webview.getTitle() : '';
+            
+            this.memoryService.storeMemory(url, question, summary, title);
+          } else {
+            console.log('[Memory] No suitable content found for memory storage in followup with contexts');
+          }
+        }
+      } catch (extensionError) {
+        console.error('Follow-up extension with contexts execution failed:', extensionError);
+        
+        // Mark progress as failed
+        if (progressElement && (progressElement as any).progressIndicator) {
+          (progressElement as any).progressIndicator.handleWorkflowError({
+            workflowId: singleExtensionWorkflowData.workflowId,
+            error: (extensionError as Error).message
+          });
+        }
+        
+        this.addMessageToChat('assistant', `Error: ${(extensionError as Error).message}`);
+      }
+    } catch (error) {
+      console.error('Error in processFollowupQuestionWithContexts:', error);
+      this.clearLoadingIndicators();
+      this.addMessageToChat('assistant', `Error: ${(error as Error).message}`);
+    } finally {
+      this.isExecuting = false;
     }
   }
 
@@ -718,6 +993,186 @@ export class AgentService implements IAgentService {
     }, 3000);
   }
 
+  private async processDoTask(taskInstruction: string): Promise<void> {
+    console.log('[AgentService] Processing task:', taskInstruction);
+    
+    if (!CONSTANTS.DOAGENT_ENABLED) {
+      this.addMessageToChat('assistant', 'DoAgent functionality is disabled in this build.');
+      return;
+    }
+  
+    if (this.isExecuting) {
+      console.log('[processDoTask] Workflow already executing, skipping task execution');
+      this.showToast('Task already in progress...', 'info');
+      return;
+    }
+    
+    this.isExecuting = true;
+    
+    try {
+      const activeWebview = this.getActiveWebview();
+      if (!activeWebview) {
+        this.addMessageToChat('assistant', 'No active webview found.');
+        return;
+      }
+      
+      const doAgent = new DoAgentService(activeWebview, (task: DoTask, step: DoStep) => {
+        console.log('[DoAgentService Progress]', `Step ${step.id}: ${step.description} - ${step.status}`);
+        
+        let progressMessage = `**${step.id}:** ${step.description}`;
+        
+        if (step.reasoning) {
+          progressMessage += `\n  *AI Reasoning: ${step.reasoning}*`;
+        }
+        
+        if (step.status === 'completed') {
+          progressMessage += ' ✅';
+        } else if (step.status === 'failed') {
+          progressMessage += ' ❌';
+          if (step.error) {
+            progressMessage += `\n  Error: ${step.error}`;
+          }
+        } else if (step.status === 'running') {
+          progressMessage += ' ⏳';
+        }
+        
+        // Find the latest assistant message and update it with progress
+        const chatContainer = document.getElementById('chatContainer');
+        if (chatContainer) {
+          const lastMessage = chatContainer.querySelector('.chat-message.assistant-message:last-child .message-content');
+          if (lastMessage) {
+            // If it's a loading message, replace it
+            if (lastMessage.innerHTML.includes('class="loading"')) {
+              lastMessage.innerHTML = progressMessage;
+            } else {
+              // Add to existing message
+              lastMessage.innerHTML += `<br/>${progressMessage}`;
+            }
+          }
+        }
+      });
+      
+      // Show initial loading message
+      this.addMessageToChat('assistant', '<div class="loading">🤖 Analyzing page and planning actions with AI...</div>');
+      
+      // Execute the task
+      const result = await doAgent.executeTask(taskInstruction);
+      
+      // Remove loading message
+      const loadingMessages = document.querySelectorAll('.loading');
+      loadingMessages.forEach(message => {
+        const parentMessage = message.closest('.chat-message');
+        if (parentMessage) {
+          parentMessage.remove();
+        }
+      });
+      
+      // Display results
+      if (result.success) {
+        let resultMessage = `✅ **Task completed successfully!**\n⏱️ *Execution time: ${(result.executionTime / 1000).toFixed(2)}s*`;
+        
+        if (result.data) {
+          // Handle generic extracted content format
+          if (typeof result.data === 'string') {
+            // Simple string result (like summaries)
+            resultMessage += `\n\n📄 **Result:**\n${result.data}`;
+          } else if (result.data.error) {
+            // Error in extraction
+            resultMessage += `\n\n⚠️ **Note:** ${result.data.error}`;
+          } else if (result.data.url) {
+            // Generic extracted content structure
+            resultMessage += `\n\n📄 **Extracted from:** ${result.data.url}`;
+            
+            // Show headings if available
+            if (result.data.headings && result.data.headings.length > 0) {
+              resultMessage += '\n\n📋 **Page Structure:**\n';
+              result.data.headings.slice(0, 5).forEach((heading: any) => {
+                resultMessage += `${'#'.repeat(heading.level === 'h1' ? 1 : heading.level === 'h2' ? 2 : 3)} ${heading.text}\n`;
+              });
+            }
+            
+            // Show main content if available
+            if (result.data.textContent && result.data.textContent.length > 0) {
+              resultMessage += '\n\n📝 **Main Content:**\n';
+              result.data.textContent.slice(0, 3).forEach((content: any, index: number) => {
+                if (content.text && content.text.length > 50) {
+                  resultMessage += `${index + 1}. ${content.text.substring(0, 200)}${content.text.length > 200 ? '...' : ''}\n`;
+                }
+              });
+            }
+            
+            // Show links if available
+            if (result.data.links && result.data.links.length > 0) {
+              resultMessage += '\n\n🔗 **Links found:**\n';
+              result.data.links.slice(0, 5).forEach((link: any, index: number) => {
+                resultMessage += `${index + 1}. [${link.text}](${link.href})\n`;
+              });
+            }
+            
+            // Show lists if available
+            if (result.data.lists && result.data.lists.length > 0) {
+              resultMessage += '\n\n📝 **Lists found:**\n';
+              result.data.lists.slice(0, 2).forEach((list: any, index: number) => {
+                resultMessage += `**List ${index + 1}:**\n`;
+                list.items.slice(0, 3).forEach((item: string) => {
+                  resultMessage += `• ${item}\n`;
+                });
+              });
+            }
+            
+            // Show page type information
+            if (result.data.pageStructure) {
+              const structure = result.data.pageStructure;
+              const pageTypes = [];
+              if (structure.hasPosts) pageTypes.push('Posts');
+              if (structure.hasBookmarks) pageTypes.push('Bookmarks');
+              if (structure.hasProducts) pageTypes.push('Products');
+              if (structure.hasFlights) pageTypes.push('Flights');
+              if (structure.hasComments) pageTypes.push('Comments');
+              if (structure.hasArticles) pageTypes.push('Articles');
+              
+              if (pageTypes.length > 0) {
+                resultMessage += `\n\n🏷️ **Page Type:** ${pageTypes.join(', ')}`;
+              }
+            }
+            
+            // Show fallback content if no structured data
+            if (result.data.fallbackContent && 
+                (!result.data.textContent || result.data.textContent.length === 0) &&
+                (!result.data.headings || result.data.headings.length === 0)) {
+              resultMessage += `\n\n📄 **Page content:**\n${result.data.fallbackContent}`;
+            }
+          } else {
+            // Unknown result format, show as is
+            resultMessage += `\n\n📄 **Result:**\n${JSON.stringify(result.data, null, 2)}`;
+          }
+        }
+        
+        this.addMessageToChat('assistant', resultMessage, result.executionTime / 1000);
+      } else {
+        this.addMessageToChat('assistant', `❌ **Task failed:** ${result.error}`);
+      }
+      
+    } catch (error) {
+      console.error('[processDoTask] Error executing task:', error);
+      
+      // Remove loading message
+      const loadingMessages = document.querySelectorAll('.loading');
+      loadingMessages.forEach(message => {
+        const parentMessage = message.closest('.chat-message');
+        if (parentMessage) {
+          parentMessage.remove();
+        }
+      });
+      
+      this.addMessageToChat('assistant', `❌ **Task execution failed:** ${(error as Error).message}`);
+    } finally {
+      // Always clear execution flag
+      this.isExecuting = false;
+      console.log('[processDoTask] Clearing execution flag');
+    }
+  }
+  
   public async buildConversationHistoryWithMemories(currentUrl: string, query: string): Promise<any[]> {
     const conversationHistory: any[] = [];
     
