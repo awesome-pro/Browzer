@@ -2,7 +2,7 @@ import { IRecordingService } from '../types';
 import { SmartRecordingEngine } from '../components/RecordingEngine';
 import { RecordingControls } from '../components/RecordingControls';
 import { RecordingIndicator } from '../components/RecordingIndicator';
-import { AIPromptGenerator } from '../components/PropmtGenerator';
+import { AnthropicPromptGenerator } from '../components/PropmtGenerator';
 
 /**
  * RecordingService integrates all recording-related components and functionality
@@ -354,8 +354,8 @@ export class RecordingService implements IRecordingService {
         return;
       }
 
-      // Generate AI prompt using the AIPromptGenerator
-      const aiPrompt = AIPromptGenerator.generateTaskPrompt(session);
+      // Generate AI prompt using the AnthropicPromptGenerator
+      const aiPrompt = AnthropicPromptGenerator.generateClaudeSystemPrompt(session);
       
       const dataBlob = new Blob([aiPrompt], { type: 'text/plain' });
       const url = URL.createObjectURL(dataBlob);

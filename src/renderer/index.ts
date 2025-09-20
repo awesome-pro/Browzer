@@ -1,6 +1,7 @@
 // ========================= IMPORTS =========================
 import './styles.css';
 import './recording-session-list.css';
+import './recording.css';
 
 // Services
 import { BrowserService } from './services/BrowserService';

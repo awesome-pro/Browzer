@@ -1,7 +1,7 @@
 // SessionManager - Manages and displays recording sessions
 import { SmartRecordingEngine } from './RecordingEngine';
-import { SmartRecordingSession, ActionType } from '../../shared/types/recording';
-import { AIPromptGenerator } from './PropmtGenerator';
+import { SmartRecordingSession, ActionType } from '../../shared/types/recording'
+import { AnthropicPromptGenerator } from './PropmtGenerator';
 
 export class SessionManager {
     private recordingEngine: SmartRecordingEngine;
@@ -116,7 +116,6 @@ export class SessionManager {
 
         this.selectedSession = session;
         
-        // Update selected state in UI
         this.sessionsList.querySelectorAll('.session-item').forEach(item => {
             item.classList.remove('selected');
         });
@@ -222,10 +221,8 @@ export class SessionManager {
         }
         
         try {
-            // Use AIPromptGenerator to create a prompt from the session
-            const prompt = AIPromptGenerator.generateTaskPrompt(session);
+            const prompt = AnthropicPromptGenerator.generateClaudeSystemPrompt(session);
             
-            // Export the prompt as a text file
             const dataBlob = new Blob([prompt], { type: 'text/plain' });
             const url = URL.createObjectURL(dataBlob);
             
@@ -249,7 +246,6 @@ export class SessionManager {
         }
 
         try {
-            // Use the smart_recording_ prefix for localStorage keys
             localStorage.removeItem(`smart_recording_${sessionId}`);
             this.loadSessions();
             
@@ -296,7 +292,6 @@ export class SessionManager {
     }
 }
 
-// Global instance for button callbacks
 declare global {
     interface Window {
         sessionManager: SessionManager;

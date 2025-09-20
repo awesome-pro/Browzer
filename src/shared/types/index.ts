@@ -145,3 +145,4 @@ export const IPC_CHANNELS = {
 } as const; 
 
 export * from './recording';
+export * from './action-types';
