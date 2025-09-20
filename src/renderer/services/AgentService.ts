@@ -2,8 +2,10 @@ import CONSTANTS from '../../constants';
 import { IAgentService, IpcRenderer, WebpageContext } from '../types';
 import { extractPageContent, getBrowserApiKeys, getExtensionDisplayName, markdownToHtml } from '../utils';
 import { DoAgentService, DoStep, DoTask } from './DoAgent';
+import { ExecuteAgentService } from './ExecuteAgentService';
 import { McpClientManager } from './McpClientManager';
 import { MemoryService } from './MemoryService';
+import { RecordingService } from './RecordingService';
 import { TabManager } from './TabManager';
 import { WorkflowService } from './WorkflowService';
 
@@ -17,6 +19,8 @@ export class AgentService implements IAgentService {
   private mcpManager: McpClientManager;
   private memoryService: MemoryService;
   private workflowService: WorkflowService;
+  private recordingService: RecordingService;
+  private executeAgentService: ExecuteAgentService;
   private selectedWebpageContexts: WebpageContext[];
   private globalQueryTracker: Map<string, number>;
 
@@ -26,6 +30,7 @@ export class AgentService implements IAgentService {
     mcpManager: McpClientManager, 
     memoryService: MemoryService, 
     workflowService: WorkflowService,
+    recordingService: RecordingService,
     selectedWebpageContexts: WebpageContext[],
   ) {
     this.ipcRenderer = ipcRenderer;
@@ -33,8 +38,10 @@ export class AgentService implements IAgentService {
     this.mcpManager = mcpManager;
     this.memoryService = memoryService;
     this.workflowService = workflowService;
+    this.recordingService = recordingService;
     this.selectedWebpageContexts = selectedWebpageContexts;
     this.globalQueryTracker = new Map<string, number>();
+    this.executeAgentService = new ExecuteAgentService(tabManager);
   }
 
   public setupControls(): void {
@@ -149,12 +156,16 @@ export class AgentService implements IAgentService {
           
           if (mode === 'do') {
             console.log('[AgentService] Using DoAgent for automation task');
-            this.processDoTask(message); // TODO: Implement DoAgent functionality
+            this.processDoTask(message);
           } else if (mode === 'execute') {
-            this.processExecuteWithRecording(message).catch(error => {
-              console.error('Failed to execute with recording:', error);
-              this.addMessageToChat('assistant', 'Error: Failed to execute with recording.');
-            });
+            if (this.executeAgentService) {
+              this.processExecuteWithRecording(message).catch(error => {
+                console.error('Failed to execute with recording:', error);
+                this.addMessageToChat('assistant', 'Error: Failed to execute with recording.');
+              });
+            } else {
+              this.addMessageToChat('assistant', 'Error: Execute agent service not initialized.');
+            }
           } else {
             if (this.selectedWebpageContexts.length > 0) {
               console.log('🚨 [SEND DEBUG] Found contexts, calling processFollowupQuestionWithContexts');
@@ -193,6 +204,7 @@ export class AgentService implements IAgentService {
             placeholderText = 'Enter a task to perform...';
           } else if (mode === 'execute') {
             placeholderText = 'Describe what to do with the recording...';
+            // this.setupSessionSelectorUI();
           }
           chatInput.placeholder = placeholderText;
           
@@ -200,7 +212,7 @@ export class AgentService implements IAgentService {
           if (sidebarContent) {
             if (mode === 'execute') {
               sidebarContent.classList.add('execute-mode');
-              // initializeSessionList(); // TODO: Import and use
+              // this.setupSessionSelectorUI();
             } else {
               sidebarContent.classList.remove('execute-mode');
             }
@@ -433,10 +445,211 @@ export class AgentService implements IAgentService {
     }
   }
 
+  private setupSessionSelectorUI(): void {
+    // Check if we need to create the session list container
+    let sessionListContainer = document.querySelector('.session-list-container');
+    
+    if (!sessionListContainer) {
+      // Create the session list container
+      const agentContainer = document.querySelector('.agent-container');
+      const chatSidebar = document.createElement('div');
+      chatSidebar.className = 'chat-sidebar';
+      
+      const chatSidebarContent = document.createElement('div');
+      chatSidebarContent.className = 'chat-sidebar-content';
+      
+      sessionListContainer = document.createElement('div');
+      sessionListContainer.className = 'session-list-container';
+      
+      // Create session list header
+      const sessionListHeader = document.createElement('div');
+      sessionListHeader.className = 'session-list-header';
+      sessionListHeader.innerHTML = `
+        <h3>Recording Sessions</h3>
+        <button class="refresh-btn" title="Refresh">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/>
+            <path d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/>
+          </svg>
+        </button>
+      `;
+      
+      // Create session list items container
+      const sessionListItems = document.createElement('div');
+      sessionListItems.className = 'session-list-items';
+      sessionListItems.id = 'sessionListItems';
+      
+      // Assemble the session list container
+      sessionListContainer.appendChild(sessionListHeader);
+      sessionListContainer.appendChild(sessionListItems);
+      
+      // Add to the DOM
+      if (agentContainer) {
+        chatSidebarContent.appendChild(sessionListContainer);
+        chatSidebar.appendChild(chatSidebarContent);
+        
+        // Insert before the agent-results
+        const agentResults = document.getElementById('agentResults');
+        if (agentResults) {
+          agentContainer.insertBefore(chatSidebar, agentResults);
+          
+          // Add session selection required message
+          const selectionMessage = document.createElement('div');
+          selectionMessage.className = 'session-selection-required';
+          selectionMessage.id = 'sessionSelectionRequired';
+          selectionMessage.innerHTML = `
+            <strong>Please select a recording session</strong>
+            <p>Select a recording from the list to use as context for your task</p>
+          `;
+          agentResults.insertBefore(selectionMessage, agentResults.firstChild);
+        } else {
+          agentContainer.appendChild(chatSidebar);
+        }
+      }
+      
+      // Setup refresh button
+      const refreshBtn = sessionListHeader.querySelector('.refresh-btn');
+      if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => this.loadRecordingSessions());
+      }
+    }
+    
+    // Load the recording sessions
+    this.loadRecordingSessions();
+  }
+
+  private loadRecordingSessions(): void {
+    if (!this.recordingService) {
+      console.error('[AgentService] Recording service not initialized');
+      return;
+    }
+    
+    const sessionListItems = document.getElementById('sessionListItems');
+    if (!sessionListItems) {
+      console.error('[AgentService] Session list items container not found');
+      return;
+    }
+    
+    sessionListItems.innerHTML = '<div class="session-list-loading">Loading sessions...</div>';
+    
+    try {
+      const sessions = this.recordingService.getAllSessions();
+      
+      if (sessions.length === 0) {
+        sessionListItems.innerHTML = `
+          <div class="session-list-empty">
+            <svg width="48" height="48" viewBox="0 0 16 16" fill="#9ca3af">
+              <path d="M13 16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1V2a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v2H3a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10z"/>
+            </svg>
+            <p>No recording sessions found</p>
+            <p class="session-list-empty-hint">Record a workflow first to use with Execute mode</p>
+          </div>
+        `;
+        return;
+      }
+      
+      sessions.sort((a, b) => b.startTime - a.startTime);
+      
+      sessionListItems.innerHTML = '';
+      sessions.forEach(session => {
+        const sessionItem = document.createElement('div');
+        sessionItem.className = 'session-list-item';
+        sessionItem.dataset.sessionId = session.id;
+        
+        // Format date
+        const date = new Date(session.startTime);
+        const formattedDate = date.toLocaleDateString();
+        
+        // Calculate duration
+        const duration = session.endTime ? Math.round((session.endTime - session.startTime) / 1000) : 0;
+        const formattedDuration = `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`;
+        
+        // Count events
+        const eventCount = session.events?.length || 0;
+        
+        sessionItem.innerHTML = `
+          <div class="session-item-name">${this.escapeHtml(session.taskGoal || 'Unnamed Session')}</div>
+          <div class="session-item-info">
+            <span class="session-item-date">${formattedDate}</span>
+            <span class="session-item-duration">${formattedDuration}</span>
+            <span class="session-item-events">${eventCount} events</span>
+          </div>
+        `;
+        
+        // Add click event
+        sessionItem.addEventListener('click', () => {
+          // Remove selected class from all items
+          document.querySelectorAll('.session-list-item').forEach(item => {
+            item.classList.remove('selected');
+          });
+          
+          // Add selected class to clicked item
+          sessionItem.classList.add('selected');
+          
+          // Store selected session ID
+          if (this.executeAgentService) {
+            this.executeAgentService.setSelectedSessionId(session.id);
+            
+            // Hide the selection required message
+            const selectionMessage = document.getElementById('sessionSelectionRequired');
+            if (selectionMessage) {
+              selectionMessage.classList.add('session-selected');
+            }
+          }
+        });
+        
+        sessionListItems.appendChild(sessionItem);
+      });
+    } catch (error) {
+      console.error('[AgentService] Error loading recording sessions:', error);
+      sessionListItems.innerHTML = `
+        <div class="session-list-error">
+          <p>Failed to load recording sessions</p>
+          <button class="retry-btn">Retry</button>
+        </div>
+      `;
+      
+      // Add retry button event listener
+      const retryBtn = sessionListItems.querySelector('.retry-btn');
+      if (retryBtn) {
+        retryBtn.addEventListener('click', () => this.loadRecordingSessions());
+      }
+    }
+  }
+
+  private escapeHtml(text: string): string {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
   private async processExecuteWithRecording(message: string): Promise<void> {
-    // TODO: Import and use processExecuteWithRecording from ExecuteModeHandlers
-    console.log('[AgentService] Execute with recording:', message);
-    this.addMessageToChat('assistant', 'Execute with recording functionality not yet implemented');
+    if (!this.executeAgentService) {
+      this.addMessageToChat('assistant', 'Error: Execute agent service not initialized.');
+      return;
+    }
+    
+    if (this.isExecuting) {
+      this.addMessageToChat('assistant', 'Another task is already in progress. Please wait for it to complete.');
+      return;
+    }
+    
+    this.isExecuting = true;
+    
+    try {
+      // Execute the task using the ExecuteAgentService
+      const result = await this.executeAgentService.executeTask(message);
+      
+      if (!result.success && result.error) {
+        console.error('[AgentService] Execute task failed:', result.error);
+      }
+      
+    } catch (error) {
+      console.error('[AgentService] Execute with recording error:', error);
+      this.addMessageToChat('assistant', `Error: ${(error as Error).message}`);
+    } finally {
+      this.isExecuting = false;
+    }
   }
 
   private async getMcpToolsForAsk(): Promise<any[]> {
@@ -1285,6 +1498,8 @@ export class AgentService implements IAgentService {
   public destroy(): void {
     try {
       this.isExecuting = false;
+      this.executeAgentService.destroy();
+      
       console.log('[AgentService] Destroyed successfully');
     } catch (error) {
       console.error('[AgentService] Error during destruction:', error);

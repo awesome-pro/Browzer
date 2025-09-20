@@ -223,3 +223,23 @@ export const DEFAULT_SMART_CONFIG: SmartRecordingConfig = {
   maxActionsPerSession: 50,       // Much lower than before
   maxSessionDuration: 30
 };
+
+export interface ActionCandidate {
+  type: ActionType;
+  timestamp: number;
+  element: ElementContext;
+  value?: any;
+  coordinates?: { x: number; y: number };
+  rawEvent: string;
+  intent: string;
+}
+
+export interface ActionBuffer {
+  type: ActionType;
+  element: ElementContext;
+  aggregatedValue?: string;
+  startTimestamp: number;
+  lastTimestamp: number;
+  timeout: NodeJS.Timeout | null;
+  intent: string;
+}
