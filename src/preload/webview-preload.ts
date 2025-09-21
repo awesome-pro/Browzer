@@ -287,8 +287,21 @@ class WebviewRecordingEngine {
 
     switch (eventType) {
       case 'click':
-        // Record all meaningful clicks - be more inclusive
-        return this.isClickableElement(target);
+        // Record all meaningful clicks - be more inclusive for search results
+        if (this.isClickableElement(target)) {
+          return true;
+        }
+        
+        // Special handling for Google search results
+        if (window.location.hostname.includes('google.com')) {
+          // Check if click is within a search result
+          const searchResult = target.closest('.g, .tF2Cxc, .rc');
+          if (searchResult) {
+            return true;
+          }
+        }
+        
+        return false;
       
       case 'change':
         // Record select, checkbox, radio changes
@@ -1056,21 +1069,38 @@ class WebviewRecordingEngine {
   private setupSearchResultsDetection(): void {
     // Detect Google search results specifically
     if (window.location.hostname.includes('google.com')) {
-      // Wait for search results to load
+      // Wait for search results to load with better detection
       const checkForResults = () => {
-        const resultsContainer = document.querySelector('#search, #rso, .g');
+        // Look for actual search result elements
+        const resultsSelectors = [
+          '.g:not(.g-blk)', // Standard Google results
+          '.tF2Cxc', // New Google result format
+          '.rc', // Classic format
+          '[data-ved]' // Any element with Google tracking
+        ];
+        
+        let hasResults = false;
+        for (const selector of resultsSelectors) {
+          const results = document.querySelectorAll(selector);
+          if (results.length > 0) {
+            hasResults = true;
+            break;
+          }
+        }
+        
         const searchBox = document.querySelector('input[name="q"], textarea[name="q"]') as HTMLInputElement | HTMLTextAreaElement;
         
-        if (resultsContainer && !this.pageLoadingState.searchResultsDetected) {
+        if (hasResults && !this.pageLoadingState.searchResultsDetected) {
           this.pageLoadingState.searchResultsDetected = true;
           this.recordSearchResultsLoaded(searchBox?.value || '');
         }
       };
 
-      // Check immediately and then periodically
-      setTimeout(checkForResults, 500);
-      setTimeout(checkForResults, 1000);
-      setTimeout(checkForResults, 2000);
+      // Check multiple times to catch dynamic loading
+      const checkTimes = [100, 500, 1000, 2000, 3000];
+      checkTimes.forEach(delay => {
+        setTimeout(checkForResults, delay);
+      });
     }
   }
 
@@ -1085,13 +1115,27 @@ class WebviewRecordingEngine {
       sessionId: this.sessionId,
       target: {
         tagName: 'page',
+        id: '',
+        className: '',
         text: document.title,
         selector: '',
-        targetUrl: window.location.href,
+        xpath: '',
+        attributes: {},
+        boundingRect: { x: 0, y: 0, width: 0, height: 0 },
+        isVisible: true,
         elementType: 'page',
-        purpose: 'page_loading'
+        purpose: 'page_loading',
+        context: 'page_load_complete',
+        href: null,
+        target: null,
+        targetUrl: window.location.href,
+        uniqueIdentifiers: [],
+        semanticRole: 'page',
+        interactionContext: 'page_navigation',
+        parentContext: null
       },
-      value: { loadTime, readyState: document.readyState, url: window.location.href },
+      value: `Page loaded in ${loadTime}ms - ${window.location.href}`,
+      coordinates: null,
       pageContext: this.getPageContext()
     };
 
@@ -1102,7 +1146,34 @@ class WebviewRecordingEngine {
   private recordSearchResultsLoaded(searchQuery: string): void {
     if (!this.isRecording) return;
 
-    const resultsCount = document.querySelectorAll('.g, .result').length;
+    // More accurate Google search results detection
+    let resultsCount = 0;
+    
+    // Try different selectors for Google search results
+    const googleResultSelectors = [
+      '.g:not(.g-blk)', // Standard Google results (excluding knowledge panels)
+      '.tF2Cxc', // New Google result format
+      '.rc', // Classic Google result format
+      '[data-ved]' // Elements with ved attribute (Google tracking)
+    ];
+    
+    for (const selector of googleResultSelectors) {
+      const results = document.querySelectorAll(selector);
+      if (results.length > resultsCount) {
+        resultsCount = results.length;
+      }
+    }
+    
+    // Fallback: check for result stats
+    const resultStats = document.querySelector('#result-stats');
+    let estimatedCount = resultsCount;
+    if (resultStats) {
+      const statsText = resultStats.textContent || '';
+      const match = statsText.match(/About ([\d,]+) results/);
+      if (match) {
+        estimatedCount = parseInt(match[1].replace(/,/g, ''), 10);
+      }
+    }
     
     const actionData = {
       type: 'search_results_loaded',
@@ -1110,13 +1181,27 @@ class WebviewRecordingEngine {
       sessionId: this.sessionId,
       target: {
         tagName: 'search-results',
+        id: 'search',
+        className: 'search-results',
         text: `${resultsCount} results for "${searchQuery}"`,
         selector: '#search, #rso',
-        targetUrl: window.location.href,
+        xpath: '//*[@id="search"]',
+        attributes: {},
+        boundingRect: { x: 0, y: 0, width: 0, height: 0 },
+        isVisible: true,
         elementType: 'search_results',
-        purpose: 'search_results_display'
+        purpose: 'search_results_display',
+        context: 'search_results_loaded',
+        href: null,
+        target: null,
+        targetUrl: window.location.href,
+        uniqueIdentifiers: ['#search', '#rso'],
+        semanticRole: 'search_results',
+        interactionContext: 'search_results',
+        parentContext: null
       },
-      value: { searchQuery, resultsCount },
+      value: `Found ${resultsCount} search results (estimated: ${estimatedCount}) for "${searchQuery}"`,
+      coordinates: null,
       pageContext: this.getPageContext()
     };
 
@@ -1162,21 +1247,62 @@ class WebviewRecordingEngine {
     if (!this.isRecording) return;
 
     const now = Date.now();
-    if (now - this.lastInteractionTime < 500) return;
+    // Increase debounce time to reduce noise
+    if (now - this.lastInteractionTime < 2000) return;
     this.lastInteractionTime = now;
+
+    // Determine what type of content loaded
+    let contentType = 'unknown';
+    let contentDescription = 'Dynamic content loaded';
+    
+    // Check for specific content types
+    if (window.location.hostname.includes('google.com')) {
+      const searchResults = document.querySelectorAll('.g:not(.g-blk), .tF2Cxc');
+      if (searchResults.length > 0) {
+        contentType = 'search_results';
+        contentDescription = `Google search results (${searchResults.length} results)`;
+      }
+    } else if (window.location.hostname.includes('amazon.com')) {
+      const productResults = document.querySelectorAll('[data-component-type="s-search-result"]');
+      if (productResults.length > 0) {
+        contentType = 'product_results';
+        contentDescription = `Amazon product results (${productResults.length} products)`;
+      }
+    }
+    
+    // Only record if we can identify specific content or if it's taking significant time
+    const loadTime = now - this.pageLoadingState.loadStartTime;
+    if (contentType === 'unknown' && loadTime < 1000) {
+      return; // Skip recording minor dynamic changes
+    }
 
     const actionData = {
       type: 'dynamic_content_loaded',
       timestamp: now,
       sessionId: this.sessionId,
       target: {
-        tagName: 'page',
-        text: 'Dynamic content loaded',
-        targetUrl: window.location.href,
+        tagName: 'dynamic-content',
+        id: '',
+        className: 'dynamic-content',
+        text: contentDescription,
+        selector: '',
+        xpath: '',
+        attributes: {},
+        boundingRect: { x: 0, y: 0, width: 0, height: 0 },
+        isVisible: true,
         elementType: 'dynamic_content',
-        purpose: 'content_loading'
+        purpose: 'content_loading',
+        context: 'dynamic_content_change',
+        href: null,
+        target: null,
+        targetUrl: window.location.href,
+        uniqueIdentifiers: [],
+        semanticRole: 'dynamic_content',
+        interactionContext: contentType,
+        parentContext: null
       },
-      value: { changeTime: now, url: window.location.href },
+      value: `${contentDescription} loaded in ${loadTime}ms on ${window.location.href}`,
+      coordinates: null,
       pageContext: this.getPageContext()
     };
 
@@ -1281,8 +1407,22 @@ class WebviewRecordingEngine {
       }
     }
     
-    if (element.closest('.g, .result, .search-result')) {
+    // Enhanced search result detection
+    if (window.location.hostname.includes('google.com')) {
+      if (element.closest('.g:not(.g-blk), .tF2Cxc, .rc')) {
+        contexts.push('google-search-result');
+      } else if (element.closest('#search, #rso')) {
+        contexts.push('search-results-area');
+      }
+    } else if (element.closest('.g, .result, .search-result')) {
       contexts.push('search-result');
+    }
+    
+    // Check for Amazon product results
+    if (window.location.hostname.includes('amazon.com')) {
+      if (element.closest('[data-component-type="s-search-result"]')) {
+        contexts.push('amazon-product-result');
+      }
     }
     
     return contexts.join(', ') || 'page';

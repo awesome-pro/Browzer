@@ -285,28 +285,40 @@ export class ExecuteStepRunner {
       throw new Error('Selector is required for click action');
     }
 
-    console.log(`[ExecuteStepRunner] Clicking element: ${selector}`);
+    console.log(`[ExecuteStepRunner] Attempting to click element: ${selector}`);
 
     const script = `
       (async function() {
         try {
+          console.log('Attempting to find element with selector: ${selector}');
           let element = document.querySelector('${selector.replace(/'/g, "\\'")}');
           
           if (!element) {
+            console.log('Primary selector failed, trying alternatives...');
             const alternatives = [
               '${selector}',
               '${selector.replace(/"/g, "'")}',
               '${selector.split(' ')[0]}',
               '[data-testid*="${selector.replace(/[^a-zA-Z0-9]/g, '')}"]',
-              '[aria-label*="${selector.replace(/[^a-zA-Z0-9]/g, '')}"]'
+              '[aria-label*="${selector.replace(/[^a-zA-Z0-9]/g, '')}"]',
+              'button:contains("${selector.replace(/[^a-zA-Z0-9\s]/g, '')}")',
+              'a:contains("${selector.replace(/[^a-zA-Z0-9\s]/g, '')}")'
             ];
             
             for (const alt of alternatives) {
               try {
+                console.log('Trying alternative selector:', alt);
                 element = document.querySelector(alt);
-                if (element) break;
-              } catch (e) {}
+                if (element) {
+                  console.log('Found element with alternative selector:', alt);
+                  break;
+                }
+              } catch (e) {
+                console.log('Alternative selector failed:', alt, e.message);
+              }
             }
+          } else {
+            console.log('Found element with primary selector');
           }
 
           if (!element) {

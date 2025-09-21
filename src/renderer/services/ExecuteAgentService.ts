@@ -104,7 +104,7 @@ export class ExecuteAgentService {
     try {
       this.addMessageToChat('assistant', this.generateContextAnalysis(instruction, session));
 
-      const systemPrompt = AnthropicPromptGenerator.getSampleSystemPrompt()
+      const systemPrompt = AnthropicPromptGenerator.generateClaudeSystemPrompt(session);
       const userPrompt = AnthropicPromptGenerator.generateClaudeUserPrompt(instruction, session);
 
       this.addMessageToChat('assistant', '<div class="loading">🧠 Analyzing recorded workflow and planning execution steps...</div>');
@@ -139,21 +139,30 @@ export class ExecuteAgentService {
 
   private async callLLM(systemPrompt: string, userPrompt: string, apiKey: string): Promise<string> {
     try {
+      console.log('[ExecuteAgentService] Calling Anthropic Claude with enhanced prompt...');
+      console.log('[ExecuteAgentService] System prompt length:', systemPrompt.length);
+      console.log('[ExecuteAgentService] User prompt length:', userPrompt.length);
+
       const response = await window.electronAPI.ipcInvoke('call-llm', {
         provider: 'anthropic',
         apiKey: apiKey,
         systemPrompt: systemPrompt,
         prompt: userPrompt,
-        maxTokens: 2000,
+        maxTokens: 3000, // Increased for more complex responses
+        temperature: 0.1, // Lower temperature for more consistent JSON output
       });
 
       if (!response.success) {
+        console.error('[ExecuteAgentService] LLM API error:', response.error);
         throw new Error(response.error || 'LLM API call failed');
       }
 
+      console.log('[ExecuteAgentService] LLM response received, length:', response.response.length);
+      console.log('[ExecuteAgentService] Raw LLM response:', response.response);
+
       return response.response;
     } catch (error) {
-      console.error('[EnhancedExecuteAgentService] LLM API call failed:', error);
+      console.error('[ExecuteAgentService] LLM API call failed:', error);
       throw new Error(`AI model call failed: ${(error as Error).message}`);
     }
   }
@@ -222,37 +231,75 @@ export class ExecuteAgentService {
   }
 
   private extractJSONFromResponse(response: string): string {
-    // Try multiple patterns to extract JSON
+    console.log('[ExecuteAgentService] Extracting JSON from response...');
+    
+    // Clean the response first
+    let cleaned = response.trim();
+    
+    // Remove common prefixes that Claude might add
+    cleaned = cleaned.replace(/^Here's the JSON array[^[]*/, '');
+    cleaned = cleaned.replace(/^Based on the recorded workflow[^[]*/, '');
+    cleaned = cleaned.replace(/^Following the recorded pattern[^[]*/, '');
+    
+    // Try multiple extraction patterns in order of preference
     const patterns = [
-      // Direct JSON array
-      /^\s*\[[\s\S]*\]\s*$/,
-      // JSON wrapped in code blocks
+      // Pure JSON array (most preferred)
+      /^\s*(\[[\s\S]*\])\s*$/,
+      // JSON in code blocks
       /```(?:json)?\s*(\[[\s\S]*?\])\s*```/,
-      // JSON after some text
-      /(?:steps|array|json)[:\s]*(\[[\s\S]*\])/i,
-      // Extract anything that looks like a JSON array
-      /(\[[\s\S]*\])/
+      // JSON after descriptive text
+      /(?:array|steps|json)[:\s]*(\[[\s\S]*?\])/i,
+      // Any JSON array in the text
+      /(\[[\s\S]*?\])/,
+      // JSON with trailing text
+      /(\[[\s\S]*?\])[^}]*/
     ];
 
     for (const pattern of patterns) {
-      const match = response.match(pattern);
+      const match = cleaned.match(pattern);
       if (match) {
-        const jsonStr = match[1] || match[0];
+        const jsonStr = match[1];
         try {
-          JSON.parse(jsonStr); // Validate it's valid JSON
-          return jsonStr;
+          // Validate JSON is parseable
+          const parsed = JSON.parse(jsonStr);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            console.log(`[ExecuteAgentService] Successfully extracted JSON with ${parsed.length} steps`);
+            return jsonStr;
+          }
         } catch (e) {
+          console.warn('[ExecuteAgentService] JSON validation failed for pattern:', pattern);
           continue;
         }
       }
     }
 
-    // If no JSON found, try to clean up the response
-    let cleaned = response.trim()
-      .replace(/^```json\s*/, '')
-      .replace(/```\s*$/, '')
-      .replace(/^.*?(\[[\s\S]*\]).*$/, '$1');
+    // Advanced cleaning for malformed JSON
+    const lines = cleaned.split('\n');
+    let jsonStart = -1;
+    let jsonEnd = -1;
+    
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim().startsWith('[') && jsonStart === -1) {
+        jsonStart = i;
+      }
+      if (lines[i].trim().endsWith(']') && jsonStart !== -1) {
+        jsonEnd = i;
+        break;
+      }
+    }
+    
+    if (jsonStart !== -1 && jsonEnd !== -1) {
+      const extractedJson = lines.slice(jsonStart, jsonEnd + 1).join('\n');
+      try {
+        JSON.parse(extractedJson);
+        console.log('[ExecuteAgentService] Extracted JSON using line-by-line method');
+        return extractedJson;
+      } catch (e) {
+        console.warn('[ExecuteAgentService] Line-by-line extraction failed');
+      }
+    }
 
+    console.error('[ExecuteAgentService] Failed to extract valid JSON from response');
     return cleaned;
   }
 

@@ -71,19 +71,39 @@ private handleWebviewAction(actionData: any): void {
   }
   
   try {
+    // Ensure value is properly serialized
+    let processedValue = actionData.value;
+    if (typeof processedValue === 'object' && processedValue !== null) {
+      // If it's an object, convert to a meaningful string
+      if (processedValue.toString && processedValue.toString() !== '[object Object]') {
+        processedValue = processedValue.toString();
+      } else {
+        // Try to extract meaningful properties
+        if (processedValue.searchQuery || processedValue.resultsCount || processedValue.loadTime) {
+          const parts = [];
+          if (processedValue.searchQuery) parts.push(`query: "${processedValue.searchQuery}"`);
+          if (processedValue.resultsCount) parts.push(`results: ${processedValue.resultsCount}`);
+          if (processedValue.loadTime) parts.push(`loadTime: ${processedValue.loadTime}ms`);
+          processedValue = parts.join(', ');
+        } else {
+          processedValue = JSON.stringify(processedValue);
+        }
+      }
+    }
+
     const action: SemanticAction = {
       id: this.generateId(),
       type: this.mapEventTypeToActionType(actionData.type),
       timestamp: actionData.timestamp,
       description: this.generateWebviewActionDescription(actionData),
       target: this.convertWebviewElementToElementContext(actionData.target),
-      value: actionData.value,
+      value: processedValue,
       coordinates: actionData.coordinates,
       context: this.convertWebviewPageContext(actionData.pageContext),
       intent: this.inferIntent(
         this.mapEventTypeToActionType(actionData.type),
         this.convertWebviewElementToElementContext(actionData.target),
-        actionData.value
+        processedValue
       )
     };
     
@@ -296,17 +316,18 @@ private generateWebviewActionDescription(actionData: any): string {
   
   // Handle special action types first
   if (type === 'page_load_complete') {
-    const loadTime = value?.loadTime || 0;
-    return `Page loaded completely in ${loadTime}ms - "${element.text}"`;
+    // Value is already a string from webview
+    return typeof value === 'string' ? value : `Page loaded - "${element.text}"`;
   }
   
   if (type === 'search_results_loaded') {
-    const { searchQuery, resultsCount } = value || {};
-    return `Search results loaded: ${resultsCount} results for "${searchQuery}"`;
+    // Value is already a formatted string from webview
+    return typeof value === 'string' ? value : `Search results loaded`;
   }
   
   if (type === 'dynamic_content_loaded') {
-    return `Dynamic content loaded on page`;
+    // Value is already a formatted string from webview
+    return typeof value === 'string' ? value : `Dynamic content loaded on page`;
   }
   
   // Generate more meaningful descriptions based on element type and purpose

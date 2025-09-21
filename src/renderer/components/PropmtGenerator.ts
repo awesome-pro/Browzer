@@ -6,147 +6,313 @@ export class AnthropicPromptGenerator {
   static generateClaudeSystemPrompt(session: SmartRecordingSession): string {
     const context = this.convertToClaudeContext(session);
     
-    return `You are a precise browser automation assistant that executes web tasks by generating step-by-step action sequences.
+    return `You are a precision browser automation expert that generates executable step sequences based on recorded user workflows.
 
-## YOUR ROLE
-You analyze recorded user workflows and adapt them to execute similar tasks based on new user instructions. You have access to a detailed recording of how a user accomplished a specific task, which serves as your template for understanding the workflow pattern.
+## CORE MISSION
+You have access to a PROVEN, SUCCESSFUL workflow recording. Your job is to replicate this exact pattern for new tasks by adapting the specific selectors, values, and targets while maintaining the identical workflow structure.
 
-## RECORDED WORKFLOW CONTEXT
-The user previously recorded this workflow:
-**Task Goal:** ${context.task}
-**Success Status:** ${context.success ? 'Completed Successfully' : 'Needs Verification'}
+## RECORDED WORKFLOW ANALYSIS
+**Original Task:** ${context.task}
+**Success Status:** ${context.success ? '✅ COMPLETED SUCCESSFULLY' : '⚠️ NEEDS VERIFICATION'}
 **Complexity:** ${context.complexity}
 **Duration:** ${Math.round(context.duration / 1000)} seconds
+**Total Steps:** ${context.steps.length}
 
-### Original Steps Performed:
-${context.steps.map((step, index) => 
-  `${index + 1}. **${step.action}** - ${step.description}
-     • Target: ${step.target}
-     • Intent: ${step.intent}${step.value ? `
-     • Value: "${step.value}"` : ''}`
-).join('\n')}
+### PROVEN WORKFLOW PATTERN:
+${context.steps.map((step, index) => {
+  const stepNum = index + 1;
+  const action = step.action.toLowerCase();
+  const description = step.description;
+  const target = step.target;
+  const value = step.value;
+  const intent = step.intent;
+  
+  return `${stepNum}. [${action}] ${description}
+   └─ TARGET: ${target}
+   └─ INTENT: ${intent}${value ? `
+   └─ VALUE: "${value}"` : ''}`;
+}).join('\n\n')}
 
-### Environment Context:
-• **Starting URL:** https://google.com
-• **Pages Visited:** https://google.com
-• **Viewport:** ${context.environment.viewport.width}×${context.environment.viewport.height}
+### CRITICAL SUCCESS ELEMENTS:
+${this.extractCriticalElements(session)}
 
-### Page Structure Knowledge:
-${context.pageStructure.map(page => 
-  `**${page.title || page.url}:**
-${page.keyElements.map(el => `  • ${el.role}: "${el.text}" (${el.selector})`).join('\n')}`
-).join('\n\n')}
+### PROVEN SELECTORS & PATTERNS:
+${this.extractProvenSelectors(session)}
 
-## AVAILABLE ACTIONS
-You can only use these specific actions in your response:
+## EXECUTION RULES (CRITICAL - FOLLOW EXACTLY)
 
-• **navigate** - Go to a URL (target: URL)
-• **scroll** - Scroll page (target: element or direction, value: pixels)
+🎯 **PRIMARY RULE**: Follow the EXACT same workflow pattern from the recording. Change only the specific values/targets needed for the new task.
 
-• **type** - Enter text in input field (target: CSS selector, value: text to type)
-• **clear** - Clear input field (target: CSS selector)
+### MANDATORY WORKFLOW REPLICATION:
+1. **IDENTICAL STRUCTURE**: Use the same sequence of action types as recorded
+2. **PROVEN SELECTORS**: Adapt the exact selectors from the recording to match new context  
+3. **TIMING PRESERVATION**: Keep all wait times and delays that worked in the original
+4. **VALUE ADAPTATION**: Only change search terms, URLs, form inputs to match new task
 
+### SELECTOR ADAPTATION STRATEGY:
+- **Google Search**: Use \`#APjFqb\` or \`textarea[name='q']\` (from recording)
+- **Form Inputs**: Look for patterns like \`#original_url\`, \`input[name="url"]\`
+- **Buttons**: Use text-based selectors like \`button:contains("Create")\`
+- **Links**: Use \`a:contains("specific text")\` patterns from recording
+
+### AVAILABLE ACTIONS:
+• **navigate** - Go to URL (target: URL)
+• **type** - Enter text (target: CSS selector, value: text)
 • **click** - Click element (target: CSS selector)
+• **wait_for_element** - Wait for element (target: CSS selector, value: timeout_ms)
+• **wait_for_dynamic_content** - Wait for page load (value: timeout_ms)
+• **wait** - Simple wait (value: milliseconds)
+• **keypress** - Press key (target: selector, value: key like "Enter")
 
-• **select** - Choose dropdown option (target: CSS selector, value: option text/value)
-• **toggle** - Check/uncheck checkbox or radio (target: CSS selector)
-• **submit** - Submit form (target: form selector)
+## CRITICAL OUTPUT REQUIREMENTS
 
-• **wait** - Wait for milliseconds (value: number in milliseconds)
-• **wait_for_element** - Wait for element to appear (target: CSS selector, value: timeout ms)
-• **wait_for_dynamic_content** - Wait for page to load dynamic content (value: timeout ms)
+⚠️ **RESPOND WITH PURE JSON ONLY** - No explanations, no markdown, no code blocks
 
-• **focus** - Focus on element (target: CSS selector)
-• **hover** - Hover over element (target: CSS selector)
-• **keypress** - Press specific key (target: element selector, value: key name like 'Enter', 'Tab')
-
-• **extract** - Get page content and data (no parameters needed)
-
-## CRITICAL EXECUTION RULES
-
-1. **NEVER ask for clarification** - Use the recorded workflow as your guide and adapt it to the new task
-2. **Always start with navigation** if the current page isn't the starting point
-3. **Wait strategically** - Add waits after actions that trigger page changes or dynamic loading
-4. **Use robust selectors** - Prefer specific, stable selectors over generic ones
-5. **Handle timing** - Modern web apps need time to load, always account for this
-6. **Verify before acting** - Use wait_for_element before interacting with elements
-7. **Break complex actions down** - One atomic action per step
-8. **Extract when needed** - Use extract to understand page state when unsure
-
-## SELECTOR GUIDELINES
-• Use CSS selectors like: input[name="q"], button[type="submit"], .search-button, #login-form
-• Avoid XPath unless necessary
-• Prefer semantic selectors: [role="button"], [aria-label="Search"], input[type="search"]
-• Target stable attributes: data-testid, name, id, role, aria-label
-
-## OUTPUT FORMAT REQUIREMENTS
-
-You MUST respond with ONLY a valid JSON array of steps. No explanation, no markdown, no code blocks - just the JSON array.
-
-Each step must have this exact format:
-{
-  "action": "one of the available actions above",
-  "target": "CSS selector or URL (required for most actions)",
-  "value": "text to type, option to select, milliseconds to wait, etc.",
-  "reasoning": "brief explanation why this step is needed"
-}
-
-## RESPONSE EXAMPLE FORMAT:
+**Required JSON Format:**
+\`\`\`json
 [
   {
     "action": "navigate",
-    "target": "https://www.google.com",
+    "target": "https://specific-url.com",
     "value": "",
-    "reasoning": "Start the workflow by going to Google search page"
-  },
-  {
-    "action": "wait_for_element",
-    "target": "textarea[name='q']",
-    "value": "2000",
-    "reasoning": "Ensure search box is ready for input"
-  },
-  {
-    "action": "type",
-    "target": "textarea[name='q']",
-    "value": "Python tutorials",
-    "reasoning": "Enter the search query adapted from user instruction"
+    "reasoning": "Navigate to target site based on recorded pattern"
   }
 ]
+\`\`\`
 
-## ADAPTATION GUIDANCE
-When the user gives you a new task instruction:
-1. **Map the new task to the recorded pattern** - If the recording shows "search for X", adapt it to "search for Y"
-2. **Keep the same workflow structure** - Maintain the same sequence of action types
-3. **Adapt specific values** - Change search terms, form inputs, selections based on new task
-4. **Preserve timing and waits** - Keep the same wait patterns that worked in the recording
-5. **Maintain target consistency** - Use similar selectors but adapt for the new target site if needed
+## SUCCESS CRITERIA
+✅ **Your response will be successful if:**
+1. JSON is valid and parseable
+2. Actions follow the recorded sequence pattern
+3. Selectors are specific and likely to work
+4. Timing matches the original workflow
+5. Values are adapted to the new task context
 
-Remember: You have a proven workflow pattern from the recording. Your job is to intelligently adapt that pattern to accomplish the new task the user describes.`;
+❌ **AVOID THESE FAILURES:**
+- Generic selectors that don't match real elements
+- Skipping steps from the original workflow
+- Wrong action sequence
+- Missing wait times for dynamic content`;
   }
 
   static generateClaudeUserPrompt(newTaskInstruction: string, session: SmartRecordingSession): string {
-    const recordedTask = session.taskGoal.toLowerCase();
-    const newTask = newTaskInstruction.toLowerCase();
+    const workflowMapping = this.generateWorkflowMapping(session, newTaskInstruction);
     
-    const taskPattern = this.identifyTaskPattern(recordedTask);
-    const adaptationHints = this.generateAdaptationHints(recordedTask, newTask, session);
+    return `## 🎯 NEW TASK EXECUTION REQUEST
+
+**NEW TASK:** ${newTaskInstruction}
+
+## 📋 WORKFLOW ADAPTATION MAPPING
+${workflowMapping}
+
+## ⚡ EXECUTION REQUIREMENTS
+
+**CRITICAL:** Generate a JSON array that follows the EXACT workflow pattern from the recording, but adapted for this new task.
+
+**Key Adaptations Needed:**
+${this.generateSpecificAdaptations(session, newTaskInstruction)}
+
+**Expected Workflow Pattern:**
+${this.generateExpectedPattern(session)}
+
+---
+**GENERATE THE JSON ARRAY NOW** (Pure JSON only, no explanations)`;
+  }
+
+  // Helper method to extract critical elements from the session
+  private static extractCriticalElements(session: SmartRecordingSession): string {
+    const elements = [];
     
-    return `## NEW TASK TO EXECUTE
-${newTaskInstruction}
+    // Extract key navigation points
+    const navigationSteps = session.actions.filter(action => 
+      action.type === 'navigation' || action.description.includes('Navigate to')
+    );
+    
+    if (navigationSteps.length > 0) {
+      elements.push(`🔗 **Navigation Pattern**: ${navigationSteps.length} navigation steps recorded`);
+    }
+    
+    // Extract form interactions
+    const formSteps = session.actions.filter(action => 
+      action.type === 'text_input' || action.description.includes('Type')
+    );
+    
+    if (formSteps.length > 0) {
+      elements.push(`📝 **Form Interaction**: ${formSteps.length} text input steps recorded`);
+    }
+    
+    // Extract click patterns
+    const clickSteps = session.actions.filter(action => 
+      action.type === 'click'
+    );
+    
+    if (clickSteps.length > 0) {
+      elements.push(`👆 **Click Actions**: ${clickSteps.length} click interactions recorded`);
+    }
+    
+    // Extract timing patterns
+    const hasWaits = session.actions.some(action => 
+      action.description.includes('loaded') || action.description.includes('wait')
+    );
+    
+    if (hasWaits) {
+      elements.push(`⏱️ **Timing Critical**: Dynamic content loading detected`);
+    }
+    
+    return elements.join('\n');
+  }
 
-## CONTEXT FROM RECORDING
-The recorded workflow shows how to: "${session.taskGoal}"
-${adaptationHints}
+  // Helper method to extract proven selectors
+  private static extractProvenSelectors(session: SmartRecordingSession): string {
+    const selectors = new Set<string>();
+    
+    session.actions.forEach(action => {
+      if (action.target && action.target.selector) {
+        selectors.add(action.target.selector);
+      }
+      
+      // Extract selectors from descriptions
+      const selectorMatch = action.description.match(/\[([^\]]+)\]/);
+      if (selectorMatch) {
+        selectors.add(selectorMatch[1]);
+      }
+      
+      // Extract selectors from element context
+      if (action.target && action.target.uniqueIdentifiers) {
+        action.target.uniqueIdentifiers.forEach(id => selectors.add(id));
+      }
+    });
+    
+    const selectorList = Array.from(selectors).filter(s => s && s.length > 0);
+    
+    if (selectorList.length === 0) {
+      return "No specific selectors recorded - use semantic selectors";
+    }
+    
+    return selectorList.slice(0, 10).map(selector => `• \`${selector}\``).join('\n');
+  }
 
-Please generate the step-by-step actions to accomplish the new task using the recorded workflow pattern as your guide. Adapt the recorded steps to match the new task requirements while maintaining the same general workflow structure.
+  // Generate workflow mapping
+  private static generateWorkflowMapping(session: SmartRecordingSession, newTask: string): string {
+    const mapping = [];
+    
+    // Analyze the original task pattern
+    const originalTask = session.taskGoal.toLowerCase();
+    const newTaskLower = newTask.toLowerCase();
+    
+    // Map search terms
+    const originalSearchTerms = this.extractSearchTerms(originalTask);
+    const newSearchTerms = this.extractSearchTerms(newTaskLower);
+    
+    if (originalSearchTerms.length > 0 && newSearchTerms.length > 0) {
+      mapping.push(`🔍 **Search Term Mapping**: "${originalSearchTerms[0]}" → "${newSearchTerms[0]}"`);
+    }
+    
+    // Map domains/sites
+    const originalDomains = this.extractDomains(originalTask);
+    const newDomains = this.extractDomains(newTaskLower);
+    
+    if (originalDomains.length > 0 && newDomains.length > 0) {
+      mapping.push(`🌐 **Domain Mapping**: ${originalDomains[0]} → ${newDomains[0]}`);
+    }
+    
+    // Map action types
+    const actionPattern = this.identifyActionPattern(session);
+    mapping.push(`⚡ **Action Pattern**: ${actionPattern}`);
+    
+    return mapping.join('\n');
+  }
 
-Focus on:
-1. Following the same sequence pattern from the recording
-2. Adapting URLs, search terms, form inputs, and selections to match the new task
-3. Maintaining proper timing and wait strategies that worked in the original recording
-4. Using similar but adapted selectors for the new target elements
+  // Generate specific adaptations needed
+  private static generateSpecificAdaptations(session: SmartRecordingSession, newTask: string): string {
+    const adaptations = [];
+    
+    // URL adaptations
+    const urlsInSession = session.metadata.pagesVisited;
+    if (urlsInSession.length > 1) {
+      adaptations.push(`• **URLs**: Adapt from recorded URLs to match new task context`);
+    }
+    
+    // Form field adaptations
+    const textInputs = session.actions.filter(action => action.type === 'text_input');
+    if (textInputs.length > 0) {
+      const exampleValue = textInputs[0].value;
+      adaptations.push(`• **Form Values**: Change "${exampleValue}" to match new task requirements`);
+    }
+    
+    // Button/link adaptations
+    const clickActions = session.actions.filter(action => 
+      action.type === 'click' && action.description.includes('Click')
+    );
+    if (clickActions.length > 0) {
+      adaptations.push(`• **Interactive Elements**: Adapt button/link targets for new task`);
+    }
+    
+    return adaptations.join('\n');
+  }
 
-Generate the JSON array of execution steps now.`;
+  // Generate expected pattern
+  private static generateExpectedPattern(session: SmartRecordingSession): string {
+    return session.actions.slice(0, 5).map((action, index) => 
+      `${index + 1}. ${action.type.toLowerCase()} → ${action.description.substring(0, 60)}...`
+    ).join('\n');
+  }
+
+  // Helper methods for term extraction
+  private static extractSearchTerms(text: string): string[] {
+    const terms = [];
+    
+    // Extract quoted terms
+    const quotedTerms = text.match(/"([^"]+)"/g);
+    if (quotedTerms) {
+      terms.push(...quotedTerms.map(term => term.replace(/"/g, '')));
+    }
+    
+    // Extract key words (simple approach)
+    const words = text.split(' ').filter(word => 
+      word.length > 3 && 
+      !['search', 'find', 'create', 'task', 'workflow'].includes(word.toLowerCase())
+    );
+    
+    if (words.length > 0 && terms.length === 0) {
+      terms.push(words[0]);
+    }
+    
+    return terms;
+  }
+
+  private static extractDomains(text: string): string[] {
+    const domains: string[] = [];
+    const domainPatterns = [
+      /([a-zA-Z0-9-]+\.com)/g,
+      /([a-zA-Z0-9-]+\.org)/g,
+      /([a-zA-Z0-9-]+\.net)/g,
+      /(google|amazon|github|linkedin)/gi
+    ];
+    
+    domainPatterns.forEach(pattern => {
+      const matches = text.match(pattern);
+      if (matches) {
+        domains.push(...matches);
+      }
+    });
+    
+    return [...new Set(domains)];
+  }
+
+  private static identifyActionPattern(session: SmartRecordingSession): string {
+    const actionTypes = session.actions.map(action => action.type);
+    const uniqueTypes = [...new Set(actionTypes)];
+    
+    if (uniqueTypes.includes(ActionType.TEXT_INPUT) && uniqueTypes.includes(ActionType.NAVIGATION)) {
+      return "Search & Navigate";
+    } else if (uniqueTypes.includes(ActionType.CLICK) && uniqueTypes.includes(ActionType.TEXT_INPUT)) {
+      return "Form Interaction";
+    } else if (uniqueTypes.includes(ActionType.NAVIGATION)) {
+      return "Multi-page Navigation";
+    } else {
+      return "Interactive Workflow";
+    }
   }
 
   /**
