@@ -30,7 +30,7 @@ class WebviewRecordingEngine {
     startTime: number;
     timeout: NodeJS.Timeout | null;
   }>();
-  private readonly TEXT_INPUT_DEBOUNCE = 800; // Reduced to 800ms for faster text capture
+  private readonly TEXT_INPUT_DEBOUNCE = 1200; // Reduced to 800ms for faster text capture
   
   // Loading and dynamic content detection
   private pageLoadingState = {
@@ -122,14 +122,20 @@ class WebviewRecordingEngine {
   private setupEventListeners(): void {
     console.log('🔵[Webview Preload] Setting up event listeners');
     
-    // Focus on semantic, high-level events only
-    const events = ['click', 'input', 'change', 'submit', 'keydown'];
+    // Comprehensive event listening for all user interactions
+    const events = ['click', 'input', 'change', 'submit', 'keydown', 'keyup', 'paste', 'cut', 'copy', 'contextmenu'];
     
     events.forEach(eventType => {
       const handler = (event: Event) => this.handleEvent(event, eventType);
       document.addEventListener(eventType, handler, true);
       this.eventHandlers.set(eventType, handler);
     });
+
+    // Setup enhanced clipboard monitoring
+    this.setupClipboardMonitoring();
+
+    // Setup form interaction monitoring
+    this.setupFormInteractionMonitoring();
 
     // Setup navigation detection
     this.setupNavigationDetection();
@@ -165,9 +171,33 @@ class WebviewRecordingEngine {
     const target = event.target as Element;
     if (!this.isSignificantEvent(event, target)) return;
 
+    // Handle clipboard events (copy, cut, paste)
+    if (['copy', 'cut', 'paste'].includes(eventType)) {
+      this.handleClipboardEvent(event, eventType);
+      return;
+    }
+
+    // Handle form submission events
+    if (eventType === 'submit') {
+      this.handleFormSubmitEvent(event);
+      return;
+    }
+
+    // Handle context menu (right-click)
+    if (eventType === 'contextmenu') {
+      this.handleContextMenuEvent(event);
+      return;
+    }
+
     // Handle text input aggregation
-    if (eventType === 'input' || eventType === 'keydown') {
+    if (eventType === 'input' || eventType === 'keydown' || eventType === 'keyup') {
       this.handleTextInputEvent(event, target, eventType);
+      return;
+    }
+
+    // Handle dropdown/select changes
+    if (eventType === 'change') {
+      this.handleChangeEvent(event, target);
       return;
     }
 
@@ -285,23 +315,16 @@ class WebviewRecordingEngine {
   private shouldRecordEvent(eventType: string, target: Element, event: Event): boolean {
     const tagName = target.tagName?.toLowerCase();
 
+    // Only record events that are actually user-initiated
+    if (!this.isUserInitiatedEvent(event)) {
+      console.log('[WebviewRecording] Ignoring non-user event:', eventType, target);
+      return false;
+    }
+
     switch (eventType) {
       case 'click':
-        // Record all meaningful clicks - be more inclusive for search results
-        if (this.isClickableElement(target)) {
-          return true;
-        }
-        
-        // Special handling for Google search results
-        if (window.location.hostname.includes('google.com')) {
-          // Check if click is within a search result
-          const searchResult = target.closest('.g, .tF2Cxc, .rc');
-          if (searchResult) {
-            return true;
-          }
-        }
-        
-        return false;
+        // Only record meaningful clicks by user
+        return this.isClickableElement(target);
       
       case 'change':
         // Record select, checkbox, radio changes
@@ -311,6 +334,16 @@ class WebviewRecordingEngine {
       case 'submit':
         // Always record form submissions
         return tagName === 'form';
+
+      case 'copy':
+      case 'cut':
+      case 'paste':
+        // Always record clipboard operations
+        return true;
+
+      case 'contextmenu':
+        // Record right-click context menu if on interactive elements
+        return this.isClickableElement(target);
       
       default:
         return false;
@@ -829,6 +862,17 @@ class WebviewRecordingEngine {
            rect.width > 0 && rect.height > 0;
   }
 
+  private isUserInitiatedEvent(event: Event): boolean {
+    // Check if event was triggered by actual user interaction
+    return (
+      event.isTrusted && // Browser-generated events from user actions are trusted
+      event.type !== 'DOMContentLoaded' && // Not a DOM load event
+      event.type !== 'load' && // Not a window load event
+      event.timeStamp > 0 && // Has valid timestamp
+      event.timeStamp > this.pageLoadingState.loadStartTime // Happened after page started loading
+    );
+  }
+
   private getPageContext(): any {
     return {
       url: window.location.href,
@@ -1144,7 +1188,7 @@ class WebviewRecordingEngine {
   }
 
   private recordSearchResultsLoaded(searchQuery: string): void {
-    if (!this.isRecording) return;
+    if (!this.isRecording || !searchQuery || searchQuery.length === 0) return;
 
     // More accurate Google search results detection
     let resultsCount = 0;
@@ -1209,7 +1253,7 @@ class WebviewRecordingEngine {
   }
 
   private handleDOMChanges(mutations: MutationRecord[]): void {
-    if (!this.isRecording) return;
+    if (!this.isRecording || mutations.length === 0) return;
 
     let significantChange = false;
     
@@ -1244,7 +1288,7 @@ class WebviewRecordingEngine {
   }
 
   private recordDynamicContentChange(): void {
-    if (!this.isRecording) return;
+    if (!this.isRecording || this.pageLoadingState.isLoading) return;
 
     const now = Date.now();
     // Increase debounce time to reduce noise
@@ -1438,6 +1482,245 @@ class WebviewRecordingEngine {
       className: parent.className?.toString() || null,
       role: this.getSemanticRole(parent)
     };
+  }
+
+  // Enhanced event handlers for new interaction types
+  private handleClipboardEvent(event: Event, eventType: string): void {
+    if (!this.isRecording) return;
+
+    const target = event.target as Element;
+    const clipboardEvent = event as ClipboardEvent;
+    
+    let clipboardValue = '';
+    let description = '';
+    
+    switch (eventType) {
+      case 'copy':
+        // Try to get the copied text
+        const selection = window.getSelection();
+        clipboardValue = selection?.toString() || '';
+        description = `Copy text: "${clipboardValue.substring(0, 50)}${clipboardValue.length > 50 ? '...' : ''}"`;
+        break;
+      
+      case 'cut':
+        const cutSelection = window.getSelection();
+        clipboardValue = cutSelection?.toString() || '';
+        description = `Cut text: "${clipboardValue.substring(0, 50)}${clipboardValue.length > 50 ? '...' : ''}"`;
+        break;
+      
+      case 'paste':
+        // For paste, we'll capture what was pasted after the event
+        setTimeout(() => {
+          if (target && 'value' in target) {
+            const inputElement = target as HTMLInputElement | HTMLTextAreaElement;
+            clipboardValue = inputElement.value || '';
+          }
+          
+          const actionData = {
+            type: 'paste',
+            timestamp: Date.now(),
+            sessionId: this.sessionId,
+            target: this.captureElement(target),
+            value: clipboardValue,
+            coordinates: this.getEventCoordinates(event),
+            pageContext: this.getPageContext()
+          };
+
+          this.sendRecordingAction(actionData);
+        }, 50); // Small delay to let paste complete
+        return; // Exit early for paste
+    }
+
+    const actionData = {
+      type: eventType,
+      timestamp: Date.now(),
+      sessionId: this.sessionId,
+      target: this.captureElement(target),
+      value: clipboardValue,
+      coordinates: this.getEventCoordinates(event),
+      pageContext: this.getPageContext()
+    };
+
+    this.sendRecordingAction(actionData);
+  }
+
+  private handleFormSubmitEvent(event: Event): void {
+    if (!this.isRecording) return;
+
+    const form = event.target as HTMLFormElement;
+    if (!form) return;
+
+    // Capture form data (but mask sensitive fields)
+    const formData = new FormData(form);
+    const formFields: Record<string, string> = {};
+    
+    formData.forEach((value, key) => {
+      // Mask sensitive fields
+      if (this.isSensitiveField(key)) {
+        formFields[key] = '[MASKED]';
+      } else {
+        formFields[key] = value.toString().substring(0, 100); // Limit length
+      }
+    });
+
+    // Get form action and method
+    const formAction = form.action || window.location.href;
+    const formMethod = form.method || 'POST';
+
+    const actionData = {
+      type: 'form_submit',
+      timestamp: Date.now(),
+      sessionId: this.sessionId,
+      target: this.captureElement(form),
+      value: {
+        fields: formFields,
+        action: formAction,
+        method: formMethod,
+        fieldCount: Object.keys(formFields).length
+      },
+      coordinates: null,
+      pageContext: this.getPageContext()
+    };
+
+    this.sendRecordingAction(actionData);
+  }
+
+  private handleChangeEvent(event: Event, target: Element): void {
+    if (!this.isRecording) return;
+
+    const tagName = target.tagName?.toLowerCase();
+    const inputElement = target as HTMLInputElement | HTMLSelectElement;
+    
+    let actionType = 'change';
+    let value: any = inputElement.value;
+    let description = '';
+
+    if (tagName === 'select') {
+      const selectElement = target as HTMLSelectElement;
+      const selectedOption = selectElement.selectedOptions[0];
+      
+      actionType = 'select_option';
+      value = {
+        value: selectElement.value,
+        text: selectedOption?.textContent || selectElement.value,
+        index: selectElement.selectedIndex
+      };
+      description = `Select "${selectedOption?.textContent || selectElement.value}" from dropdown`;
+      
+    } else if (inputElement.type === 'checkbox') {
+      actionType = 'toggle_checkbox';
+      value = inputElement.checked;
+      description = `${inputElement.checked ? 'Check' : 'Uncheck'} checkbox`;
+      
+    } else if (inputElement.type === 'radio') {
+      actionType = 'select_radio';
+      value = {
+        value: inputElement.value,
+        name: inputElement.name,
+        checked: inputElement.checked
+      };
+      description = `Select radio button "${inputElement.value}"`;
+      
+    } else if (inputElement.type === 'range') {
+      actionType = 'adjust_slider';
+      value = inputElement.value;
+      description = `Adjust slider to ${inputElement.value}`;
+      
+    } else if (inputElement.type === 'file') {
+      actionType = 'select_file';
+      const fileInput = target as HTMLInputElement;
+      const files = Array.from(fileInput.files || []);
+      value = {
+        fileCount: files.length,
+        fileNames: files.map(f => f.name).slice(0, 5), // Limit to first 5 files
+        totalSize: files.reduce((sum, f) => sum + f.size, 0)
+      };
+      description = `Select ${files.length} file(s)`;
+      
+    } else {
+      // Other input types
+      description = `Change ${inputElement.type || 'input'} value to "${value}"`;
+    }
+
+    const actionData = {
+      type: actionType,
+      timestamp: Date.now(),
+      sessionId: this.sessionId,
+      target: this.captureElement(target),
+      value: value,
+      coordinates: this.getEventCoordinates(event),
+      pageContext: this.getPageContext()
+    };
+
+    this.sendRecordingAction(actionData);
+  }
+
+  private handleContextMenuEvent(event: Event): void {
+    if (!this.isRecording) return;
+
+    const target = event.target as Element;
+    const mouseEvent = event as MouseEvent;
+
+    const actionData = {
+      type: 'context_menu',
+      timestamp: Date.now(),
+      sessionId: this.sessionId,
+      target: this.captureElement(target),
+      value: 'right_click',
+      coordinates: {
+        x: mouseEvent.clientX,
+        y: mouseEvent.clientY
+      },
+      pageContext: this.getPageContext()
+    };
+
+    this.sendRecordingAction(actionData);
+  }
+
+  // Setup methods for enhanced monitoring
+  private setupClipboardMonitoring(): void {
+    // Additional clipboard monitoring if needed
+    // Modern browsers have good clipboard event support
+    console.log('🔵[Webview Preload] Clipboard monitoring enabled');
+  }
+
+  private setupFormInteractionMonitoring(): void {
+    // Monitor for form field focus/blur patterns
+    const formFocusHandler = (event: Event) => {
+      const target = event.target as Element;
+      const tagName = target.tagName?.toLowerCase();
+      
+      if (['input', 'textarea', 'select'].includes(tagName)) {
+        // Track form field interactions for better context
+        const formElement = target.closest('form');
+        if (formElement) {
+          // Add form context to element if not already present
+          (target as any).__formContext = {
+            formId: formElement.id,
+            formAction: formElement.action,
+            formMethod: formElement.method
+          };
+        }
+      }
+    };
+
+    document.addEventListener('focus', formFocusHandler, true);
+    this.eventHandlers.set('focus_monitor', formFocusHandler);
+    
+    console.log('🔵[Webview Preload] Form interaction monitoring enabled');
+  }
+
+  // Helper methods
+  private isSensitiveField(fieldName: string): boolean {
+    const sensitivePatterns = [
+      'password', 'passwd', 'pwd',
+      'credit', 'card', 'cvv', 'cvc',
+      'ssn', 'social',
+      'secret', 'token', 'key'
+    ];
+    
+    const fieldLower = fieldName.toLowerCase();
+    return sensitivePatterns.some(pattern => fieldLower.includes(pattern));
   }
 }
 

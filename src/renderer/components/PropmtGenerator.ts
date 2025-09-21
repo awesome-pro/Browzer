@@ -64,6 +64,21 @@ ${this.extractProvenSelectors(session)}
 • **wait** - Simple wait (value: milliseconds)
 • **keypress** - Press key (target: selector, value: key like "Enter")
 
+**ENHANCED FORM ACTIONS:**
+• **select_option** - Select dropdown option (target: select selector, value: option text/value)
+• **toggle_checkbox** - Toggle checkbox (target: checkbox selector, value: true/false)
+• **select_radio** - Select radio button (target: radio selector, value: option value)
+• **select_file** - Select file(s) (target: file input selector, value: file path(s))
+• **adjust_slider** - Adjust range slider (target: range selector, value: numeric value)
+
+**CLIPBOARD ACTIONS:**
+• **copy** - Copy selected text (target: element selector)
+• **cut** - Cut selected text (target: element selector)  
+• **paste** - Paste from clipboard (target: input selector)
+
+**CONTEXT ACTIONS:**
+• **context_menu** - Right-click context menu (target: element selector)
+
 ## CRITICAL OUTPUT REQUIREMENTS
 
 ⚠️ **RESPOND WITH PURE JSON ONLY** - No explanations, no markdown, no code blocks
@@ -96,6 +111,13 @@ ${this.extractProvenSelectors(session)}
   }
 
   static generateClaudeUserPrompt(newTaskInstruction: string, session: SmartRecordingSession): string {
+    // Handle special case where user just wants to replicate the exact task
+    const isReplicationRequest = this.isTaskReplicationRequest(newTaskInstruction);
+    
+    if (isReplicationRequest) {
+      return this.generateReplicationPrompt(session);
+    }
+    
     const workflowMapping = this.generateWorkflowMapping(session, newTaskInstruction);
     
     return `## 🎯 NEW TASK EXECUTION REQUEST
@@ -117,6 +139,76 @@ ${this.generateExpectedPattern(session)}
 
 ---
 **GENERATE THE JSON ARRAY NOW** (Pure JSON only, no explanations)`;
+  }
+
+  private static isTaskReplicationRequest(instruction: string): boolean {
+    const replicationKeywords = [
+      'execute the task',
+      'run the task',
+      'repeat the task',
+      'do the same',
+      'replicate',
+      'same task',
+      'exact same',
+      'reproduce'
+    ];
+    
+    const lowerInstruction = instruction.toLowerCase().trim();
+    return replicationKeywords.some(keyword => lowerInstruction.includes(keyword));
+  }
+
+  private static generateReplicationPrompt(session: SmartRecordingSession): string {
+    return `## 🔄 EXACT TASK REPLICATION REQUEST
+
+**INSTRUCTION:** Replicate the EXACT same task that was recorded.
+
+## ⚡ REPLICATION REQUIREMENTS
+
+**CRITICAL:** Generate a JSON array that EXACTLY replicates the recorded workflow with the SAME values, URLs, and targets.
+
+**DO NOT CHANGE:**
+- URLs or domain names
+- Form input values  
+- Button/link text
+- Navigation paths
+- Wait times
+
+**EXACT WORKFLOW TO REPLICATE:**
+${session.actions.map((action, index) => {
+  return `${index + 1}. [${action.type.toUpperCase()}] ${action.description}
+   └─ TARGET: ${action.target.description}${action.value ? `
+   └─ VALUE: "${action.value}"` : ''}`;
+}).join('\n\n')}
+
+**EXACT SELECTORS TO USE:**
+${this.extractExactSelectors(session)}
+
+---
+**GENERATE THE EXACT REPLICATION JSON ARRAY NOW** (Pure JSON only, no explanations)`;
+  }
+
+  private static extractExactSelectors(session: SmartRecordingSession): string {
+    const selectors = new Set<string>();
+    
+    session.actions.forEach(action => {
+      if (action.target && action.target.selector) {
+        selectors.add(action.target.selector);
+      }
+      
+      // Extract selectors from descriptions
+      const selectorMatches = action.description.match(/\[([^\]]+)\]/g);
+      if (selectorMatches) {
+        selectorMatches.forEach(match => {
+          const selector = match.replace(/[\[\]]/g, '');
+          if (selector.includes('#') || selector.includes('.') || selector.includes('[')) {
+            selectors.add(selector);
+          }
+        });
+      }
+    });
+    
+    const selectorList = Array.from(selectors).filter(s => s && s.length > 0);
+    return selectorList.slice(0, 10).map(selector => `• \`${selector}\``).join('\n');
   }
 
   // Helper method to extract critical elements from the session
@@ -304,8 +396,20 @@ ${this.generateExpectedPattern(session)}
     const actionTypes = session.actions.map(action => action.type);
     const uniqueTypes = [...new Set(actionTypes)];
     
+    // Enhanced form interactions
+    const formActions = [ActionType.SELECT_OPTION, ActionType.TOGGLE_CHECKBOX, ActionType.SELECT_RADIO, ActionType.SELECT_FILE];
+    const hasFormActions = formActions.some(action => uniqueTypes.includes(action));
+    
+    // Clipboard interactions
+    const clipboardActions = [ActionType.COPY, ActionType.CUT, ActionType.PASTE];
+    const hasClipboardActions = clipboardActions.some(action => uniqueTypes.includes(action));
+    
     if (uniqueTypes.includes(ActionType.TEXT_INPUT) && uniqueTypes.includes(ActionType.NAVIGATION)) {
       return "Search & Navigate";
+    } else if (hasFormActions && uniqueTypes.includes(ActionType.FORM_SUBMIT)) {
+      return "Advanced Form Interaction";
+    } else if (hasClipboardActions) {
+      return "Content Manipulation";
     } else if (uniqueTypes.includes(ActionType.CLICK) && uniqueTypes.includes(ActionType.TEXT_INPUT)) {
       return "Form Interaction";
     } else if (uniqueTypes.includes(ActionType.NAVIGATION)) {

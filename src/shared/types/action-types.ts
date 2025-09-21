@@ -1,6 +1,6 @@
 import { ElementContext, PageContext } from "./recording";
 
-// Unified Action Type System - Same actions for recording and execution
+  // Unified Action Type System - Same actions for recording and execution
 export enum UnifiedActionType {
     // Navigation Actions
     NAVIGATE = 'navigate',
@@ -16,6 +16,21 @@ export enum UnifiedActionType {
     SELECT = 'select',
     TOGGLE = 'toggle',
     SUBMIT = 'submit',
+    
+    // Enhanced Form Actions
+    SELECT_OPTION = 'select_option',        // Dropdown selection
+    TOGGLE_CHECKBOX = 'toggle_checkbox',    // Checkbox toggle
+    SELECT_RADIO = 'select_radio',          // Radio button selection
+    SELECT_FILE = 'select_file',            // File input selection
+    ADJUST_SLIDER = 'adjust_slider',        // Range input adjustment
+    
+    // Clipboard Actions
+    COPY = 'copy',
+    CUT = 'cut',
+    PASTE = 'paste',
+    
+    // Context Actions
+    CONTEXT_MENU = 'context_menu',          // Right-click context menu
     
     // Wait Actions
     WAIT = 'wait',
@@ -186,6 +201,22 @@ export enum UnifiedActionType {
         [UnifiedActionType.SELECT]: 'select',
         [UnifiedActionType.TOGGLE]: 'toggle',
         [UnifiedActionType.SUBMIT]: 'submit',
+        
+        // Enhanced Form Actions
+        [UnifiedActionType.SELECT_OPTION]: 'selectOption',
+        [UnifiedActionType.TOGGLE_CHECKBOX]: 'toggleCheckbox',
+        [UnifiedActionType.SELECT_RADIO]: 'selectRadio',
+        [UnifiedActionType.SELECT_FILE]: 'selectFile',
+        [UnifiedActionType.ADJUST_SLIDER]: 'adjustSlider',
+        
+        // Clipboard Actions
+        [UnifiedActionType.COPY]: 'copy',
+        [UnifiedActionType.CUT]: 'cut',
+        [UnifiedActionType.PASTE]: 'paste',
+        
+        // Context Actions
+        [UnifiedActionType.CONTEXT_MENU]: 'contextMenu',
+        
         [UnifiedActionType.WAIT]: 'wait',
         [UnifiedActionType.WAIT_FOR_ELEMENT]: 'waitForElement',
         [UnifiedActionType.WAIT_FOR_DYNAMIC_CONTENT]: 'waitForDynamicContent',
@@ -220,6 +251,31 @@ export enum UnifiedActionType {
           return `Toggle ${target}`;
         case UnifiedActionType.SUBMIT:
           return `Submit ${target}`;
+          
+        // Enhanced Form Actions
+        case UnifiedActionType.SELECT_OPTION:
+          return `Select "${typeof value === 'object' ? value.text || value.value : value}" from dropdown ${target}`;
+        case UnifiedActionType.TOGGLE_CHECKBOX:
+          return `${value ? 'Check' : 'Uncheck'} checkbox ${target}`;
+        case UnifiedActionType.SELECT_RADIO:
+          return `Select radio button "${typeof value === 'object' ? value.value : value}" in ${target}`;
+        case UnifiedActionType.SELECT_FILE:
+          return `Select ${typeof value === 'object' ? value.fileCount : 1} file(s) in ${target}`;
+        case UnifiedActionType.ADJUST_SLIDER:
+          return `Adjust slider ${target} to ${value}`;
+          
+        // Clipboard Actions
+        case UnifiedActionType.COPY:
+          return `Copy text: "${typeof value === 'string' ? value.substring(0, 50) : 'selected text'}"`;
+        case UnifiedActionType.CUT:
+          return `Cut text: "${typeof value === 'string' ? value.substring(0, 50) : 'selected text'}"`;
+        case UnifiedActionType.PASTE:
+          return `Paste text into ${target}`;
+          
+        // Context Actions
+        case UnifiedActionType.CONTEXT_MENU:
+          return `Right-click on ${target}`;
+          
         case UnifiedActionType.WAIT:
           return `Wait ${value}ms`;
         case UnifiedActionType.WAIT_FOR_ELEMENT:

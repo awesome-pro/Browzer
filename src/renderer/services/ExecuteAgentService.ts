@@ -462,7 +462,16 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
       [UnifiedActionType.EXTRACT]: '📊',
       [UnifiedActionType.VERIFY_ELEMENT]: '✅',
       [UnifiedActionType.VERIFY_TEXT]: '🔍',
-      [UnifiedActionType.VERIFY_URL]: '🔗'
+      [UnifiedActionType.VERIFY_URL]: '🔗',
+      [UnifiedActionType.SELECT_OPTION]: '📋',
+      [UnifiedActionType.TOGGLE_CHECKBOX]: '☑️',
+      [UnifiedActionType.SELECT_RADIO]: '📋',
+      [UnifiedActionType.SELECT_FILE]: '📋',
+      [UnifiedActionType.ADJUST_SLIDER]: '📋',
+      [UnifiedActionType.COPY]: '📋',
+      [UnifiedActionType.CUT]: '📋',
+      [UnifiedActionType.PASTE]: '📋',
+      [UnifiedActionType.CONTEXT_MENU]: '📋'
     };
 
     return iconMap[action] || '⚡';

@@ -214,6 +214,11 @@ export class ExecuteStepRunner {
 
     console.log(`[ExecuteStepRunner] Typing "${text}" into ${selector}`);
 
+    // Check if this is a main app element (like #urlBar)
+    if (this.isMainAppSelector(selector)) {
+      return await this.typeInMainAppElement(selector, text);
+    }
+
     const script = `
       (async function() {
         try {
@@ -287,6 +292,12 @@ export class ExecuteStepRunner {
 
     console.log(`[ExecuteStepRunner] Attempting to click element: ${selector}`);
 
+    // Check if this is a main app element (like #urlBar)
+    if (this.isMainAppSelector(selector)) {
+      return await this.clickMainAppElement(selector);
+    }
+
+    // Otherwise, execute in webview
     const script = `
       (async function() {
         try {
@@ -982,5 +993,152 @@ export class ExecuteStepRunner {
 
   private async wait(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private isMainAppSelector(selector: string): boolean {
+    // Check if selector targets main app elements
+    const mainAppSelectors = [
+      '#urlBar',
+      '#backBtn',
+      '#forwardBtn', 
+      '#reloadBtn',
+      '#goBtn',
+      '#newTabBtn',
+      '#startRecordingBtn',
+      '#stopRecordingBtn',
+      '.tab-bar',
+      '.toolbar',
+      '.nav-controls'
+    ];
+
+    return mainAppSelectors.some(mainSelector => 
+      selector === mainSelector || selector.includes(mainSelector)
+    );
+  }
+
+  private async clickMainAppElement(selector: string): Promise<any> {
+    console.log(`[ExecuteStepRunner] Clicking main app element: ${selector}`);
+    
+    try {
+      // Access main app DOM through renderer process
+      const element = document.querySelector(selector);
+      
+      if (!element) {
+        throw new Error(`Main app element not found: ${selector}`);
+      }
+
+      // Simulate click on main app element
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      await this.wait(500);
+
+      // Try multiple click strategies
+      const clickStrategies = [
+        () => (element as HTMLElement).click(),
+        () => {
+          const event = new MouseEvent('click', {
+            bubbles: true,
+            cancelable: true,
+            view: window
+          });
+          element.dispatchEvent(event);
+        },
+        () => {
+          if ('focus' in element) (element as HTMLElement).focus();
+          const enterEvent = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            keyCode: 13,
+            bubbles: true
+          });
+          element.dispatchEvent(enterEvent);
+        }
+      ];
+
+      let success = false;
+      for (const strategy of clickStrategies) {
+        try {
+          strategy();
+          success = true;
+          break;
+        } catch (e) {
+          console.warn('[ExecuteStepRunner] Click strategy failed:', e);
+        }
+      }
+
+      if (!success) {
+        throw new Error('All click strategies failed for main app element');
+      }
+
+      return {
+        success: true,
+        message: 'Main app element clicked successfully',
+        elementInfo: {
+          tagName: element.tagName,
+          id: element.id,
+          className: element.className,
+          selector: selector
+        }
+      };
+
+    } catch (error) {
+      console.error('[ExecuteStepRunner] Main app click failed:', error);
+      throw new Error(`Main app click failed: ${(error as Error).message}`);
+    }
+  }
+
+  private async typeInMainAppElement(selector: string, text: string): Promise<any> {
+    console.log(`[ExecuteStepRunner] Typing in main app element: ${selector} = "${text}"`);
+    
+    try {
+      // Access main app DOM through renderer process
+      const element = document.querySelector(selector) as HTMLInputElement;
+      
+      if (!element) {
+        throw new Error(`Main app element not found: ${selector}`);
+      }
+
+      // Focus the element first
+      element.focus();
+      await this.wait(200);
+
+      // Clear existing content
+      element.value = '';
+      
+      // Set the new value
+      element.value = text;
+
+      // Trigger events to notify the app
+      const events = ['input', 'change', 'keyup'];
+      events.forEach(eventType => {
+        const event = new Event(eventType, { bubbles: true, cancelable: true });
+        element.dispatchEvent(event);
+      });
+
+      // Special handling for URL bar - trigger navigation
+      if (selector === '#urlBar') {
+        // Simulate pressing Enter to navigate
+        const enterEvent = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          keyCode: 13,
+          bubbles: true,
+          cancelable: true
+        });
+        element.dispatchEvent(enterEvent);
+      }
+
+      return {
+        success: true,
+        message: 'Text input completed successfully in main app',
+        elementInfo: {
+          tagName: element.tagName,
+          type: element.type,
+          value: element.value,
+          selector: selector
+        }
+      };
+
+    } catch (error) {
+      console.error('[ExecuteStepRunner] Main app type failed:', error);
+      throw new Error(`Main app type failed: ${(error as Error).message}`);
+    }
   }
 }

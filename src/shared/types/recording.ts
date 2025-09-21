@@ -59,6 +59,21 @@ export enum ActionType {
   PAGE_LOAD = 'page_load',        // Page finished loading
   SEARCH_RESULTS = 'search_results', // Search results appeared
   DYNAMIC_CONTENT = 'dynamic_content', // Dynamic content loaded
+  
+  // Enhanced Form Interactions
+  SELECT_OPTION = 'select_option',        // Dropdown selection
+  TOGGLE_CHECKBOX = 'toggle_checkbox',    // Checkbox toggle
+  SELECT_RADIO = 'select_radio',          // Radio button selection
+  SELECT_FILE = 'select_file',            // File input selection
+  ADJUST_SLIDER = 'adjust_slider',        // Range input adjustment
+  
+  // Clipboard Actions
+  COPY = 'copy',                          // Copy text
+  CUT = 'cut',                            // Cut text
+  PASTE = 'paste',                        // Paste text
+  
+  // Context Actions
+  CONTEXT_MENU = 'context_menu',          // Right-click context menu
 }
 
 export interface ElementContext {

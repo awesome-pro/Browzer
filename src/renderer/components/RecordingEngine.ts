@@ -980,6 +980,36 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       case ActionType.TOGGLE:
         return 'toggle_checkbox';
 
+      // Enhanced Form Actions
+      case ActionType.SELECT_OPTION:
+        return 'choose_dropdown_option';
+      
+      case ActionType.TOGGLE_CHECKBOX:
+        return 'toggle_checkbox';
+        
+      case ActionType.SELECT_RADIO:
+        return 'select_radio_option';
+        
+      case ActionType.SELECT_FILE:
+        return 'upload_file';
+        
+      case ActionType.ADJUST_SLIDER:
+        return 'adjust_value';
+        
+      // Clipboard Actions
+      case ActionType.COPY:
+        return 'copy_text';
+        
+      case ActionType.CUT:
+        return 'cut_text';
+        
+      case ActionType.PASTE:
+        return 'paste_text';
+        
+      // Context Actions
+      case ActionType.CONTEXT_MENU:
+        return 'open_context_menu';
+
       default:
         return 'interact';
     }
@@ -1123,7 +1153,14 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     this.lastSignificantAction = action.timestamp;
 
     // Capture screenshot for significant actions
-    if ([ActionType.CLICK, ActionType.FORM_SUBMIT, ActionType.NAVIGATION, ActionType.TEXT_INPUT, ActionType.PAGE_LOAD, ActionType.SEARCH_RESULTS].includes(action.type)) {
+    const significantActions = [
+      ActionType.CLICK, ActionType.FORM_SUBMIT, ActionType.NAVIGATION, ActionType.TEXT_INPUT,
+      ActionType.PAGE_LOAD, ActionType.SEARCH_RESULTS, ActionType.SELECT_OPTION, 
+      ActionType.TOGGLE_CHECKBOX, ActionType.SELECT_RADIO, ActionType.SELECT_FILE,
+      ActionType.COPY, ActionType.CUT, ActionType.PASTE
+    ];
+    
+    if (significantActions.includes(action.type)) {
       this.captureScreenshot('action');
     }
 
@@ -1441,10 +1478,27 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       case 'blur': return ActionType.BLUR;
       case 'scroll': return ActionType.SCROLL;
       case 'navigation': return ActionType.NAVIGATION;
-      // New enhanced action types
+      
+      // Enhanced loading and dynamic content actions
       case 'page_load_complete': return ActionType.PAGE_LOAD;
       case 'search_results_loaded': return ActionType.SEARCH_RESULTS;
       case 'dynamic_content_loaded': return ActionType.DYNAMIC_CONTENT;
+      
+      // Enhanced Form Actions
+      case 'select_option': return ActionType.SELECT_OPTION;
+      case 'toggle_checkbox': return ActionType.TOGGLE_CHECKBOX;
+      case 'select_radio': return ActionType.SELECT_RADIO;
+      case 'select_file': return ActionType.SELECT_FILE;
+      case 'adjust_slider': return ActionType.ADJUST_SLIDER;
+      case 'form_submit': return ActionType.FORM_SUBMIT;
+      
+      // Clipboard Actions
+      case 'copy': return ActionType.COPY;
+      case 'cut': return ActionType.CUT;
+      case 'paste': return ActionType.PASTE;
+      
+      // Context Actions
+      case 'context_menu': return ActionType.CONTEXT_MENU;
       
       default: return ActionType.CLICK;
     }
