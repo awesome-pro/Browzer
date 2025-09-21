@@ -14,9 +14,9 @@ export class ExecuteAgentService {
   private selectedRecordingSessionId: string | null = null;
   private sessionSelector: SessionSelector | null = null;
   
-  private readonly MAX_EXECUTION_TIME = 300000; 
-  private readonly STEP_TIMEOUT = 60000;
-  private readonly MAX_RETRIES_PER_STEP = 3;
+  private readonly MAX_EXECUTION_TIME = 120000; // Reduced to 2 minutes
+  private readonly STEP_TIMEOUT = 30000; // Reduced to 30 seconds
+  private readonly MAX_RETRIES_PER_STEP = 2; // Reduced retries
 
   constructor(tabManager: TabManager) {
     this.tabManager = tabManager;
@@ -325,6 +325,32 @@ export class ExecuteAgentService {
       'check': UnifiedActionType.TOGGLE,
       'uncheck': UnifiedActionType.TOGGLE,
       'submit': UnifiedActionType.SUBMIT,
+      
+      // Enhanced Form Actions
+      'select_option': UnifiedActionType.SELECT_OPTION,
+      'select_dropdown': UnifiedActionType.SELECT_OPTION,
+      'dropdown': UnifiedActionType.SELECT_OPTION,
+      'toggle_checkbox': UnifiedActionType.TOGGLE_CHECKBOX,
+      'checkbox': UnifiedActionType.TOGGLE_CHECKBOX,
+      'select_radio': UnifiedActionType.SELECT_RADIO,
+      'radio': UnifiedActionType.SELECT_RADIO,
+      'select_file': UnifiedActionType.SELECT_FILE,
+      'upload': UnifiedActionType.SELECT_FILE,
+      'file': UnifiedActionType.SELECT_FILE,
+      'adjust_slider': UnifiedActionType.ADJUST_SLIDER,
+      'slider': UnifiedActionType.ADJUST_SLIDER,
+      'range': UnifiedActionType.ADJUST_SLIDER,
+      
+      // Clipboard Actions
+      'copy': UnifiedActionType.COPY,
+      'cut': UnifiedActionType.CUT,
+      'paste': UnifiedActionType.PASTE,
+      
+      // Context Actions
+      'context_menu': UnifiedActionType.CONTEXT_MENU,
+      'right_click': UnifiedActionType.CONTEXT_MENU,
+      'contextmenu': UnifiedActionType.CONTEXT_MENU,
+      
       'wait': UnifiedActionType.WAIT,
       'wait_for_element': UnifiedActionType.WAIT_FOR_ELEMENT,
       'wait_element': UnifiedActionType.WAIT_FOR_ELEMENT,
@@ -463,15 +489,21 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
       [UnifiedActionType.VERIFY_ELEMENT]: '✅',
       [UnifiedActionType.VERIFY_TEXT]: '🔍',
       [UnifiedActionType.VERIFY_URL]: '🔗',
-      [UnifiedActionType.SELECT_OPTION]: '📋',
+      
+      // Enhanced Form Actions with specific icons
+      [UnifiedActionType.SELECT_OPTION]: '📝',
       [UnifiedActionType.TOGGLE_CHECKBOX]: '☑️',
-      [UnifiedActionType.SELECT_RADIO]: '📋',
-      [UnifiedActionType.SELECT_FILE]: '📋',
-      [UnifiedActionType.ADJUST_SLIDER]: '📋',
+      [UnifiedActionType.SELECT_RADIO]: '🔘',
+      [UnifiedActionType.SELECT_FILE]: '📁',
+      [UnifiedActionType.ADJUST_SLIDER]: '🎚️',
+      
+      // Clipboard Actions
       [UnifiedActionType.COPY]: '📋',
-      [UnifiedActionType.CUT]: '📋',
-      [UnifiedActionType.PASTE]: '📋',
-      [UnifiedActionType.CONTEXT_MENU]: '📋'
+      [UnifiedActionType.CUT]: '✂️',
+      [UnifiedActionType.PASTE]: '📌',
+      
+      // Context Actions
+      [UnifiedActionType.CONTEXT_MENU]: '🖱️'
     };
 
     return iconMap[action] || '⚡';

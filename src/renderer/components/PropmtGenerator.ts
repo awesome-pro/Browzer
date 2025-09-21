@@ -72,9 +72,20 @@ ${this.extractProvenSelectors(session)}
 • **adjust_slider** - Adjust range slider (target: range selector, value: numeric value)
 
 **CLIPBOARD ACTIONS:**
-• **copy** - Copy selected text (target: element selector)
-• **cut** - Cut selected text (target: element selector)  
-• **paste** - Paste from clipboard (target: input selector)
+• **copy** - Copy text from element (target: SIMPLE CSS selector like "h1", ".result-title", "#answer-text")
+• **cut** - Cut text from input field (target: input/textarea selector)  
+• **paste** - Paste from clipboard (target: input/textarea selector)
+
+**⚠️ CRITICAL COPY ACTION RULES:**
+• NEVER use ":contains()" selectors - they don't work in querySelector
+• Use SIMPLE selectors: "h1", ".answer-box", "#featured-snippet", "p", "span.result"
+• Target visible text elements like headings, paragraphs, or result snippets
+• Examples of GOOD copy selectors:
+  - "h1" (first heading)
+  - ".answer-box" (answer container)
+  - "#featured-snippet" (Google featured snippet)
+  - "p" (first paragraph)
+  - ".result .title" (search result title)
 
 **CONTEXT ACTIONS:**
 • **context_menu** - Right-click context menu (target: element selector)
@@ -87,13 +98,55 @@ ${this.extractProvenSelectors(session)}
 \`\`\`json
 [
   {
-    "action": "navigate",
-    "target": "https://specific-url.com",
+    "action": "type",
+    "target": "#APjFqb",
+    "value": "search query",
+    "reasoning": "Enter search query in Google search box"
+  },
+  {
+    "action": "keypress",
+    "target": "#APjFqb", 
+    "value": "Enter",
+    "reasoning": "Submit search form"
+  },
+  {
+    "action": "copy",
+    "target": ".hgKElc",
     "value": "",
-    "reasoning": "Navigate to target site based on recorded pattern"
+    "reasoning": "Copy text from Google featured snippet"
+  },
+  {
+    "action": "navigate",
+    "target": "https://www.flipkart.com/",
+    "value": "",
+    "reasoning": "Navigate directly to Flipkart from search results"
   }
 ]
 \`\`\`
+
+**COPY ACTION EXAMPLES (Use these patterns):**
+• Copy from Google search result: \`"target": ".yuRUbf h3"\` (result title)
+• Copy from featured snippet: \`"target": ".hgKElc"\` (answer text)
+• Copy from Wikipedia: \`"target": "p"\` (first paragraph)
+• Copy from heading: \`"target": "h1"\` (main title)
+• Copy from answer box: \`"target": ".Z0LcW"\` (Google answer)
+
+**🔗 NAVIGATION ACTION EXAMPLES (For external links):**
+• Navigate to search result: \`"action": "navigate", "target": "https://flipkart.com"\`
+• Navigate to Wikipedia: \`"action": "navigate", "target": "https://en.wikipedia.org/wiki/Topic"\`
+• Navigate to any external site: \`"action": "navigate", "target": "https://example.com"\`
+
+**⚠️ CRITICAL LINK CLICKING RULES:**
+• For external links in search results, use "navigate" action with the target URL
+• NEVER use complex selectors like \`"target": "a[href*='domain.com']"\`
+• Extract the actual URL from the recorded workflow and use direct navigation
+• Example: Instead of clicking \`"a[href*='flipkart.com']"\`, use \`"navigate"\` to \`"https://www.flipkart.com/"\`
+
+**NEVER DO THESE (Will cause errors):**
+• ❌ \`"target": "span:contains('text')"\` - Contains selector doesn't work
+• ❌ \`"target": "//div[text()='text']"\` - XPath not supported
+• ❌ \`"target": "*:contains('text')"\` - Any contains usage
+• ❌ \`"target": "a[href*='domain.com']"\` - Complex link selectors are unreliable
 
 ## SUCCESS CRITERIA
 ✅ **Your response will be successful if:**

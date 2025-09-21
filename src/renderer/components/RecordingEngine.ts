@@ -172,7 +172,6 @@ private generateEnhancedElementDescription(element: any): string {
   const text = element.text || '';
   const purpose = element.purpose || '';
   const context = element.context || '';
-  const href = element.href;
   const targetUrl = element.targetUrl;
   const uniqueIdentifiers = element.uniqueIdentifiers || [];
   const interactionContext = element.interactionContext || '';
@@ -259,7 +258,7 @@ private generateEnhancedElementDescription(element: any): string {
   
   // Default description with context and targeting info
   let description = elementType;
-  if (text) description += ` ("${text.substring(0, 30)}")`;
+  if (text) description += ` ("${text.substring(0, 60)}")`;
   
   // Add the most reliable selector for AI targeting
   const bestSelector = this.getBestSelector(uniqueIdentifiers, text, elementType);
@@ -298,6 +297,45 @@ private getBestSelector(uniqueIdentifiers: string[], text: string, elementType: 
   return uniqueIdentifiers[0] || '';
 }
 
+private cleanGoogleUrl(url: string): string {
+  if (!url || !url.includes('google.com')) {
+    return url;
+  }
+  
+  try {
+    const urlObj = new URL(url);
+    
+    // Only keep essential Google search parameters
+    const essentialParams = ['q', 'tbm', 'safe', 'lr', 'hl'];
+    const cleanParams = new URLSearchParams();
+    
+    for (const param of essentialParams) {
+      const value = urlObj.searchParams.get(param);
+      if (value) {
+        cleanParams.set(param, value);
+      }
+    }
+    
+    // Reconstruct URL with only essential parameters
+    const cleanUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}${cleanParams.toString() ? '?' + cleanParams.toString() : ''}`;
+    
+    console.log(`🔧[RecordingEngine] Cleaned Google URL: ${url.substring(0, 100)}... → ${cleanUrl}`);
+    return cleanUrl;
+  } catch (e) {
+    console.warn('[RecordingEngine] Failed to clean Google URL:', e);
+    return url;
+  }
+}
+
+private cleanGoogleUrlInDescription(description: string): string {
+  // Use regex to find and clean Google URLs in descriptions
+  const googleUrlRegex = /(https:\/\/www\.google\.com\/search\?[^\s)]+)/g;
+  
+  return description.replace(googleUrlRegex, (match) => {
+    return this.cleanGoogleUrl(match);
+  });
+}
+
 private convertWebviewPageContext(webviewContext: any): PageContext {
   return {
     url: webviewContext.url || 'unknown',
@@ -316,8 +354,11 @@ private generateWebviewActionDescription(actionData: any): string {
   
   // Handle special action types first
   if (type === 'page_load_complete') {
-    // Value is already a string from webview
-    return typeof value === 'string' ? value : `Page loaded - "${element.text}"`;
+    // Value is already a string from webview, but clean up Google URLs
+    if (typeof value === 'string') {
+      return this.cleanGoogleUrlInDescription(value);
+    }
+    return `Page loaded - "${element.text}"`;
   }
   
   if (type === 'search_results_loaded') {
@@ -334,7 +375,6 @@ private generateWebviewActionDescription(actionData: any): string {
   const elementType = element.elementType || element.tagName;
   const purpose = element.purpose || 'interactive_element';
   const text = element.text || '';
-  const href = element.href;
   const targetUrl = element.targetUrl;
   
   switch (type) {
@@ -342,11 +382,13 @@ private generateWebviewActionDescription(actionData: any): string {
       if (elementType === 'link') {
         if (targetUrl) {
           try {
-            const url = new URL(targetUrl);
+            const cleanUrl = this.cleanGoogleUrl(targetUrl);
+            const url = new URL(cleanUrl);
             const domain = url.hostname.replace('www.', '');
-            return `Click link to ${domain}${text ? ` ("${text.substring(0, 30)}")` : ''} → ${targetUrl}`;
+            return `Click link to ${domain}${text ? ` ("${text.substring(0, 30)}")` : ''} → ${cleanUrl}`;
           } catch (e) {
-            return `Click link${text ? ` ("${text.substring(0, 30)}")` : ''} → ${targetUrl}`;
+            const cleanUrl = this.cleanGoogleUrl(targetUrl);
+            return `Click link${text ? ` ("${text.substring(0, 30)}")` : ''} → ${cleanUrl}`;
           }
         } else if (purpose === 'in_page_navigation') {
           return `Click in-page link${text ? ` ("${text.substring(0, 30)}")` : ''}`;
@@ -398,22 +440,37 @@ private generateWebviewActionDescription(actionData: any): string {
       return `Press ${value} key`;
       
     case 'navigation':
-      if (value && value.navigationType) {
+      if (value && typeof value === 'object') {
         const navType = value.navigationType;
-        const toUrl = value.toUrl;
-        const title = value.title;
+        const url = value.url || value.toUrl;
+        const linkText = value.linkText;
         
-        if (navType === 'in_page_navigation') {
-          return `Navigate within page${title ? ` to "${title}"` : ''}`;
-        } else if (navType === 'external_navigation') {
+        if (navType === 'google_search_result') {
           try {
-            const url = new URL(toUrl);
-            return `Navigate to ${url.hostname}${title ? ` ("${title.substring(0, 50)}")` : ''}`;
+            const urlObj = new URL(url);
+            const domain = urlObj.hostname.replace('www.', '');
+            return `Navigate to ${domain}${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${this.cleanGoogleUrl(url)}`;
           } catch (e) {
-            return `Navigate to external page${title ? ` ("${title.substring(0, 50)}")` : ''}`;
+            return `Navigate to search result${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${url}`;
           }
-        } else {
-          return `Navigate to page${title ? ` ("${title.substring(0, 50)}")` : ''}`;
+        } else if (navType === 'external_link' || navType === 'external_navigation') {
+          try {
+            const urlObj = new URL(url);
+            const domain = urlObj.hostname.replace('www.', '');
+            return `Navigate to ${domain}${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${url}`;
+          } catch (e) {
+            return `Navigate to external page${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${url}`;
+          }
+        } else if (navType === 'in_page_navigation') {
+          return `Navigate within page${linkText ? ` to "${linkText}"` : ''}`;
+        } else if (url) {
+          try {
+            const urlObj = new URL(url);
+            const domain = urlObj.hostname.replace('www.', '');
+            return `Navigate to ${domain}${linkText ? ` ("${linkText.substring(0, 40)}")` : ''}`;
+          } catch (e) {
+            return `Navigate to ${url}${linkText ? ` ("${linkText.substring(0, 40)}")` : ''}`;
+          }
         }
       }
       return `Navigate to page${text ? ` ("${text.substring(0, 50)}")` : ''}`;
@@ -429,22 +486,6 @@ private generateWebviewActionDescription(actionData: any): string {
   }
 }
 
-private generateElementDescriptionFromWebview(element: any): string {
-  const tagName = element.tagName || 'unknown';
-  const text = element.text || '';
-  const id = element.id;
-  
-  if (id) return `${tagName}#${id}${text ? ` (${text})` : ''}`;
-  if (text && text.length > 3) return `${tagName} "${text}"`;
-  
-  const className = element.className;
-  if (className && typeof className === 'string') {
-    const mainClass = className.split(' ')[0];
-    return `${tagName}.${mainClass}`;
-  }
-  
-  return tagName;
-}
 
 private handleWebviewNavigation(pageContext: PageContext): void {
   if (!this.activeSession) return;
@@ -481,7 +522,6 @@ public initializeWebviewRecording(): void {
 }
 
 public setupWebviewRecording(webview: any): void {
-  const webviewId = webview.id;
   
   if (this.isRecording && this.activeSession) {
     try {

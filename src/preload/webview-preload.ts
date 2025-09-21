@@ -169,12 +169,19 @@ class WebviewRecordingEngine {
     if (!this.isRecording) return;
 
     const target = event.target as Element;
-    if (!this.isSignificantEvent(event, target)) return;
-
-    // Handle clipboard events (copy, cut, paste)
+    
+    // Handle clipboard events (copy, cut, paste) - these should always be recorded
     if (['copy', 'cut', 'paste'].includes(eventType)) {
       this.handleClipboardEvent(event, eventType);
       return;
+    }
+
+    // Handle clicks on external links (especially Google search results) as navigation
+    if (eventType === 'click') {
+      const linkNavigation = this.handleLinkClick(event, target);
+      if (linkNavigation) {
+        return; // Link click was converted to navigation, skip regular click handling
+      }
     }
 
     // Handle form submission events
@@ -200,6 +207,8 @@ class WebviewRecordingEngine {
       this.handleChangeEvent(event, target);
       return;
     }
+
+    if (!this.isSignificantEvent(event, target)) return;
 
     // Handle other semantic events
     if (this.shouldRecordEvent(eventType, target, event)) {
@@ -1188,7 +1197,7 @@ class WebviewRecordingEngine {
   }
 
   private recordSearchResultsLoaded(searchQuery: string): void {
-    if (!this.isRecording || !searchQuery || searchQuery.length === 0) return;
+    if (!this.isRecording || !searchQuery || searchQuery.length === 0 || searchQuery === 'https://www.google.com') return;
 
     // More accurate Google search results detection
     let resultsCount = 0;
@@ -1496,10 +1505,31 @@ class WebviewRecordingEngine {
     
     switch (eventType) {
       case 'copy':
-        // Try to get the copied text
+        // Multiple strategies to get the copied text
+        let copiedText = '';
+        
+        // Strategy 1: Get selected text
         const selection = window.getSelection();
-        clipboardValue = selection?.toString() || '';
+        if (selection && selection.toString()) {
+          copiedText = selection.toString();
+        }
+        
+        // Strategy 2: If target is an input/textarea, get selected portion
+        if (!copiedText && (target as HTMLInputElement).value !== undefined) {
+          const inputElement = target as HTMLInputElement;
+          const start = inputElement.selectionStart || 0;
+          const end = inputElement.selectionEnd || inputElement.value.length;
+          copiedText = inputElement.value.substring(start, end);
+        }
+        
+        // Strategy 3: Try to get from clipboard data if available
+        if (!copiedText && clipboardEvent.clipboardData) {
+          copiedText = clipboardEvent.clipboardData.getData('text/plain') || '';
+        }
+        
+        clipboardValue = copiedText;
         description = `Copy text: "${clipboardValue.substring(0, 50)}${clipboardValue.length > 50 ? '...' : ''}"`;
+        console.log(`🔵[Webview Preload] Copy event detected, text: "${copiedText.substring(0, 100)}"`);
         break;
       
       case 'cut':
@@ -1708,6 +1738,97 @@ class WebviewRecordingEngine {
     this.eventHandlers.set('focus_monitor', formFocusHandler);
     
     console.log('🔵[Webview Preload] Form interaction monitoring enabled');
+  }
+
+  // Enhanced link click handler for external navigation
+  private handleLinkClick(event: Event, target: Element): boolean {
+    // Find the actual link element (might be nested)
+    const linkElement = target.closest('a') || (target.tagName?.toLowerCase() === 'a' ? target : null) as HTMLAnchorElement;
+    
+    if (!linkElement || !linkElement.href) {
+      return false; // Not a link click
+    }
+
+    const href = linkElement.href;
+    const currentDomain = window.location.hostname;
+    
+    try {
+      const linkUrl = new URL(href);
+      const linkDomain = linkUrl.hostname;
+      
+      // Check if this is an external link (different domain)
+      const isExternalLink = linkDomain !== currentDomain;
+      
+      // Special handling for Google search results
+      const isGoogleSearchResult = (
+        window.location.hostname.includes('google.com') && 
+        (
+          linkElement.closest('.g:not(.g-blk)') || // Standard Google results
+          linkElement.closest('.tF2Cxc') || // New Google result format
+          linkElement.closest('.rc') || // Classic format
+          linkElement.closest('[data-ved]') // Google tracking elements
+        )
+      );
+      
+      // Convert external links or Google search result links to navigation actions
+      if (isExternalLink || isGoogleSearchResult) {
+        console.log('🔵[Webview Preload] Converting link click to navigation:', href);
+        
+        // Prevent the default click behavior
+        event.preventDefault();
+        
+        // Record as navigation action instead of click
+        const actionData = {
+          type: 'navigation',
+          timestamp: Date.now(),
+          sessionId: this.sessionId,
+          target: {
+            tagName: 'navigation',
+            id: '',
+            className: 'external-link',
+            text: linkElement.textContent?.trim() || '',
+            selector: '',
+            xpath: '',
+            attributes: {},
+            boundingRect: { x: 0, y: 0, width: 0, height: 0 },
+            isVisible: true,
+            elementType: 'navigation',
+            purpose: isGoogleSearchResult ? 'google_search_result' : 'external_navigation',
+            context: isGoogleSearchResult ? 'google_search_result_click' : 'external_link_click',
+            href: href,
+            target: linkElement.getAttribute('target'),
+            targetUrl: href,
+            uniqueIdentifiers: [],
+            semanticRole: 'navigation',
+            interactionContext: isGoogleSearchResult ? 'google-search-result' : 'external-link',
+            parentContext: null
+          },
+          value: {
+            url: href,
+            linkText: linkElement.textContent?.trim() || '',
+            navigationType: isGoogleSearchResult ? 'google_search_result' : 'external_link',
+            fromDomain: currentDomain,
+            toDomain: linkDomain
+          },
+          coordinates: this.getEventCoordinates(event),
+          pageContext: this.getPageContext()
+        };
+
+        this.sendRecordingAction(actionData);
+        
+        // Actually navigate to the URL after a short delay to ensure recording is sent
+        setTimeout(() => {
+          window.location.href = href;
+        }, 100);
+        
+        return true; // Indicates that we handled this as navigation
+      }
+      
+    } catch (e) {
+      console.warn('[WebviewRecording] Failed to parse link URL:', href, e);
+    }
+    
+    return false; // Not handled as navigation, proceed with regular click handling
   }
 
   // Helper methods
