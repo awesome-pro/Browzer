@@ -14,14 +14,19 @@ export class SmartRecordingEngine {
   private activeSession: SmartRecordingSession | null = null;
   private isRecording = false;
   
-  // Action aggregation
+  // Action aggregation and deduplication
   private pendingActions: Map<string, any> = new Map();
   private lastPageContext: PageContext | null = null;
   private currentTaskGoal: TaskGoal | null = null;
   
   private lastSignificantAction = 0;
-  private readonly ACTION_TIMEOUT = 1500; // 1.5s to aggregate actions
-  private readonly MIN_ACTION_GAP = 500; // Minimum gap between significant actions
+  private readonly ACTION_TIMEOUT = 800; // 1s to aggregate actions
+  private readonly MIN_ACTION_GAP = 100; // Reduced gap to allow more natural action recording
+  
+  // Deduplication tracking
+  private lastActionHash = '';
+  private recentActions: Array<{hash: string, timestamp: number}> = [];
+  private readonly DEDUP_WINDOW = 2000; // 2 second window for deduplication
   
   // observers
   private observers: Map<string, any> = new Map();
@@ -65,7 +70,6 @@ private handleWebviewAction(actionData: any): void {
     return;
   }
   
-  
   try {
     const action: SemanticAction = {
       id: this.generateId(),
@@ -83,7 +87,10 @@ private handleWebviewAction(actionData: any): void {
       )
     };
     
-    this.recordAction(action);
+    // Check for duplicates and filter out low-quality actions
+    if (this.shouldRecordAction(action)) {
+      this.recordAction(action);
+    }
   } catch (error) {
     console.error('Error processing webview action:', error);
   }
@@ -118,16 +125,157 @@ private handleWebviewNetwork(networkData: any): void {
 
 private convertWebviewElementToElementContext(webviewElement: any): ElementContext {
   return {
-    description: this.generateElementDescriptionFromWebview(webviewElement),
+    description: this.generateEnhancedElementDescription(webviewElement),
     selector: webviewElement.selector || '',
     xpath: webviewElement.xpath || '',
-    role: webviewElement.tagName || 'unknown',
+    role: webviewElement.elementType || webviewElement.tagName || 'unknown',
     boundingRect: webviewElement.boundingRect || { x: 0, y: 0, width: 0, height: 0 },
     isVisible: webviewElement.isVisible !== false,
     isInteractive: true,
-    context: 'in webview',
-    // attributes: webviewElement.attributes || {}
+    context: webviewElement.context || 'in webview',
+    // Enhanced properties for better automation
+    elementType: webviewElement.elementType,
+    purpose: webviewElement.purpose,
+    href: webviewElement.href,
+    text: webviewElement.text,
+    // New enhanced targeting properties
+    targetUrl: webviewElement.targetUrl,
+    uniqueIdentifiers: webviewElement.uniqueIdentifiers || [],
+    semanticRole: webviewElement.semanticRole,
+    interactionContext: webviewElement.interactionContext,
+    parentContext: webviewElement.parentContext
   };
+}
+
+private generateEnhancedElementDescription(element: any): string {
+  const elementType = element.elementType || element.tagName || 'element';
+  const text = element.text || '';
+  const purpose = element.purpose || '';
+  const context = element.context || '';
+  const href = element.href;
+  const targetUrl = element.targetUrl;
+  const uniqueIdentifiers = element.uniqueIdentifiers || [];
+  const interactionContext = element.interactionContext || '';
+  
+  // Create more descriptive element descriptions with targeting info
+  if (elementType === 'link') {
+    let description = 'Link';
+    
+    if (targetUrl) {
+      try {
+        const url = new URL(targetUrl);
+        const domain = url.hostname.replace('www.', '');
+        description = `Link to ${domain}`;
+      } catch (e) {
+        description = 'Link';
+      }
+    }
+    
+    if (text) {
+      description += ` ("${text.substring(0, 30)}")`;
+    }
+    
+    // Add the most reliable selector for AI targeting
+    const bestSelector = this.getBestSelector(uniqueIdentifiers, text, elementType);
+    if (bestSelector) {
+      description += ` [${bestSelector}]`;
+    }
+    
+    if (interactionContext && interactionContext !== 'page') {
+      description += ` in ${interactionContext}`;
+    }
+    
+    return description;
+  }
+  
+  if (elementType === 'button' || purpose.includes('button')) {
+    let description = 'Button';
+    if (purpose === 'search') description = 'Search button';
+    else if (purpose === 'form_submission') description = 'Submit button';
+    else if (purpose === 'toggle_setting') description = 'Toggle button';
+    else if (purpose === 'navigation_menu') description = 'Menu button';
+    else if (purpose === 'authentication') description = 'Authentication button';
+    
+    if (text) {
+      description += ` ("${text.substring(0, 30)}")`;
+    }
+    
+    // Add the most reliable selector for AI targeting
+    const bestSelector = this.getBestSelector(uniqueIdentifiers, text, elementType);
+    if (bestSelector) {
+      description += ` [${bestSelector}]`;
+    }
+    
+    if (interactionContext && interactionContext !== 'page') {
+      description += ` in ${interactionContext}`;
+    }
+    
+    return description;
+  }
+  
+  if (elementType.includes('input')) {
+    let description = 'Input field';
+    if (purpose === 'search_input') description = 'Search input';
+    else if (purpose === 'email_input') description = 'Email input';
+    else if (purpose === 'password_input') description = 'Password input';
+    else if (purpose === 'name_input') description = 'Name input';
+    
+    if (text) {
+      description += ` [${text.substring(0, 30)}]`;
+    }
+    
+    // Add the most reliable selector for AI targeting
+    const bestSelector = this.getBestSelector(uniqueIdentifiers, text, elementType);
+    if (bestSelector) {
+      description += ` {${bestSelector}}`;
+    }
+    
+    if (interactionContext && interactionContext !== 'page') {
+      description += ` in ${interactionContext}`;
+    }
+    
+    return description;
+  }
+  
+  // Default description with context and targeting info
+  let description = elementType;
+  if (text) description += ` ("${text.substring(0, 30)}")`;
+  
+  // Add the most reliable selector for AI targeting
+  const bestSelector = this.getBestSelector(uniqueIdentifiers, text, elementType);
+  if (bestSelector) {
+    description += ` [${bestSelector}]`;
+  }
+  
+  if (interactionContext && interactionContext !== 'page') {
+    description += ` in ${interactionContext}`;
+  } else if (context && context !== 'on_page') {
+    description += ` ${context}`;
+  }
+  
+  return description;
+}
+
+private getBestSelector(uniqueIdentifiers: string[], text: string, elementType: string): string {
+  if (!uniqueIdentifiers || uniqueIdentifiers.length === 0) return '';
+  
+  // Priority order for selectors (most reliable first)
+  const priorities = [
+    (selector: string) => selector.startsWith('#'), // ID selectors
+    (selector: string) => selector.includes('data-testid'), // Test ID selectors
+    (selector: string) => selector.includes('aria-label'), // Aria label selectors
+    (selector: string) => selector.includes('name='), // Name attribute selectors
+    (selector: string) => selector.includes(':contains('), // Text-based selectors
+    (selector: string) => selector.startsWith('.') // Class selectors
+  ];
+  
+  for (const priorityCheck of priorities) {
+    const selector = uniqueIdentifiers.find(priorityCheck);
+    if (selector) return selector;
+  }
+  
+  // Return the first available selector as fallback
+  return uniqueIdentifiers[0] || '';
 }
 
 private convertWebviewPageContext(webviewContext: any): PageContext {
@@ -144,26 +292,119 @@ private convertWebviewPageContext(webviewContext: any): PageContext {
 private generateWebviewActionDescription(actionData: any): string {
   const element = actionData.target;
   const type = actionData.type;
+  const value = actionData.value;
   
-  const elementDesc = element.text ? 
-    `${element.tagName}${element.id ? '#' + element.id : ''} "${element.text.substring(0, 30)}"` :
-    `${element.tagName}${element.id ? '#' + element.id : ''}`;
+  // Handle special action types first
+  if (type === 'page_load_complete') {
+    const loadTime = value?.loadTime || 0;
+    return `Page loaded completely in ${loadTime}ms - "${element.text}"`;
+  }
+  
+  if (type === 'search_results_loaded') {
+    const { searchQuery, resultsCount } = value || {};
+    return `Search results loaded: ${resultsCount} results for "${searchQuery}"`;
+  }
+  
+  if (type === 'dynamic_content_loaded') {
+    return `Dynamic content loaded on page`;
+  }
+  
+  // Generate more meaningful descriptions based on element type and purpose
+  const elementType = element.elementType || element.tagName;
+  const purpose = element.purpose || 'interactive_element';
+  const text = element.text || '';
+  const href = element.href;
+  const targetUrl = element.targetUrl;
   
   switch (type) {
     case 'click':
-      return `Click ${elementDesc}`;
-    case 'input':
-      return `Enter text in ${elementDesc}`;
+      if (elementType === 'link') {
+        if (targetUrl) {
+          try {
+            const url = new URL(targetUrl);
+            const domain = url.hostname.replace('www.', '');
+            return `Click link to ${domain}${text ? ` ("${text.substring(0, 30)}")` : ''} → ${targetUrl}`;
+          } catch (e) {
+            return `Click link${text ? ` ("${text.substring(0, 30)}")` : ''} → ${targetUrl}`;
+          }
+        } else if (purpose === 'in_page_navigation') {
+          return `Click in-page link${text ? ` ("${text.substring(0, 30)}")` : ''}`;
+        } else {
+          return `Click link${text ? ` ("${text.substring(0, 30)}")` : ''}`;
+        }
+      } else if (elementType === 'button' || purpose.includes('button')) {
+        let buttonDescription = 'button';
+        if (purpose === 'search') {
+          buttonDescription = 'search button';
+        } else if (purpose === 'form_submission') {
+          buttonDescription = 'submit button';
+        } else if (purpose === 'toggle_setting') {
+          buttonDescription = 'toggle button';
+        } else if (purpose === 'authentication') {
+          buttonDescription = 'authentication button';
+        }
+        
+        const elementContext = element.interactionContext || '';
+        const contextSuffix = elementContext ? ` in ${elementContext}` : '';
+        
+        return `Click ${buttonDescription}${text ? ` ("${text.substring(0, 30)}")` : ''}${contextSuffix}`;
+      } else {
+        const elementContext = element.interactionContext || '';
+        const contextSuffix = elementContext ? ` in ${elementContext}` : '';
+        return `Click ${elementType}${text ? ` ("${text.substring(0, 30)}")` : ''}${contextSuffix}`;
+      }
+      
+    case 'text_input':
+      if (purpose === 'search_input') {
+        return `Search for "${value}"`;
+      } else if (purpose === 'email_input') {
+        return `Enter email "${value}"`;
+      } else if (purpose === 'password_input') {
+        return `Enter password`;
+      } else if (purpose === 'name_input') {
+        return `Enter name "${value}"`;
+      } else {
+        return `Type "${value}" in ${elementType}`;
+      }
+      
+    case 'keypress':
+      if (value === 'Enter') {
+        if (purpose === 'search_input') {
+          return `Press Enter to search`;
+        }
+        return `Press Enter${text ? ` in ${elementType}` : ''}`;
+      }
+      return `Press ${value} key`;
+      
+    case 'navigation':
+      if (value && value.navigationType) {
+        const navType = value.navigationType;
+        const toUrl = value.toUrl;
+        const title = value.title;
+        
+        if (navType === 'in_page_navigation') {
+          return `Navigate within page${title ? ` to "${title}"` : ''}`;
+        } else if (navType === 'external_navigation') {
+          try {
+            const url = new URL(toUrl);
+            return `Navigate to ${url.hostname}${title ? ` ("${title.substring(0, 50)}")` : ''}`;
+          } catch (e) {
+            return `Navigate to external page${title ? ` ("${title.substring(0, 50)}")` : ''}`;
+          }
+        } else {
+          return `Navigate to page${title ? ` ("${title.substring(0, 50)}")` : ''}`;
+        }
+      }
+      return `Navigate to page${text ? ` ("${text.substring(0, 50)}")` : ''}`;
+      
     case 'change':
-      return `Change value in ${elementDesc}`;
+      return `Select "${value}" from ${elementType}`;
+      
     case 'submit':
-      return `Submit form with ${elementDesc}`;
-    case 'focus':
-      return `Focus on ${elementDesc}`;
-    case 'blur':
-      return `Blur from ${elementDesc}`;
+      return `Submit form`;
+      
     default:
-      return `${type} on ${elementDesc}`;
+      return `${type} on ${elementType}${text ? ` ("${text.substring(0, 30)}")` : ''}`;
   }
 }
 
@@ -314,9 +555,9 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
   }
 
   private setupSmartEventListeners(): void {
-    // Focus on high-level user intentions
+    // Focus on high-level user intentions only
     const meaningfulEvents = [  
-      'click', 'submit', 'change', 'input', 'keydown', 'focus', 'blur', 'scroll'
+      'click', 'submit', 'change', 'input', 'keydown'
     ];
 
     meaningfulEvents.forEach(eventType => {
@@ -336,12 +577,8 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
   }
 
   private handleSmartEvent(event: Event): void {
-    const now = Date.now();
-    
-    // Skip if too soon after last significant action
-    if (now - this.lastSignificantAction < this.MIN_ACTION_GAP) {
-      return;
-    }
+    const target = event.target as Element;
+    if (!target || !this.isInteractiveElement(target)) return;
 
     switch (event.type) {
       case 'input':
@@ -357,47 +594,9 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       case 'change':
         this.handleValueChange(event);
         break;
-      case 'focus':
-        this.handleFocusChange(event, 'focus');
-        break;
-      case 'blur':
-        this.handleFocusChange(event, 'blur');
-      case 'scroll':
-        this.handleScroll(event);
-        break;
     }
   }
   
-  private handleScroll(event: Event): void {
-    const action: SemanticAction = {
-      id: this.generateId(),
-      type: ActionType.SCROLL,
-      timestamp: Date.now(),
-      description: 'Scroll',
-      target: this.captureElementContext(event.target as Element),
-      context: this.capturePageContext(),
-      intent: this.inferIntent(ActionType.SCROLL, this.captureElementContext(event.target as Element))
-    };
-    this.recordAction(action);
-  }
-
-  private handleFocusChange(event: Event, type: 'focus' | 'blur'): void {
-    const target = event.target as HTMLElement;
-    if (!target || !this.isInteractiveElement(target)) return;
-
-    const elementContext = this.captureElementContext(target);
-    const action: SemanticAction = {
-      id: this.generateId(),
-      type: type === 'focus' ? ActionType.FOCUS : ActionType.BLUR,
-      timestamp: Date.now(),
-      description: `${type} on ${elementContext.description}`,
-      target: elementContext,
-      context: this.capturePageContext(),
-      intent: this.inferIntent(type === 'focus' ? ActionType.FOCUS : ActionType.BLUR, elementContext)
-    };
-
-    this.recordAction(action);
-  }
 
   // Smart Event Handlers
   private handleTextInput(event: Event): void {
@@ -406,19 +605,21 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
 
     const elementContext = this.captureElementContext(target);
     
-    // Aggregate text input over time
+    // Handle keydown events
     if (event.type === 'keydown') {
       const keyEvent = event as KeyboardEvent;
       if (keyEvent.key === 'Enter') {
+        // Flush any pending text input and record Enter as separate action
         this.finalizeTextInput(elementContext, target.value);
         return;
       }
-      // Buffer other keys but don't record individual keystrokes
+      // Skip other keydown events - we'll handle via input events
       return;
     }
 
-    // Debounce input events
-    this.debounceAction('text_input', () => {
+    // Handle input events with debouncing
+    const targetKey = `text_input_${elementContext.selector}`;
+    this.debounceAction(targetKey, () => {
       this.finalizeTextInput(elementContext, target.value);
     });
   }
@@ -461,7 +662,10 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       intent: this.inferIntent(ActionType.CLICK, elementContext)
     };
 
-    this.recordAction(action);
+    // Apply quality filtering
+    if (this.shouldRecordAction(action)) {
+      this.recordAction(action);
+    }
   }
 
   private handleFormSubmit(event: Event): void {
@@ -486,6 +690,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       intent: this.inferIntent(ActionType.FORM_SUBMIT, this.captureElementContext(form))
     };
 
+    // Form submissions are always high-quality actions
     this.recordAction(action);
   }
 
@@ -522,7 +727,10 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       intent: this.inferIntent(actionType, elementContext)
     };
 
-    this.recordAction(action);
+    // Value changes are generally high-quality actions
+    if (this.shouldRecordAction(action)) {
+      this.recordAction(action);
+    }
   }
 
   private handlePageFocus(): void {
@@ -717,22 +925,39 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
         if (description.includes('email')) return 'enter_email';
         if (description.includes('password')) return 'enter_password';
         if (description.includes('address') || description.includes('url')) return 'navigate';
+        if (description.includes('name')) return 'enter_name';
         return 'fill_form_field';
 
       case ActionType.CLICK:
-        if (role === 'button' || role === 'link') {
+        if (role === 'link' || description.includes('link')) {
+          return 'navigate_to_page';
+        }
+        if (role === 'button' || description.includes('button')) {
           if (description.includes('submit') || description.includes('save')) return 'submit_form';
           if (description.includes('login') || description.includes('sign in')) return 'authenticate';
           if (description.includes('search')) return 'search';
+          if (description.includes('toggle') || description.includes('switch')) return 'toggle_setting';
+          if (description.includes('menu') || description.includes('nav')) return 'open_menu';
           if (description.includes('next') || description.includes('continue')) return 'proceed';
         }
         return 'interact';
 
       case ActionType.NAVIGATION:
+        // This is for keypress events like Enter
+        if (value === 'Enter') {
+          if (description.includes('search')) return 'search';
+          return 'submit_form';
+        }
         return 'navigate_to_page';
 
       case ActionType.FORM_SUBMIT:
         return 'submit_form';
+
+      case ActionType.SELECT:
+        return 'choose_option';
+
+      case ActionType.TOGGLE:
+        return 'toggle_checkbox';
 
       default:
         return 'interact';
@@ -773,6 +998,103 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     this.pendingActions.clear();
   }
 
+  private shouldRecordAction(action: SemanticAction): boolean {
+    const now = Date.now();
+    
+    // Clean up old actions from recent actions list
+    this.recentActions = this.recentActions.filter(
+      recentAction => now - recentAction.timestamp < this.DEDUP_WINDOW
+    );
+    
+    // Create a hash for the action to detect duplicates
+    const actionHash = this.createActionHash(action);
+    
+    // Check if we've seen this exact action recently
+    const isDuplicate = this.recentActions.some(
+      recentAction => recentAction.hash === actionHash
+    );
+    
+    if (isDuplicate) {
+      console.log(`🔄 Skipping duplicate action: ${action.description}`);
+      return false;
+    }
+    
+    // Check if action is too soon after last significant action
+    if (now - this.lastSignificantAction < this.MIN_ACTION_GAP) {
+      // Allow text input and navigation actions even if close together
+      if (![ActionType.TEXT_INPUT, ActionType.NAVIGATION].includes(action.type)) {
+        console.log(`⏱️ Skipping action too soon after last: ${action.description}`);
+        return false;
+      }
+    }
+    
+    // Filter out low-quality actions
+    if (this.isLowQualityAction(action)) {
+      console.log(`🗑️ Skipping low-quality action: ${action.description}`);
+      return false;
+    }
+    
+    // Add to recent actions
+    this.recentActions.push({ hash: actionHash, timestamp: now });
+    
+    return true;
+  }
+
+  private createActionHash(action: SemanticAction): string {
+    // Create a hash based on action type, target selector, and value
+    const hashData = {
+      type: action.type,
+      selector: action.target.selector,
+      value: action.value,
+      description: action.description
+    };
+    return JSON.stringify(hashData);
+  }
+
+  private isLowQualityAction(action: SemanticAction): boolean {
+    // Filter out actions that don't provide meaningful workflow information
+    
+    // Be more lenient with focus/blur events - only skip if clearly not useful
+    if ([ActionType.FOCUS, ActionType.BLUR].includes(action.type)) {
+      // Skip focus/blur on non-form elements only if they're not part of navigation
+      const isFormElement = ['input', 'textarea', 'select', 'textbox'].includes(
+        action.target.role?.toLowerCase() || ''
+      );
+      const isNavigationElement = ['button', 'link', 'tab', 'menuitem'].includes(
+        action.target.role?.toLowerCase() || ''
+      );
+      return !isFormElement && !isNavigationElement;
+    }
+    
+    // Keep scroll events - they can be important for context
+    if (action.type === ActionType.SCROLL) {
+      return false;
+    }
+    
+    // Be more inclusive with clicks - only skip if clearly not interactive
+    if (action.type === ActionType.CLICK) {
+      // Allow clicks even if not marked as interactive, as long as they have some identifying features
+      const hasIdentifier = action.target.selector && 
+        (action.target.selector.includes('#') || 
+         action.target.selector.includes('.') || 
+         action.target.selector.includes('['));
+      return !hasIdentifier && !action.target.isInteractive;
+    }
+    
+    // Skip only completely empty text inputs
+    if (action.type === ActionType.TEXT_INPUT) {
+      const value = action.value as string;
+      return !value || value.trim().length === 0;
+    }
+    
+    // Keep navigation actions (like Enter key presses)
+    if (action.type === ActionType.NAVIGATION) {
+      return false;
+    }
+    
+    return false;
+  }
+
   private recordAction(action: SemanticAction): void {
     if (!this.activeSession) return;
 
@@ -780,7 +1102,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     this.lastSignificantAction = action.timestamp;
 
     // Capture screenshot for significant actions
-    if ([ActionType.CLICK, ActionType.FORM_SUBMIT, ActionType.NAVIGATION].includes(action.type)) {
+    if ([ActionType.CLICK, ActionType.FORM_SUBMIT, ActionType.NAVIGATION, ActionType.TEXT_INPUT, ActionType.PAGE_LOAD, ActionType.SEARCH_RESULTS].includes(action.type)) {
       this.captureScreenshot('action');
     }
 
@@ -976,6 +1298,10 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
   private cleanupRecording(): void {
     this.processPendingActions();
     
+    // Clear deduplication tracking
+    this.recentActions = [];
+    this.lastActionHash = '';
+    
     this.observers.forEach(observer => {
       if (observer && typeof observer === 'object' && 'disconnect' in observer) {
         observer.disconnect();
@@ -1086,14 +1412,22 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     switch (eventType) {
       case 'click': return ActionType.CLICK;
       case 'input': return ActionType.TEXT_INPUT;
+      case 'text_input': return ActionType.TEXT_INPUT; // Handle aggregated text input from webview
+      case 'keypress': return ActionType.NAVIGATION; // Map keypress (like Enter) to navigation
       case 'change': return ActionType.SELECT;
       case 'submit': return ActionType.FORM_SUBMIT;
       case 'focus': return ActionType.FOCUS;
       case 'blur': return ActionType.BLUR;
       case 'scroll': return ActionType.SCROLL;
+      case 'navigation': return ActionType.NAVIGATION;
+      // New enhanced action types
+      case 'page_load_complete': return ActionType.PAGE_LOAD;
+      case 'search_results_loaded': return ActionType.SEARCH_RESULTS;
+      case 'dynamic_content_loaded': return ActionType.DYNAMIC_CONTENT;
       
       default: return ActionType.CLICK;
     }
   }
 
 }
+

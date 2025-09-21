@@ -54,6 +54,11 @@ export enum ActionType {
   BLUR = 'blur',                   // User blurred from an element
   NETWORK_REQUEST = 'network_request',
   NETWORK_ERROR = 'network_error',
+  
+  // Enhanced loading and dynamic content actions
+  PAGE_LOAD = 'page_load',        // Page finished loading
+  SEARCH_RESULTS = 'search_results', // Search results appeared
+  DYNAMIC_CONTENT = 'dynamic_content', // Dynamic content loaded
 }
 
 export interface ElementContext {
@@ -70,6 +75,25 @@ export interface ElementContext {
   isVisible: boolean;
   isInteractive: boolean;
   context?: string;               // Where on page (e.g., "in navigation", "in main content")
+  
+  // Enhanced properties for better automation
+  elementType?: string;           // Detailed element type (e.g., 'search_input', 'submit_button')
+  purpose?: string;               // Inferred purpose (e.g., 'search', 'navigation', 'form_submission')
+  href?: string;                  // For links, the target URL
+  text?: string;                  // Element text content
+  
+  // New enhanced targeting properties
+  targetUrl?: string;             // Resolved target URL for links and forms
+  uniqueIdentifiers?: string[];   // Multiple selector options (ID, data-testid, aria-label, etc.)
+  semanticRole?: string;          // More detailed semantic role
+  interactionContext?: string;    // Context where interaction occurs (search-result, navigation, etc.)
+  parentContext?: {               // Parent element context for better targeting
+    tagName: string;
+    id?: string;
+    className?: string;
+    role?: string;
+    text?: string;
+  };
 }
 
 export interface PageContext {
