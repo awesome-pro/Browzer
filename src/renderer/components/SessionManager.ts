@@ -1,6 +1,6 @@
 // SessionManager - Manages and displays recording sessions
 import { SmartRecordingEngine } from './RecordingEngine';
-import { SmartRecordingSession, ActionType } from '../../shared/types/recording'
+import { SmartRecordingSession, ActionType } from '../types'
 import { AnthropicPromptGenerator } from './PropmtGenerator';
 
 export class SessionManager {

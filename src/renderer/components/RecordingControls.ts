@@ -1,6 +1,6 @@
 // RecordingControls - Manages recording UI controls in the toolbar
 import { SmartRecordingEngine } from "./RecordingEngine";
-import { SmartRecordingSession, TaskGoal } from "../../shared/types/recording";
+import { SmartRecordingSession, TaskGoal } from "../types";
 
 export class RecordingControls {
     private recordingEngine: SmartRecordingEngine;

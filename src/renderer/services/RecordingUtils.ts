@@ -1,5 +1,5 @@
 // Recording utility functions - extracted for better code organization
-import { SmartRecordingSession, AIReadyContext, ActionType } from '../../shared/types/recording';
+import { SmartRecordingSession, AIReadyContext, ActionType } from '../types';
 
 export class RecordingUtils {
   /**

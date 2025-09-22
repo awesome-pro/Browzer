@@ -1,22 +1,6 @@
 // src/preload/webview-preload.ts
 import { ipcRenderer } from 'electron';
 
-console.log('🔵[Webview Preload] Script loaded in:', window.location.href);
-console.log('🔵[Webview Preload] ipcRenderer available:', typeof ipcRenderer !== 'undefined');
-
-// Test IPC immediately when script loads
-try {
-  console.log('🔵[Webview Preload] Testing IPC...');
-  ipcRenderer.send('webview-preload-test', {
-    message: 'Webview preload loaded successfully',
-    url: window.location.href,
-    timestamp: Date.now()
-  });
-  console.log('🔵[Webview Preload] ✅ IPC test message sent');
-} catch (error) {
-  console.error('🔵[Webview Preload] ❌ IPC test failed:', error);
-}
-
 class WebviewRecordingEngine {
   private isRecording = false;
   private sessionId: string | null = null;
@@ -44,18 +28,15 @@ class WebviewRecordingEngine {
 
   constructor() {
     this.init();
-    console.log('🔵[Webview Preload] WebviewRecordingEngine initialized');
   }
 
   private init(): void {
     // Listen for recording commands from main process
     ipcRenderer.on('start-recording', (event, sessionId: string) => {
-      console.log('🔵[Webview Preload] Received start-recording command:', sessionId);
       this.startRecording(sessionId);
     });
 
     ipcRenderer.on('stop-recording', () => {
-      console.log('🔵[Webview Preload] Received stop-recording command');
       this.stopRecording();
     });
 
@@ -63,13 +44,11 @@ class WebviewRecordingEngine {
     this.sendPageContext('load');
     
     // Test IPC communication
-    console.log('🔵[Webview Preload] Testing IPC communication...');
     try {
       ipcRenderer.send('webview-preload-loaded', {
         url: window.location.href,
         timestamp: Date.now()
       });
-      console.log('🔵[Webview Preload] IPC test message sent');
     } catch (error) {
       console.error('[Webview Preload] IPC communication failed:', error);
     }
@@ -77,11 +56,9 @@ class WebviewRecordingEngine {
 
   private startRecording(sessionId: string): void {
     if (this.isRecording) {
-      console.log('🔵[Webview Preload] Already recording, ignoring start command');
       return;
     }
 
-    console.log('🔵[Webview Preload] Starting recording with session:', sessionId);
     this.isRecording = true;
     this.sessionId = sessionId;
     
@@ -93,11 +70,9 @@ class WebviewRecordingEngine {
 
   private stopRecording(): void {
     if (!this.isRecording) {
-      console.log('🔵[Webview Preload] Not recording, ignoring stop command');
       return;
     }
 
-    console.log('🔵[Webview Preload] Stopping recording');
     
     // Flush any pending text inputs
     this.textInputBuffer.forEach((buffer, target) => {
@@ -118,7 +93,6 @@ class WebviewRecordingEngine {
   }
 
   private setupEventListeners(): void {
-    console.log('🔵[Webview Preload] Setting up event listeners');
     
     // Comprehensive event listening for all user interactions
     const events = ['click', 'input', 'change', 'submit', 'keydown', 'keyup', 'paste', 'cut', 'copy', 'contextmenu'];
@@ -141,11 +115,9 @@ class WebviewRecordingEngine {
     // Setup network monitoring
     this.setupNetworkMonitoring();
 
-    console.log('🔵[Webview Preload] Event listeners set up for events:', events);
   }
 
   private removeEventListeners(): void {
-    console.log('🔵 [Webview Preload] Removing event listeners');
     
     this.eventHandlers.forEach((handler, eventType) => {
       document.removeEventListener(eventType, handler, true);
@@ -216,7 +188,6 @@ class WebviewRecordingEngine {
 
     // Handle other semantic events
     if (this.shouldRecordEvent(eventType, target, event)) {
-      console.log('🔵[Webview Preload] Recording semantic event:', eventType, 'on', target.tagName);
 
       const actionData = {
         type: eventType,
@@ -279,7 +250,6 @@ class WebviewRecordingEngine {
   }
 
   private recordKeyAction(target: Element, key: string): void {
-    console.log('🔵[Webview Preload] Recording key action:', key);
 
     const actionData = {
       type: 'keypress',
@@ -309,8 +279,6 @@ class WebviewRecordingEngine {
       return;
     }
 
-    console.log('🔵[Webview Preload] Recording aggregated text input:', finalValue);
-
     const actionData = {
       type: 'text_input',
       timestamp: buffer.startTime,
@@ -331,13 +299,11 @@ class WebviewRecordingEngine {
     // Skip recording system control elements
     const elementId = target.id;
     if (elementId && (elementId === 'stopRecordingBtn' || elementId === 'startRecordingBtn' || elementId.includes('recordingBtn'))) {
-      console.log('[WebviewRecording] Skipping recording system button:', elementId);
       return false;
     }
 
     // Only record events that are actually user-initiated
     if (!this.isUserInitiatedEvent(event)) {
-      console.log('[WebviewRecording] Ignoring non-user event:', eventType, target);
       return false;
     }
 
@@ -897,13 +863,7 @@ class WebviewRecordingEngine {
       const currentTitle = document.title;
       
       if (currentUrl !== lastUrl || currentTitle !== lastTitle) {
-        console.log('🔵[Webview Preload] Navigation detected:', {
-          from: lastUrl,
-          to: currentUrl,
-          titleChanged: lastTitle !== currentTitle
-        });
-        
-        this.recordNavigationEvent(lastUrl, currentUrl, currentTitle);
+        this.recordNavigationEvent(lastUrl, currentUrl, currentTitle);  
         lastUrl = currentUrl;
         lastTitle = currentTitle;
       }
@@ -920,7 +880,6 @@ class WebviewRecordingEngine {
     window.addEventListener('popstate', () => {
       const currentUrl = window.location.href;
       if (currentUrl !== lastUrl) {
-        console.log('🔵[Webview Preload] Popstate navigation detected:', currentUrl);
         this.recordNavigationEvent(lastUrl, currentUrl, document.title);
         lastUrl = currentUrl;
       }
@@ -928,10 +887,6 @@ class WebviewRecordingEngine {
 
     // Listen for hashchange events (in-page navigation)
     window.addEventListener('hashchange', (event) => {
-      console.log('🔵[Webview Preload] Hash navigation detected:', {
-        oldURL: event.oldURL,
-        newURL: event.newURL
-      });
       this.recordNavigationEvent(event.oldURL, event.newURL, document.title);
     });
   }
@@ -1048,7 +1003,6 @@ class WebviewRecordingEngine {
 
   private sendRecordingAction(actionData: any): void {
     try {
-      console.log('🔵[Webview Preload] Sending recording action:', actionData.type);
       ipcRenderer.send('recording-action', actionData);
     } catch (error) {
       console.error('[Webview Preload] Failed to send recording action:', error);
@@ -1063,7 +1017,6 @@ class WebviewRecordingEngine {
     };
 
     try {
-      console.log('🔵[Webview Preload] Sending page context:', subtype);
       ipcRenderer.send('recording-context', contextData);
     } catch (error) {
       console.error('[Webview Preload] Failed to send page context:', error);
@@ -1072,7 +1025,6 @@ class WebviewRecordingEngine {
 
   private sendNetworkEvent(eventData: any): void {
     try {
-      console.log('🔵[Webview Preload] Sending network event:', eventData.type, eventData.url);
       ipcRenderer.send('recording-network', {
         ...eventData,
         sessionId: this.sessionId,
@@ -1844,9 +1796,7 @@ class WebviewRecordingEngine {
 
   private handleSubmitButtonClick(event: Event, target: Element): void {
     if (!this.isRecording) return;
-
-    console.log('🔵[Webview Preload] Submit button click detected');
-
+    
     const form = target.closest('form');
     const buttonText = target.textContent?.trim() || '';
     const buttonType = target.getAttribute('type') || 'button';
@@ -1910,11 +1860,7 @@ class WebviewRecordingEngine {
 
 // Initialize the recording engine when the page loads
 if (typeof window !== 'undefined') {
-  console.log('🔵[Webview Preload] Initializing recording engine...');
   const recorder = new WebviewRecordingEngine();
   
-  // Make it globally accessible for debugging
   (window as any).__webviewRecorder = recorder;
-  
-  console.log('🔵[Webview Preload] Recording engine ready');
 }

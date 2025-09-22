@@ -7,7 +7,7 @@ import {
   ElementContext,
   ScreenshotCapture,
   NetworkInteraction
-} from '../../shared/types/recording';
+} from '../types/recording';
 
 export class SmartRecordingEngine {
   private static instance: SmartRecordingEngine;

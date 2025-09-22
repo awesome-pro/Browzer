@@ -1,6 +1,6 @@
 // RecordingIndicator - Shows recording status overlay with live feedback
 import { SmartRecordingEngine } from "./RecordingEngine";
-import { SemanticAction } from "../../shared/types/recording";
+import { SemanticAction } from "../types";
 
 export class RecordingIndicator {
     private recordingEngine: SmartRecordingEngine;

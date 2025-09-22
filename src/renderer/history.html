@@ -5,34 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Browsing History - Browzer</title>
     <link rel="stylesheet" href="history.css">
-    <script>
-        // Dynamically load CSS with absolute path if needed
-        (function() {
-            // Check if styles are loaded
-            const styles = document.styleSheets;
-            let stylesLoaded = false;
-            
-            for (let i = 0; i < styles.length; i++) {
-                try {
-                    // If we can access rules, the stylesheet is loaded
-                    if (styles[i].cssRules && styles[i].cssRules.length > 0) {
-                        stylesLoaded = true;
-                        break;
-                    }
-                } catch (e) {
-                    // Cross-origin stylesheet, ignore
-                }
-            }
-            
-            if (!stylesLoaded) {
-                console.log('[History] Styles not loaded, attempting to load with absolute path');
-                const link = document.createElement('link');
-                link.rel = 'stylesheet';
-                link.href = window.location.href.substring(0, window.location.href.lastIndexOf('/')) + '/history.css';
-                document.head.appendChild(link);
-            }
-        })();
-    </script>
 </head>
 <body class="history-page">
     <div class="history-container">
@@ -40,58 +12,188 @@
             <h1>📚 Browsing History</h1>
         </div>
         
-        <div class="history-stats" id="historyStats" style="display: none;">
-            <div class="history-stat">
-                <div class="history-stat-value" id="totalItems">0</div>
-                <div class="history-stat-label">Total Items</div>
-            </div>
-            <div class="history-stat">
-                <div class="history-stat-value" id="todayItems">0</div>
-                <div class="history-stat-label">Today</div>
-            </div>
-            <div class="history-stat">
-                <div class="history-stat-value" id="weekItems">0</div>
-                <div class="history-stat-label">This Week</div>
-            </div>
-        </div>
-        
         <div class="history-controls">
             <div class="history-search-box">
                 <input type="text" id="searchInput" placeholder="Search history...">
             </div>
-            <button class="history-clear-btn" id="clearHistoryBtn">Clear All History</button>
+            <button class="history-clear-btn" onclick="clearHistory()">Clear All History</button>
         </div>
         
-        <div class="history-list" id="historyList">
+        <div class="history-list">
             <div class="history-loading" id="loadingMessage">
-                <div class="loading-spinner"></div>
                 Loading your browsing history...
             </div>
         </div>
     </div>
 
-    <script src="history.js"></script>
     <script>
-        // Dynamically load JS with absolute path if needed
-        (function() {
-            // Check if the history manager is initialized after a short delay
-            setTimeout(function() {
-                if (!window.historyManager) {
-                    console.log('[History] historyManager not found, attempting to load script with absolute path');
-                    const script = document.createElement('script');
-                    script.src = window.location.href.substring(0, window.location.href.lastIndexOf('/')) + '/history.js';
-                    document.body.appendChild(script);
+        let historyData = [];
+        let filteredData = [];
+
+        // Function to receive history data from the main process
+        function receiveHistoryData(data) {
+            console.log('Received history data:', data);
+            historyData = Array.isArray(data) ? data : [];
+            filteredData = [...historyData];
+            renderHistory();
+        }
+
+        // Function to render the history list
+        function renderHistory() {
+            const historyList = document.querySelector('.history-list');
+            const loadingMessage = document.getElementById('loadingMessage');
+            
+            if (loadingMessage) {
+                loadingMessage.remove();
+            }
+
+            if (filteredData.length === 0) {
+                historyList.innerHTML = `
+                    <div class="history-empty-state">
+                        <h3>No history found</h3>
+                        <p>Start browsing to see your history here.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            historyList.innerHTML = filteredData.map(item => {
+                const date = new Date(item.visitDate || item.timestamp);
+                const formattedDate = formatDate(date);
+                const title = item.title || item.url || 'Untitled';
+                const url = item.url || '';
+                
+                return `
+                    <div class="history-item">
+                        <div class="history-favicon"></div>
+                        <div class="history-item-content">
+                            <div class="history-item-title">${escapeHtml(title)}</div>
+                            <div class="history-item-url">${escapeHtml(url)}</div>
+                        </div>
+                        <div class="history-item-date">${formattedDate}</div>
+                        <button class="history-delete-btn" onclick="deleteHistoryItem('${item.id}')" title="Delete">×</button>
+                    </div>
+                `;
+            }).join('');
+
+            // Add click listeners to history items
+            document.querySelectorAll('.history-item').forEach(item => {
+                item.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('history-delete-btn')) return;
                     
-                    // Initialize historyManager after script loads
-                    script.onload = function() {
-                        console.log('[History] Script loaded with absolute path, initializing historyManager');
-                        if (typeof HistoryPageManager === 'function') {
-                            window.historyManager = new HistoryPageManager();
-                        }
-                    };
+                    const url = item.querySelector('.history-item-url').textContent;
+                    if (url) {
+                        navigateToUrl(url);
+                    }
+                });
+            });
+        }
+
+        // Function to navigate to a URL
+        function navigateToUrl(url) {
+            console.log('Navigating to:', url);
+            // Send message to parent window
+            if (window.parent) {
+                window.parent.postMessage({
+                    type: 'navigate-to',
+                    url: url
+                }, '*');
+            }
+        }
+
+        // Function to delete a history item
+        function deleteHistoryItem(itemId) {
+            console.log('Deleting history item:', itemId);
+            
+            // Remove from local data
+            historyData = historyData.filter(item => item.id !== itemId);
+            filteredData = filteredData.filter(item => item.id !== itemId);
+            
+            // Send message to parent window
+            if (window.parent) {
+                window.parent.postMessage({
+                    type: 'delete-history-item',
+                    itemId: itemId
+                }, '*');
+            }
+            
+            // Re-render
+            renderHistory();
+        }
+
+        // Function to clear all history
+        function clearHistory() {
+            if (confirm('Are you sure you want to clear all browsing history? This action cannot be undone.')) {
+                console.log('Clearing all history');
+                
+                historyData = [];
+                filteredData = [];
+                
+                // Send message to parent window
+                if (window.parent) {
+                    window.parent.postMessage({
+                        type: 'clear-history'
+                    }, '*');
                 }
-            }, 500);
-        })();
+                
+                // Re-render
+                renderHistory();
+            }
+        }
+
+        // Search functionality
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase();
+            
+            if (!query) {
+                filteredData = [...historyData];
+            } else {
+                filteredData = historyData.filter(item => 
+                    (item.title && item.title.toLowerCase().includes(query)) ||
+                    (item.url && item.url.toLowerCase().includes(query))
+                );
+            }
+            
+            renderHistory();
+        });
+
+        // Helper function to format dates
+        function formatDate(date) {
+            const now = new Date();
+            const diffMs = now - date;
+            const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+            const diffDays = Math.floor(diffHours / 24);
+
+            if (diffHours < 1) {
+                return 'Just now';
+            } else if (diffHours < 24) {
+                return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+            } else if (diffDays === 1) {
+                return 'Yesterday';
+            } else if (diffDays < 7) {
+                return `${diffDays} days ago`;
+            } else {
+                return date.toLocaleDateString();
+            }
+        }
+
+        // Helper function to escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Listen for messages from parent window
+        window.addEventListener('message', (event) => {
+            console.log('History page received message:', event.data);
+            
+            if (event.data && event.data.type === 'history-data') {
+                receiveHistoryData(event.data.data);
+            }
+        });
+
+        console.log('History page loaded and ready');
     </script>
 </body>
-</html>
+</html> 

@@ -1,5 +1,5 @@
 // Enhanced Prompt Generator specifically optimized for Anthropic Claude
-import { SmartRecordingSession, AIReadyContext, ActionType } from '../../shared/types/recording';
+import { SmartRecordingSession, AIReadyContext, ActionType } from '../types';
 
 export class AnthropicPromptGenerator {
   
@@ -57,7 +57,7 @@ ${this.extractProvenSelectors(session)}
 
 ### AVAILABLE ACTIONS:
 • **navigate** - Go to URL (target: URL)
-• **type** - Enter text (target: CSS selector, value: text)
+• **text_input** - Enter text (target: CSS selector, value: text)
 • **click** - Click element (target: CSS selector)
 • **wait_for_element** - Wait for element (target: CSS selector, value: timeout_ms)
 • **wait_for_dynamic_content** - Wait for page load (value: timeout_ms)
@@ -98,7 +98,7 @@ ${this.extractProvenSelectors(session)}
 \`\`\`json
 [
   {
-    "action": "type",
+    "action": "text_input",
     "target": "#APjFqb",
     "value": "search query",
     "reasoning": "Enter search query in Google search box"
@@ -554,7 +554,7 @@ ${this.extractExactSelectors(session)}
     
     // Add contexts from significant actions only
     session.actions
-      .filter(action => ['click', 'type', 'select', 'submit', 'navigate'].includes(this.mapToUnifiedAction(action.type)))
+      .filter(action => ['click', 'text_input', 'select', 'submit', 'navigate'].includes(this.mapToUnifiedAction(action.type)))
       .forEach(action => {
         if (action.context && !structures.has(action.context.url)) {
           structures.set(action.context.url, {

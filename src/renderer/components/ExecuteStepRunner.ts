@@ -1,4 +1,4 @@
-import { UnifiedExecuteStep, UnifiedActionType, ActionValidator } from '../../shared/types';
+import { ActionType, ActionValidator, ExecuteStep } from '../types';
 
 export class ExecuteStepRunner {
   private webview: any;
@@ -10,7 +10,7 @@ export class ExecuteStepRunner {
     this.webview = webview;
   }
 
-  public async executeStep(step: UnifiedExecuteStep): Promise<any> {
+  public async executeStep(step: ExecuteStep): Promise<any> {
     console.log(`[ExecuteStepRunner] Executing step: ${step.action} - ${step.description}`);
     
     if (!this.webview) {
@@ -44,7 +44,7 @@ export class ExecuteStepRunner {
     }
   }
 
-  private async executeActionWithRetry(step: UnifiedExecuteStep): Promise<any> {
+  private async executeActionWithRetry(step: ExecuteStep): Promise<any> {
     const maxRetries = step.maxRetries || 3;
     let lastError: Error | null = null;
 
@@ -76,95 +76,95 @@ export class ExecuteStepRunner {
     throw new Error(`Step failed after ${maxRetries} attempts. Last error: ${lastError?.message}`);
   }
 
-  private async executeAction(step: UnifiedExecuteStep): Promise<any> {
+  private async executeAction(step: ExecuteStep): Promise<any> {
     await this.wait(this.ACTION_DELAY);
 
     switch (step.action) {
-      case UnifiedActionType.NAVIGATE:
+      case ActionType.NAVIGATE:
         return await this.navigate(step);
       
-      case UnifiedActionType.TYPE:
-        return await this.type(step);
+      case ActionType.TEXT_INPUT:
+        return await this.textInput(step);
       
-      case UnifiedActionType.CLEAR:
+      case ActionType.CLEAR:
         return await this.clear(step);
       
-      case UnifiedActionType.CLICK:
+      case ActionType.CLICK:
         return await this.click(step);
       
-      case UnifiedActionType.SELECT:
+      case ActionType.SELECT:
         return await this.select(step);
       
-      case UnifiedActionType.TOGGLE:
+      case ActionType.TOGGLE:
         return await this.toggle(step);
       
-      case UnifiedActionType.SUBMIT:
+      case ActionType.SUBMIT:
         return await this.submit(step);
       
-      case UnifiedActionType.WAIT:
+      case ActionType.WAIT:
         return await this.waitTime(step);
       
-      case UnifiedActionType.WAIT_FOR_ELEMENT:
+      case ActionType.WAIT_FOR_ELEMENT:
         return await this.waitForElement(step);
       
-      case UnifiedActionType.WAIT_FOR_DYNAMIC_CONTENT:
+      case ActionType.WAIT_FOR_DYNAMIC_CONTENT:
         return await this.waitForDynamicContent(step);
       
-      case UnifiedActionType.FOCUS:
+      case ActionType.FOCUS:
         return await this.focus(step);
       
-      case UnifiedActionType.BLUR:
+      case ActionType.BLUR:
         return await this.blur(step);
       
-      case UnifiedActionType.HOVER:
+      case ActionType.HOVER:
         return await this.hover(step);
       
-      case UnifiedActionType.KEYPRESS:
+      case ActionType.KEYPRESS:
         return await this.keypress(step);
       
-      case UnifiedActionType.SCROLL:
+      case ActionType.SCROLL:
         return await this.scroll(step);
       
-      case UnifiedActionType.EXTRACT:
+      case ActionType.EXTRACT:
         return await this.extract(step);
       
-      case UnifiedActionType.VERIFY_ELEMENT:
+      case ActionType.VERIFY_ELEMENT:
         return await this.verifyElement(step);
       
-      case UnifiedActionType.VERIFY_TEXT:
+      case ActionType.VERIFY_TEXT:
         return await this.verifyText(step);
       
-      case UnifiedActionType.VERIFY_URL:
+      case ActionType.VERIFY_URL:
         return await this.verifyUrl(step);
       
       // Enhanced Form Actions
-      case UnifiedActionType.SELECT_OPTION:
+      case ActionType.SELECT_OPTION:
         return await this.selectOption(step);
       
-      case UnifiedActionType.TOGGLE_CHECKBOX:
+      case ActionType.TOGGLE_CHECKBOX:
         return await this.toggleCheckbox(step);
       
-      case UnifiedActionType.SELECT_RADIO:
+      case ActionType.SELECT_RADIO:
         return await this.selectRadio(step);
       
-      case UnifiedActionType.SELECT_FILE:
+      case ActionType.SELECT_FILE:
         return await this.selectFile(step);
       
-      case UnifiedActionType.ADJUST_SLIDER:
+      case ActionType.ADJUST_SLIDER:
         return await this.adjustSlider(step);
       
       // Clipboard Actions
-      case UnifiedActionType.COPY:
+      case ActionType.COPY:
         return await this.copy(step);
       
-      case UnifiedActionType.CUT:
+      case ActionType.CUT:
         return await this.cut(step);
       
-      case UnifiedActionType.PASTE:
+      case ActionType.PASTE:
         return await this.paste(step);
       
       // Context Actions
-      case UnifiedActionType.CONTEXT_MENU:
+      case ActionType.CONTEXT_MENU:
         return await this.contextMenu(step);
       
       default:
@@ -172,7 +172,7 @@ export class ExecuteStepRunner {
     }
   }
 
-  private async navigate(step: UnifiedExecuteStep): Promise<any> {
+  private async navigate(step: ExecuteStep): Promise<any> {
     const url = step.target || step.value as string;
     
     if (!url) {
@@ -234,12 +234,12 @@ export class ExecuteStepRunner {
     });
   }
 
-  private async type(step: UnifiedExecuteStep): Promise<any> {
+  private async textInput(step: ExecuteStep): Promise<any> {
     const selector = step.target;
     const text = step.value as string;
 
     if (!selector || !text) {
-      throw new Error('Both selector and text are required for type action');
+      throw new Error('Both selector and text are required for text_input action');
     }
 
     console.log(`[ExecuteStepRunner] Typing "${text}" into ${selector}`);
@@ -307,13 +307,13 @@ export class ExecuteStepRunner {
     const result = await this.webview.executeJavaScript(script);
 
     if (!result.success) {
-      throw new Error(`Type action failed: ${result.error}`);
+      throw new Error(`Text_input action failed: ${result.error}`);
     }
 
     return result;
   }
 
-  private async click(step: UnifiedExecuteStep): Promise<any> {
+  private async click(step: ExecuteStep): Promise<any> {
     const selector = step.target;
     
     if (!selector) {
@@ -448,7 +448,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async waitForElement(step: UnifiedExecuteStep): Promise<any> {
+  private async waitForElement(step: ExecuteStep): Promise<any> {
     const selector = step.target;
     const timeout = (step.value as number) || this.ELEMENT_WAIT_TIMEOUT;
 
@@ -532,7 +532,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async select(step: UnifiedExecuteStep): Promise<any> {
+  private async select(step: ExecuteStep): Promise<any> {
     const selector = step.target;
     const value = step.value as string;
 
@@ -594,7 +594,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async toggle(step: UnifiedExecuteStep): Promise<any> {
+  private async toggle(step: ExecuteStep): Promise<any> {
     const selector = step.target;
     
     if (!selector) {
@@ -636,7 +636,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async submit(step: UnifiedExecuteStep): Promise<any> {
+  private async submit(step: ExecuteStep): Promise<any> {
     const selector = step.target || 'form';
 
     const script = `
@@ -682,7 +682,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async waitTime(step: UnifiedExecuteStep): Promise<any> {
+  private async waitTime(step: ExecuteStep): Promise<any> {
     const milliseconds = step.value as number;
     
     if (!milliseconds || milliseconds < 0) {
@@ -699,7 +699,7 @@ export class ExecuteStepRunner {
     };
   }
 
-  private async waitForDynamicContent(step: UnifiedExecuteStep): Promise<any> {
+  private async waitForDynamicContent(step: ExecuteStep): Promise<any> {
     const timeout = (step.value as number) || 10000;
 
     const script = `
@@ -747,7 +747,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async clear(step: UnifiedExecuteStep): Promise<any> {
+  private async clear(step: ExecuteStep): Promise<any> {
     const selector = step.target;
     
     if (!selector) {
@@ -788,20 +788,20 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async focus(step: UnifiedExecuteStep): Promise<any> {
+  private async focus(step: ExecuteStep): Promise<any> {
     return this.executeElementAction(step, 'focus', (element: any) => {
       element.scrollIntoView({ behavior: 'smooth', block: 'center' });
       setTimeout(() => element.focus(), 500);
     });
   }
 
-  private async blur(step: UnifiedExecuteStep): Promise<any> {
+  private async blur(step: ExecuteStep): Promise<any> {
     return this.executeElementAction(step, 'blur', (element: any) => {
       element.blur();
     });
   }
 
-  private async hover(step: UnifiedExecuteStep): Promise<any> {
+  private async hover(step: ExecuteStep): Promise<any> {
     return this.executeElementAction(step, 'hover', (element: any) => {
       const rect = element.getBoundingClientRect();
       const centerX = rect.left + rect.width / 2;
@@ -820,7 +820,7 @@ export class ExecuteStepRunner {
     });
   }
 
-  private async keypress(step: UnifiedExecuteStep): Promise<any> {
+  private async keypress(step: ExecuteStep): Promise<any> {
     const selector = step.target || 'body';
     const key = step.value as string || 'Enter';
 
@@ -1005,7 +1005,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async scroll(step: UnifiedExecuteStep): Promise<any> {
+  private async scroll(step: ExecuteStep): Promise<any> {
     const target = step.target || 'body';
     const pixels = step.value as number || 300;
 
@@ -1035,7 +1035,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async extract(step: UnifiedExecuteStep): Promise<any> {
+  private async extract(step: ExecuteStep): Promise<any> {
     const script = `
       (function() {
         try {
@@ -1078,7 +1078,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async verifyElement(step: UnifiedExecuteStep): Promise<any> {
+  private async verifyElement(step: ExecuteStep): Promise<any> {
     const result = await this.waitForElement(step);
     return {
       ...result,
@@ -1087,7 +1087,7 @@ export class ExecuteStepRunner {
     };
   }
 
-  private async verifyText(step: UnifiedExecuteStep): Promise<any> {
+  private async verifyText(step: ExecuteStep): Promise<any> {
     const text = step.value as string;
     
     const script = `
@@ -1114,7 +1114,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async verifyUrl(step: UnifiedExecuteStep): Promise<any> {
+  private async verifyUrl(step: ExecuteStep): Promise<any> {
     const expectedUrl = step.value as string;
     const currentUrl = this.webview.getURL();
     const matches = currentUrl.includes(expectedUrl) || expectedUrl.includes(currentUrl);
@@ -1128,7 +1128,7 @@ export class ExecuteStepRunner {
     };
   }
 
-  private async executeElementAction(step: UnifiedExecuteStep, actionName: string, action: (element: any) => void): Promise<any> {
+  private async executeElementAction(step: ExecuteStep, actionName: string, action: (element: any) => void): Promise<any> {
     const selector = step.target;
     
     if (!selector) {
@@ -1312,7 +1312,7 @@ export class ExecuteStepRunner {
   }
 
   // Enhanced Form Actions Implementation
-  private async selectOption(step: UnifiedExecuteStep): Promise<any> {
+  private async selectOption(step: ExecuteStep): Promise<any> {
     const selector = step.target;
     const value = step.value;
 
@@ -1424,7 +1424,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async toggleCheckbox(step: UnifiedExecuteStep): Promise<any> {
+  private async toggleCheckbox(step: ExecuteStep): Promise<any> {
     const selector = step.target;
     const desiredState = step.value; // true for check, false for uncheck, undefined for toggle
 
@@ -1518,7 +1518,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async selectRadio(step: UnifiedExecuteStep): Promise<any> {
+  private async selectRadio(step: ExecuteStep): Promise<any> {
     const selector = step.target;
     const value = step.value;
 
@@ -1592,7 +1592,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async selectFile(step: UnifiedExecuteStep): Promise<any> {
+  private async selectFile(step: ExecuteStep): Promise<any> {
     const selector = step.target;
     const filePaths = step.value; // Can be string or array of file paths
 
@@ -1653,7 +1653,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async adjustSlider(step: UnifiedExecuteStep): Promise<any> {
+  private async adjustSlider(step: ExecuteStep): Promise<any> {
     const selector = step.target;
     const value = step.value as number;
 
@@ -1735,7 +1735,7 @@ export class ExecuteStepRunner {
   }
 
   // Clipboard Actions Implementation
-  private async copy(step: UnifiedExecuteStep): Promise<any> {
+  private async copy(step: ExecuteStep): Promise<any> {
     const selector = step.target;
 
     if (!selector) {
@@ -1914,7 +1914,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async cut(step: UnifiedExecuteStep): Promise<any> {
+  private async cut(step: ExecuteStep): Promise<any> {
     const selector = step.target;
 
     if (!selector) {
@@ -1984,7 +1984,7 @@ export class ExecuteStepRunner {
     return result;
   }
 
-  private async paste(step: UnifiedExecuteStep): Promise<any> {
+  private async paste(step: ExecuteStep): Promise<any> {
     const selector = step.target;
 
     if (!selector) {
@@ -2159,7 +2159,7 @@ export class ExecuteStepRunner {
   }
 
   // Context Actions Implementation
-  private async contextMenu(step: UnifiedExecuteStep): Promise<any> {
+  private async contextMenu(step: ExecuteStep): Promise<any> {
     const selector = step.target;
 
     if (!selector) {

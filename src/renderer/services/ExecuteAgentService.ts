@@ -1,9 +1,8 @@
-import { ExecuteResult, ExecuteStep, ExecuteTask } from '../types';
+import { ExecuteResult, ExecuteStep, ExecuteTask, ActionValidator, ActionType, } from '../types';
 import { TabService } from './TabService';
 import { SessionSelector } from '../components/SessionSelector';
 import { SmartRecordingEngine } from '../components/RecordingEngine';
 import { AnthropicPromptGenerator } from '../components/PropmtGenerator';
-import { ActionValidator, UnifiedActionType, UnifiedExecuteStep } from '../../shared/types';
 import { ExecuteStepRunner } from '../components/ExecuteStepRunner';
 
 export class ExecuteAgentService {
@@ -167,7 +166,7 @@ export class ExecuteAgentService {
     }
   }
 
-  private parseAndValidateSteps(llmResponse: string): UnifiedExecuteStep[] {
+  private parseAndValidateSteps(llmResponse: string): ExecuteStep[] {
     try {
       console.log('[EnhancedExecuteAgentService] Parsing LLM response:', llmResponse);
 
@@ -185,13 +184,13 @@ export class ExecuteAgentService {
         throw new Error('AI response is not a valid array of steps');
       }
 
-      const validatedSteps: UnifiedExecuteStep[] = [];
+      const validatedSteps: ExecuteStep[] = [];
       
       for (let i = 0; i < parsedSteps.length; i++) {
         const rawStep = parsedSteps[i];
         
         // Convert to unified format
-        const step: UnifiedExecuteStep = {
+        const step: ExecuteStep = {
           id: `step-${i + 1}`,
           action: this.normalizeActionType(rawStep.action),
           description: rawStep.description || `Step ${i + 1}`,
@@ -303,81 +302,81 @@ export class ExecuteAgentService {
     return cleaned;
   }
 
-  private normalizeActionType(action: string): UnifiedActionType {
-    if (!action) return UnifiedActionType.CLICK;
+  private normalizeActionType(action: string): ActionType {
+    if (!action) return ActionType.CLICK;
     
     const normalized = action.toLowerCase().trim();
-    const actionMap: Record<string, UnifiedActionType> = {
-      'navigate': UnifiedActionType.NAVIGATE,
-      'go_to': UnifiedActionType.NAVIGATE,
-      'visit': UnifiedActionType.NAVIGATE,
-      'type': UnifiedActionType.TYPE,
-      'input': UnifiedActionType.TYPE,
-      'enter': UnifiedActionType.TYPE,
-      'fill': UnifiedActionType.TYPE,
-      'clear': UnifiedActionType.CLEAR,
-      'click': UnifiedActionType.CLICK,
-      'press': UnifiedActionType.CLICK,
-      'tap': UnifiedActionType.CLICK,
-      'select': UnifiedActionType.SELECT,
-      'choose': UnifiedActionType.SELECT,
-      'toggle': UnifiedActionType.TOGGLE,
-      'check': UnifiedActionType.TOGGLE,
-      'uncheck': UnifiedActionType.TOGGLE,
-      'submit': UnifiedActionType.SUBMIT,
+    const actionMap: Record<string, ActionType> = {
+      'navigate': ActionType.NAVIGATE,
+      'go_to': ActionType.NAVIGATE,
+      'visit': ActionType.NAVIGATE,
+      'type': ActionType.TEXT_INPUT,
+      'input': ActionType.TEXT_INPUT,
+      'enter': ActionType.TEXT_INPUT,
+      'fill': ActionType.TEXT_INPUT,
+      'clear': ActionType.CLEAR,
+      'click': ActionType.CLICK,
+      'press': ActionType.CLICK,
+      'tap': ActionType.CLICK,
+      'select': ActionType.SELECT,
+      'choose': ActionType.SELECT,
+      'toggle': ActionType.TOGGLE,
+      'check': ActionType.TOGGLE,
+      'uncheck': ActionType.TOGGLE,
+      'submit': ActionType.SUBMIT,
       
       // Enhanced Form Actions
-      'select_option': UnifiedActionType.SELECT_OPTION,
-      'select_dropdown': UnifiedActionType.SELECT_OPTION,
-      'dropdown': UnifiedActionType.SELECT_OPTION,
-      'toggle_checkbox': UnifiedActionType.TOGGLE_CHECKBOX,
-      'checkbox': UnifiedActionType.TOGGLE_CHECKBOX,
-      'select_radio': UnifiedActionType.SELECT_RADIO,
-      'radio': UnifiedActionType.SELECT_RADIO,
-      'select_file': UnifiedActionType.SELECT_FILE,
-      'upload': UnifiedActionType.SELECT_FILE,
-      'file': UnifiedActionType.SELECT_FILE,
-      'adjust_slider': UnifiedActionType.ADJUST_SLIDER,
-      'slider': UnifiedActionType.ADJUST_SLIDER,
-      'range': UnifiedActionType.ADJUST_SLIDER,
+      'select_option': ActionType.SELECT_OPTION,
+      'select_dropdown': ActionType.SELECT_OPTION,
+      'dropdown': ActionType.SELECT_OPTION,
+      'toggle_checkbox': ActionType.TOGGLE_CHECKBOX,
+      'checkbox': ActionType.TOGGLE_CHECKBOX,
+      'select_radio': ActionType.SELECT_RADIO,
+      'radio': ActionType.SELECT_RADIO,
+      'select_file': ActionType.SELECT_FILE,
+      'upload': ActionType.SELECT_FILE,
+      'file': ActionType.SELECT_FILE,
+      'adjust_slider': ActionType.ADJUST_SLIDER,
+      'slider': ActionType.ADJUST_SLIDER,
+      'range': ActionType.ADJUST_SLIDER,
       
       // Clipboard Actions
-      'copy': UnifiedActionType.COPY,
-      'cut': UnifiedActionType.CUT,
-      'paste': UnifiedActionType.PASTE,
+      'copy': ActionType.COPY,
+      'cut': ActionType.CUT,
+      'paste': ActionType.PASTE,
       
       // Context Actions
-      'context_menu': UnifiedActionType.CONTEXT_MENU,
-      'right_click': UnifiedActionType.CONTEXT_MENU,
-      'contextmenu': UnifiedActionType.CONTEXT_MENU,
+      'context_menu': ActionType.CONTEXT_MENU,
+      'right_click': ActionType.CONTEXT_MENU,
+      'contextmenu': ActionType.CONTEXT_MENU,
       
-      'wait': UnifiedActionType.WAIT,
-      'wait_for_element': UnifiedActionType.WAIT_FOR_ELEMENT,
-      'wait_element': UnifiedActionType.WAIT_FOR_ELEMENT,
-      'wait_for_dynamic_content': UnifiedActionType.WAIT_FOR_DYNAMIC_CONTENT,
-      'wait_dynamic': UnifiedActionType.WAIT_FOR_DYNAMIC_CONTENT,
-      'focus': UnifiedActionType.FOCUS,
-      'blur': UnifiedActionType.BLUR,
-      'hover': UnifiedActionType.HOVER,
-      'keypress': UnifiedActionType.KEYPRESS,
-      'key': UnifiedActionType.KEYPRESS,
-      'scroll': UnifiedActionType.SCROLL,
-      'extract': UnifiedActionType.EXTRACT,
-      'get_data': UnifiedActionType.EXTRACT,
-      'verify_element': UnifiedActionType.VERIFY_ELEMENT,
-      'verify_text': UnifiedActionType.VERIFY_TEXT,
-      'verify_url': UnifiedActionType.VERIFY_URL
+      'wait': ActionType.WAIT,
+      'wait_for_element': ActionType.WAIT_FOR_ELEMENT,
+      'wait_element': ActionType.WAIT_FOR_ELEMENT,
+      'wait_for_dynamic_content': ActionType.WAIT_FOR_DYNAMIC_CONTENT,
+      'wait_dynamic': ActionType.WAIT_FOR_DYNAMIC_CONTENT,
+      'focus': ActionType.FOCUS,
+      'blur': ActionType.BLUR,
+      'hover': ActionType.HOVER,
+      'keypress': ActionType.KEYPRESS,
+      'key': ActionType.KEYPRESS,
+      'scroll': ActionType.SCROLL,
+      'extract': ActionType.EXTRACT,
+      'get_data': ActionType.EXTRACT,
+      'verify_element': ActionType.VERIFY_ELEMENT,
+      'verify_text': ActionType.VERIFY_TEXT,
+      'verify_url': ActionType.VERIFY_URL
     };
 
-    return actionMap[normalized] || UnifiedActionType.CLICK;
+    return actionMap[normalized] || ActionType.CLICK;
   }
 
-  private attemptStepFix(step: UnifiedExecuteStep, errors: string[]): UnifiedExecuteStep {
+  private attemptStepFix(step: ExecuteStep, errors: string[]): ExecuteStep {
     const fixedStep = { ...step };
 
     // Fix common issues
     for (const error of errors) {
-      if (error.includes('URL is required') && step.action === UnifiedActionType.NAVIGATE) {
+      if (error.includes('URL is required') && step.action === ActionType.NAVIGATE) {
         if (!fixedStep.target && !fixedStep.value) {
           // Try to extract URL from description
           const urlMatch = step.description.match(/(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
@@ -438,7 +437,7 @@ I'll modify the specific targets, values, and selectors from the recording to ma
     return 'interactive workflow';
   }
 
-  private displayExecutionPlan(steps: UnifiedExecuteStep[], session: any): void {
+  private displayExecutionPlan(steps: ExecuteStep[], session: any): void {
     let planMessage = `## Execution Plan
 
 I've analyzed the recorded workflow and generated **${steps.length} execution steps** based on the proven pattern. Here's what I'll do:
@@ -446,8 +445,7 @@ I've analyzed the recorded workflow and generated **${steps.length} execution st
 ### Steps Overview:`;
 
     steps.forEach((step, index) => {
-      const stepIcon = this.getStepIcon(step.action);
-      planMessage += `\n${index + 1}. ${stepIcon} **${step.action}** - ${step.description}`;
+      planMessage += `\n${index + 1}. ${step.action} - ${step.description}`;
       if (step.reasoning) {
         planMessage += `\n   *${step.reasoning}*`;
       }
@@ -468,48 +466,7 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
     }
   }
 
-  private getStepIcon(action: UnifiedActionType): string {
-    const iconMap: Record<UnifiedActionType, string> = {
-      [UnifiedActionType.NAVIGATE]: '🌐',
-      [UnifiedActionType.TYPE]: '⌨️',
-      [UnifiedActionType.CLEAR]: '🧹',
-      [UnifiedActionType.CLICK]: '👆',
-      [UnifiedActionType.SELECT]: '📋',
-      [UnifiedActionType.TOGGLE]: '☑️',
-      [UnifiedActionType.SUBMIT]: '📤',
-      [UnifiedActionType.WAIT]: '⏳',
-      [UnifiedActionType.WAIT_FOR_ELEMENT]: '👀',
-      [UnifiedActionType.WAIT_FOR_DYNAMIC_CONTENT]: '⚡',
-      [UnifiedActionType.FOCUS]: '🎯',
-      [UnifiedActionType.BLUR]: '💨',
-      [UnifiedActionType.HOVER]: '🖱️',
-      [UnifiedActionType.KEYPRESS]: '⌨️',
-      [UnifiedActionType.SCROLL]: '📜',
-      [UnifiedActionType.EXTRACT]: '📊',
-      [UnifiedActionType.VERIFY_ELEMENT]: '✅',
-      [UnifiedActionType.VERIFY_TEXT]: '🔍',
-      [UnifiedActionType.VERIFY_URL]: '🔗',
-      
-      // Enhanced Form Actions with specific icons
-      [UnifiedActionType.SELECT_OPTION]: '📝',
-      [UnifiedActionType.TOGGLE_CHECKBOX]: '☑️',
-      [UnifiedActionType.SELECT_RADIO]: '🔘',
-      [UnifiedActionType.SELECT_FILE]: '📁',
-      [UnifiedActionType.ADJUST_SLIDER]: '🎚️',
-      
-      // Clipboard Actions
-      [UnifiedActionType.COPY]: '📋',
-      [UnifiedActionType.CUT]: '✂️',
-      [UnifiedActionType.PASTE]: '📌',
-      
-      // Context Actions
-      [UnifiedActionType.CONTEXT_MENU]: '🖱️'
-    };
-
-    return iconMap[action] || '⚡';
-  }
-
-  private async executeStepsWithEnhancedMonitoring(steps: UnifiedExecuteStep[]): Promise<ExecuteResult> {
+  private async executeStepsWithEnhancedMonitoring(steps: ExecuteStep[]): Promise<ExecuteResult> {
     const startTime = Date.now();
     let successCount = 0;
     let failureCount = 0;
@@ -551,7 +508,7 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
           this.updateStepProgress(i, step, 'completed', stepResult);
 
           // Capture extract results
-          if (step.action === UnifiedActionType.EXTRACT) {
+          if (step.action === ActionType.EXTRACT) {
             finalResult = stepResult;
           }
 
@@ -601,10 +558,10 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
     }
   }
 
-  private shouldContinueAfterFailure(step: UnifiedExecuteStep, error: Error): boolean {
+  private shouldContinueAfterFailure(step: ExecuteStep, error: Error): boolean {
     const criticalActions = [
-      UnifiedActionType.NAVIGATE,
-      UnifiedActionType.SUBMIT
+      ActionType.NAVIGATE,
+      ActionType.SUBMIT
     ];
 
     if (criticalActions.includes(step.action)) {
@@ -622,14 +579,13 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
     return true;
   }
 
-  private updateStepProgress(index: number, step: UnifiedExecuteStep, status: string, result?: any, error?: string): void {
+  private updateStepProgress(index: number, step: ExecuteStep, status: string, result?: any, error?: string): void {
     const statusIcon = status === 'completed' ? '✅' : 
                       status === 'failed' ? '❌' : 
                       status === 'running' ? '🔄' : '⭕';
 
-    const stepIcon = this.getStepIcon(step.action);
     
-    let progressMessage = `**Step ${index + 1}:** ${stepIcon} ${step.description} ${statusIcon}`;
+    let progressMessage = `**Step ${index + 1}:** ${step.description} ${statusIcon}`;
     
     if (status === 'running') {
       progressMessage += '\n  *Executing...*';
@@ -648,7 +604,7 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
   }
 
   private displayExecutionSummary(
-    steps: UnifiedExecuteStep[], 
+    steps: ExecuteStep[], 
     successCount: number, 
     failureCount: number, 
     executionTime: number,
@@ -669,7 +625,7 @@ ${overallSuccess ? '🎉 **Task Completed Successfully!**' : '⚠️ **Task Comp
 ${this.generatePerformanceAnalysis(steps, executionTime)}
 
 ${failureCount > 0 ? `### Failed Steps:
-${steps.filter(s => s.status === 'failed').map((s, i) => 
+${steps.filter(s => s.status === 'failed').map((s) => 
   `- **Step ${steps.indexOf(s) + 1}:** ${s.description}\n  Error: ${s.error}`
 ).join('\n')}` : ''}
 
@@ -678,7 +634,7 @@ The task execution is now complete. ${overallSuccess ? 'All critical steps were 
     this.addMessageToChat('assistant', summary);
   }
 
-  private generatePerformanceAnalysis(steps: UnifiedExecuteStep[], totalTime: number): string {
+  private generatePerformanceAnalysis(steps: ExecuteStep[], totalTime: number): string {
     const avgStepTime = totalTime / steps.length;
     const slowSteps = steps.filter(s => 
       s.startTime && s.endTime && (s.endTime - s.startTime) > avgStepTime * 2
