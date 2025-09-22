@@ -449,15 +449,15 @@ private generateWebviewActionDescription(actionData: any): string {
           try {
             const urlObj = new URL(url);
             const domain = urlObj.hostname.replace('www.', '');
-            return `Navigate to ${domain}${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${this.cleanGoogleUrl(url)}`;
+            return `Navigate to ${domain} ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${this.cleanGoogleUrl(url)}`;
           } catch (e) {
-            return `Navigate to search result${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${url}`;
+            return `Navigate to search result ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${url}`;
           }
         } else if (navType === 'external_link' || navType === 'external_navigation') {
           try {
             const urlObj = new URL(url);
             const domain = urlObj.hostname.replace('www.', '');
-            return `Navigate to ${domain}${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${url}`;
+            return `Navigate to ${domain} ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${url}`;
           } catch (e) {
             return `Navigate to external page${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${url}`;
           }
@@ -467,18 +467,28 @@ private generateWebviewActionDescription(actionData: any): string {
           try {
             const urlObj = new URL(url);
             const domain = urlObj.hostname.replace('www.', '');
-            return `Navigate to ${domain}${linkText ? ` ("${linkText.substring(0, 40)}")` : ''}`;
+            return `Navigate to ${domain} ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''}`;
           } catch (e) {
-            return `Navigate to ${url}${linkText ? ` ("${linkText.substring(0, 40)}")` : ''}`;
+            return `Navigate to ${url} ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''}`;
           }
         }
       }
-      return `Navigate to page${text ? ` ("${text.substring(0, 50)}")` : ''}`;
+      return `Navigate to page ${text ? ` ("${text.substring(0, 50)}")` : ''}`;
       
     case 'change':
       return `Select "${value}" from ${elementType}`;
       
     case 'submit':
+    case 'form_submit':
+      // Handle both old submit events and new form_submit events
+      if (typeof value === 'object' && value !== null) {
+        if (value.buttonText) {
+          return `Click "${value.buttonText}" button to submit form`;
+        } else if (value.fields) {
+          const fieldCount = value.fieldCount || Object.keys(value.fields).length || 0;
+          return `Submit form with ${fieldCount} fields`;
+        }
+      }
       return `Submit form`;
       
     default:

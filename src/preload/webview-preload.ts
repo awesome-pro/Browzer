@@ -30,7 +30,7 @@ class WebviewRecordingEngine {
     startTime: number;
     timeout: NodeJS.Timeout | null;
   }>();
-  private readonly TEXT_INPUT_DEBOUNCE = 1200; // Reduced to 800ms for faster text capture
+  private readonly TEXT_INPUT_DEBOUNCE = 1600; // Reduced to 800ms for faster text capture
   
   // Loading and dynamic content detection
   private pageLoadingState = {
@@ -40,8 +40,6 @@ class WebviewRecordingEngine {
     lastDOMChangeTime: 0
   };
   
-  // Enhanced element tracking
-  private clickedElements = new Set<string>();
   private lastInteractionTime = 0;
 
   constructor() {
@@ -190,6 +188,12 @@ class WebviewRecordingEngine {
       return;
     }
 
+    // Handle submit button clicks (capture before general click handling)
+    if (eventType === 'click' && this.isSubmitButton(target)) {
+      this.handleSubmitButtonClick(event, target);
+      return;
+    }
+
     // Handle context menu (right-click)
     if (eventType === 'contextmenu') {
       this.handleContextMenuEvent(event);
@@ -324,6 +328,13 @@ class WebviewRecordingEngine {
   private shouldRecordEvent(eventType: string, target: Element, event: Event): boolean {
     const tagName = target.tagName?.toLowerCase();
 
+    // Skip recording system control elements
+    const elementId = target.id;
+    if (elementId && (elementId === 'stopRecordingBtn' || elementId === 'startRecordingBtn' || elementId.includes('recordingBtn'))) {
+      console.log('[WebviewRecording] Skipping recording system button:', elementId);
+      return false;
+    }
+
     // Only record events that are actually user-initiated
     if (!this.isUserInitiatedEvent(event)) {
       console.log('[WebviewRecording] Ignoring non-user event:', eventType, target);
@@ -403,25 +414,6 @@ class WebviewRecordingEngine {
     return false;
   }
 
-  private isInteractiveElement(target: Element): boolean {
-    const tagName = target.tagName?.toLowerCase();
-    const interactiveTags = ['button', 'a', 'select', 'option'];
-    
-    if (interactiveTags.includes(tagName)) return true;
-    
-    // Input elements that aren't text inputs
-    if (tagName === 'input') {
-      const inputType = (target as HTMLInputElement).type;
-      return ['button', 'submit', 'checkbox', 'radio', 'file'].includes(inputType);
-    }
-    
-    // Elements with interactive roles
-    const role = target.getAttribute('role');
-    if (['button', 'link', 'checkbox', 'radio', 'tab', 'menuitem'].includes(role || '')) return true;
-    
-    // Elements with click handlers
-    return !!(target as HTMLElement).onclick || target.hasAttribute('tabindex');
-  }
 
   private isSignificantEvent(event: Event, target: Element ): boolean {
     if (!target) return false;
@@ -511,7 +503,6 @@ class WebviewRecordingEngine {
     const text = this.getElementText(element).toLowerCase();
     const tagName = element.tagName?.toLowerCase();
     const className = element.className?.toString().toLowerCase() || '';
-    const id = element.id?.toLowerCase() || '';
     
     // Navigation purposes
     if (tagName === 'a') {
@@ -926,7 +917,7 @@ class WebviewRecordingEngine {
     });
 
     // Also listen for popstate events (back/forward navigation)
-    window.addEventListener('popstate', (event) => {
+    window.addEventListener('popstate', () => {
       const currentUrl = window.location.href;
       if (currentUrl !== lastUrl) {
         console.log('🔵[Webview Preload] Popstate navigation detected:', currentUrl);
@@ -1187,7 +1178,7 @@ class WebviewRecordingEngine {
         interactionContext: 'page_navigation',
         parentContext: null
       },
-      value: `Page loaded in ${loadTime}ms - ${window.location.href}`,
+      value: this.cleanPageLoadValue(loadTime, window.location.href),
       coordinates: null,
       pageContext: this.getPageContext()
     };
@@ -1195,6 +1186,7 @@ class WebviewRecordingEngine {
     this.sendRecordingAction(actionData);
     this.pageLoadingState.isLoading = false;
   }
+
 
   private recordSearchResultsLoaded(searchQuery: string): void {
     if (!this.isRecording || !searchQuery || searchQuery.length === 0 || searchQuery === 'https://www.google.com') return;
@@ -1829,6 +1821,77 @@ class WebviewRecordingEngine {
     }
     
     return false; // Not handled as navigation, proceed with regular click handling
+  }
+
+  private isSubmitButton(element: Element): boolean {
+    const tagName = element.tagName?.toLowerCase();
+    const type = element.getAttribute('type');
+    const role = element.getAttribute('role');
+    
+    // Direct submit buttons
+    if (tagName === 'button' && (type === 'submit' || !type)) return true;
+    if (tagName === 'input' && type === 'submit') return true;
+    
+    // Buttons with submit-like text in forms
+    if ((tagName === 'button' || role === 'button') && element.closest('form')) {
+      const text = element.textContent?.toLowerCase() || '';
+      const submitKeywords = ['submit', 'send', 'save', 'create', 'post', 'publish', 'continue', 'next', 'confirm'];
+      return submitKeywords.some(keyword => text.includes(keyword));
+    }
+    
+    return false;
+  }
+
+  private handleSubmitButtonClick(event: Event, target: Element): void {
+    if (!this.isRecording) return;
+
+    console.log('🔵[Webview Preload] Submit button click detected');
+
+    const form = target.closest('form');
+    const buttonText = target.textContent?.trim() || '';
+    const buttonType = target.getAttribute('type') || 'button';
+
+    const actionData = {
+      type: 'form_submit',
+      timestamp: Date.now(),
+      sessionId: this.sessionId,
+      target: this.captureElement(target),
+      value: {
+        buttonText: buttonText,
+        buttonType: buttonType,
+        formAction: form?.getAttribute('action') || window.location.href,
+        formMethod: form?.getAttribute('method') || 'POST',
+        submitType: 'button_click'
+      },
+      coordinates: this.getEventCoordinates(event),
+      pageContext: this.getPageContext()
+    };
+
+    this.sendRecordingAction(actionData);
+  }
+
+  private cleanPageLoadValue(loadTime: number, url: string): string {
+    // Clean Google URLs to only show essential information
+    if (url.includes('google.com/search')) {
+      try {
+        const urlObj = new URL(url);
+        const query = urlObj.searchParams.get('q');
+        if (query) {
+          return `Page loaded in ${loadTime}ms - Google search for "${query}"`;
+        }
+      } catch (e) {
+        // Fallback to original if URL parsing fails
+      }
+    }
+    
+    // For other URLs, show clean version
+    try {
+      const urlObj = new URL(url);
+      const cleanUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`;
+      return `Page loaded in ${loadTime}ms - ${cleanUrl}`;
+    } catch (e) {
+      return `Page loaded in ${loadTime}ms - ${url}`;
+    }
   }
 
   // Helper methods
