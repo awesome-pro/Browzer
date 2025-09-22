@@ -1,4 +1,4 @@
-import { McpClientManager } from './McpClientManager';
+import { McpClientManager } from './McpClientService';
 import { McpRouter } from './McpRouter';
 import { McpPromptComposer } from './McpPromptComposer';
 

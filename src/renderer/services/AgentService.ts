@@ -1,12 +1,12 @@
-import CONSTANTS from '../../constants';
-import { IAgentService, IpcRenderer, WebpageContext } from '../types';
+import CONSTANTS from '../constants';
+import { DoStep, DoTask, IAgentService, IpcRenderer, WebpageContext } from '../types';
 import { extractPageContent, getBrowserApiKeys, getExtensionDisplayName, markdownToHtml } from '../utils';
-import { DoAgentService, DoStep, DoTask } from './DoAgent';
+import { DoAgentService } from './DoAgentService';
 import { ExecuteAgentService } from './ExecuteAgentService';
-import { McpClientManager } from './McpClientManager';
+import { McpClientManager } from './McpClientService';
 import { MemoryService } from './MemoryService';
 import { RecordingService } from './RecordingService';
-import { TabManager } from './TabManager';
+import { TabService } from './TabService';
 import { WorkflowService } from './WorkflowService';
 
 /**
@@ -15,7 +15,7 @@ import { WorkflowService } from './WorkflowService';
 export class AgentService implements IAgentService {
   private ipcRenderer: IpcRenderer;
   private isExecuting: boolean = false;
-  private tabManager: TabManager;
+  private tabService: TabService;
   private mcpManager: McpClientManager;
   private memoryService: MemoryService;
   private workflowService: WorkflowService;
@@ -26,7 +26,7 @@ export class AgentService implements IAgentService {
 
   constructor(
     ipcRenderer: IpcRenderer, 
-    tabManager: TabManager, 
+    tabService: TabService, 
     mcpManager: McpClientManager, 
     memoryService: MemoryService, 
     workflowService: WorkflowService,
@@ -34,14 +34,14 @@ export class AgentService implements IAgentService {
     selectedWebpageContexts: WebpageContext[],
   ) {
     this.ipcRenderer = ipcRenderer;
-    this.tabManager = tabManager;
+    this.tabService = tabService;
     this.mcpManager = mcpManager;
     this.memoryService = memoryService;
     this.workflowService = workflowService;
     this.recordingService = recordingService;
     this.selectedWebpageContexts = selectedWebpageContexts;
     this.globalQueryTracker = new Map<string, number>();
-    this.executeAgentService = new ExecuteAgentService(tabManager);
+    this.executeAgentService = new ExecuteAgentService(tabService);
   }
 
   public setupControls(): void {
@@ -1034,7 +1034,7 @@ export class AgentService implements IAgentService {
   }
 
   private getActiveWebview(): any {
-    return this.tabManager.getActiveWebview();
+    return this.tabService.getActiveWebview();
   }
 
   private getBrowserApiKeys(): Record<string, string> {

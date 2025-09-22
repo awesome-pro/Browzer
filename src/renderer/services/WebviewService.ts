@@ -1,13 +1,13 @@
-import { IWebviewManager, IpcRenderer} from '../types';
+import { IWebviewService, IpcRenderer} from '../types';
 import { SmartRecordingEngine } from '../components/RecordingEngine';
-import CONSTANTS from '../../constants';
+import CONSTANTS from '../constants';
 import { AdBlockService } from './AdBlockService';
 import { HistoryService } from './HistoryService';
 
 /**
  * WebviewManager handles webview creation, configuration, and event management
  */
-export class WebviewManager implements IWebviewManager {
+export class WebviewService implements IWebviewService {
   private ipcRenderer: IpcRenderer;
   private webviewsContainer: HTMLElement | null = null;
   private homepageUrl: string;
@@ -25,13 +25,13 @@ export class WebviewManager implements IWebviewManager {
     try {
       this.webviewsContainer = document.querySelector('.webviews-container') as HTMLElement;
     } catch (error) {
-      console.error('[WebviewManager] Failed to initialize elements:', error);
+      console.error('[WebviewService] Failed to initialize elements:', error);
     }
   }
 
   public createWebview(tabId: string, url: string): any {
     if (!this.webviewsContainer) {
-      console.error('[WebviewManager] Cannot create webview: container not found');
+      console.error('[WebviewService] Cannot create webview: container not found');
       return null;
     }
 
@@ -43,16 +43,16 @@ export class WebviewManager implements IWebviewManager {
 
       // Configure webview asynchronously
       this.configureWebview(webview, url).catch(error => {
-        console.error('🔴 [WebviewManager] Failed to configure webview:', error);
+        console.error('🔴 [WebviewService] Failed to configure webview:', error);
       });
 
       this.webviewsContainer.appendChild(webview);
       this.setupWebviewEvents(webview);
 
-      console.log('[WebviewManager] Webview created:', webviewId);
+      console.log('[WebviewService] Webview created:', webviewId);
       return webview;
     } catch (error) {
-      console.error('🔴 [WebviewManager] Error creating webview:', error);
+      console.error('🔴 [WebviewService] Error creating webview:', error);
       return null;
     }
   }
@@ -76,25 +76,16 @@ export class WebviewManager implements IWebviewManager {
       webview.setAttribute('allowpopups', 'true');
       webview.setAttribute('nodeintegration', 'true');
       webview.setAttribute('disablewebsecurity', 'false');
-
-      // CRITICAL: Set preload FIRST, BEFORE setting src
-      console.log('[WebviewManager] Getting preload path for webview...');
       
       const preloadPath = await this.ipcRenderer.invoke('get-webview-preload-path');
-      console.log('[WebviewManager] Got preload path:', preloadPath);
-      
-      // STEP 1: Set preload attribute
       webview.setAttribute('preload', preloadPath);
-      console.log('[WebviewManager] Preload attribute set');
-      
-      // STEP 2: Set the src URL
+
       let finalUrl = url;
       
       if (url === CONSTANTS.NEW_TAB_URL) {
         finalUrl = this.homepageUrl;
-        console.log('[WebviewManager] Setting homepage URL:', finalUrl);
+        console.log('[WebviewService] Setting homepage URL:', finalUrl);
       } else if (url.startsWith('file://browzer-settings')) {
-        // Handle settings pages
         try {
           const settingsFilePath = await (window as any).electronAPI.getResourcePath('src/renderer/settings.html');
           const settingsPath = `file://${settingsFilePath}`;
@@ -115,7 +106,6 @@ export class WebviewManager implements IWebviewManager {
       
     } catch (error) {
       console.error('[WebviewManager] Failed to get preload path:', error);
-      // Set URL anyway as fallback
       if (url !== CONSTANTS.NEW_TAB_URL && !url.startsWith('file://browzer-settings')) {
         webview.setAttribute('src', url);
       } else {

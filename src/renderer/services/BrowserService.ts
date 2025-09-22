@@ -1,6 +1,6 @@
 import { IBrowserService, IpcRenderer, NavigationState } from '../types';
-import { ExtensionStore } from './ExtensionStore';
-import { TabManager } from './TabManager';
+import { ExtensionStore } from './ExtensionService';
+import { TabService } from './TabService';
 
 /**
  * BrowserService handles browser navigation controls and URL management
@@ -15,7 +15,7 @@ export class BrowserService implements IBrowserService {
   private runAgentBtn: HTMLButtonElement | null = null;
   private historyBtn: HTMLButtonElement | null = null;
 
-  private tabManager: TabManager;
+  private tabService: TabService;
   private extensionStore: ExtensionStore;
 
   private backClickCallback?: () => void;
@@ -26,9 +26,9 @@ export class BrowserService implements IBrowserService {
   private runAgentClickCallback?: () => void;
   private historyClickCallback?: () => void;
 
-  constructor(ipcRenderer: IpcRenderer, tabManager: TabManager, extensionStore: ExtensionStore) {
+  constructor(ipcRenderer: IpcRenderer, tabService: TabService, extensionStore: ExtensionStore) {
     this.ipcRenderer = ipcRenderer;
-    this.tabManager = tabManager;
+    this.tabService = tabService;
     this.extensionStore = extensionStore;
   }
 
@@ -143,8 +143,8 @@ export class BrowserService implements IBrowserService {
   }
 
   public updateNavigationButtons(): void {
-    const webview = this.tabManager.getActiveWebview();
-  if (webview && this.tabManager.isWebviewReady(webview)) {
+    const webview = this.tabService.getActiveWebview();
+  if (webview && this.tabService.isWebviewReady(webview)) {
     try {
       if (this.backBtn) {
         this.backBtn.disabled = !webview.canGoBack();
@@ -257,7 +257,7 @@ export class BrowserService implements IBrowserService {
       url = 'https://' + url;
     }
   
-    const webview = this.tabManager.getActiveWebview();
+    const webview = this.tabService.getActiveWebview();
     if (webview) {
       webview.loadURL(url);
     }

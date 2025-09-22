@@ -1,8 +1,8 @@
-import CONSTANTS from '../../constants';
-import { ITabManager, TabInfo } from '../types';
+import CONSTANTS from '../constants';
+import { ITabService, TabInfo } from '../types';
 import { URLUtils } from '../utils/urlUtils';
 
-export class TabManager implements ITabManager {
+export class TabService implements ITabService {
   // Preview configuration
   private readonly PREVIEW_WIDTH = 320;
   private readonly PREVIEW_HEIGHT = 180;
@@ -35,7 +35,7 @@ export class TabManager implements ITabManager {
   private tabCloseCallback?: (tabId: string) => void;
 
   constructor() {
-    console.log('[TabManager] Initializing tab manager...');
+    console.log('[TabService] Initializing tab Service...');
   }
 
   // ========================= INITIALIZATION =========================
@@ -55,7 +55,7 @@ export class TabManager implements ITabManager {
       this.setupAutoSaveEvents();
       this.loadTabs();
     } catch (error) {
-      console.error('[TabManager] Failed to initialize elements:', error);
+      console.error('[TabService] Failed to initialize elements:', error);
     }
   }
 
@@ -67,7 +67,7 @@ export class TabManager implements ITabManager {
     this.tabPreviewLoading = this.tabPreview?.querySelector('.tab-preview-loading') as HTMLElement;
 
     if (!this.tabPreview || !this.tabPreviewCanvas || !this.tabPreviewTitle || !this.tabPreviewUrl || !this.tabPreviewLoading) {
-      console.warn('[TabManager] Tab preview elements not found - preview functionality disabled');
+      console.warn('[TabService] Tab preview elements not found - preview functionality disabled');
       return;
     }
 
@@ -137,7 +137,7 @@ export class TabManager implements ITabManager {
           localStorage.setItem(CONSTANTS.SAVED_TABS_KEY, JSON.stringify(sessionData));
         }
       } catch (err) {
-        console.error('[TabManager] Error in beforeunload save:', err);
+        console.error('[TabService] Error in beforeunload save:', err);
       }
     });
 
@@ -170,7 +170,7 @@ export class TabManager implements ITabManager {
   // ========================= TAB MANAGEMENT =========================
   public createTab(url: string = CONSTANTS.NEW_TAB_URL, title?: string): string | null {
     if (!this.tabsContainer || !this.webviewsContainer) {
-      console.error('[TabManager] Cannot create tab: containers not found');
+      console.error('[TabService] Cannot create tab: containers not found');
       return null;
     }
   
@@ -211,7 +211,7 @@ export class TabManager implements ITabManager {
   
       return tabId;
     } catch (error) {
-      console.error('[TabManager] Error creating tab:', error);
+      console.error('[TabService] Error creating tab:', error);
       return null;
     }
   }
@@ -290,7 +290,7 @@ export class TabManager implements ITabManager {
       this.handleTabVisibility(this.tabs[tabIndex]);
 
     } catch (error) {
-    console.error('[TabManager] Error in selectTab:', error);
+    console.error('[TabService] Error in selectTab:', error);
     }
   }
 
@@ -350,7 +350,7 @@ export class TabManager implements ITabManager {
   
       this.saveTabs();
     } catch (error) {
-      console.error('[TabManager] Error closing tab:', error);
+      console.error('[TabService] Error closing tab:', error);
     }
   }
 
@@ -394,7 +394,7 @@ export class TabManager implements ITabManager {
         }
       }
     } catch (error) {
-      console.error('[TabManager] Error updating tab title:', error);
+      console.error('[TabService] Error updating tab title:', error);
     }
   }
 
@@ -421,7 +421,7 @@ export class TabManager implements ITabManager {
         }
       }
     } catch (error) {
-      console.error('[TabManager] Error updating favicon:', error);
+      console.error('[TabService] Error updating favicon:', error);
     }
   }
 
@@ -657,7 +657,7 @@ export class TabManager implements ITabManager {
 
       localStorage.setItem(CONSTANTS.SAVED_TABS_KEY, JSON.stringify(sessionData));
     } catch (err) {
-      console.error('[TabManager] Error saving tabs:', err);
+      console.error('[TabService] Error saving tabs:', err);
     }
   }
 
@@ -670,7 +670,7 @@ export class TabManager implements ITabManager {
       if (!sessionData.tabs || sessionData.tabs.length === 0) return;
 
     } catch (error) {
-      console.error('[TabManager] Error loading tabs:', error);
+      console.error('[TabService] Error loading tabs:', error);
     }
   }
 
@@ -737,7 +737,7 @@ export class TabManager implements ITabManager {
                 }
               }
             } catch (tabErr) {
-              console.warn('[TabManager] Failed to restore individual tab:', tabErr);
+              console.warn('[TabService] Failed to restore individual tab:', tabErr);
             }
           }
           
@@ -762,7 +762,7 @@ export class TabManager implements ITabManager {
         }
       }
     } catch (err) {
-      console.error('[TabManager] Error in tab restoration:', err);
+      console.error('[TabService] Error in tab restoration:', err);
     }
     
     // Create fallback tab if no tabs were restored
@@ -885,7 +885,7 @@ export class TabManager implements ITabManager {
       this.tabSelectCallback = undefined;
       this.tabCloseCallback = undefined;
     } catch (error) {
-      console.error('[TabManager] Error during destruction:', error);
+      console.error('[TabService] Error during destruction:', error);
     }
   }
 }

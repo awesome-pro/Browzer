@@ -1,15 +1,15 @@
-import CONSTANTS from '../../constants';
+import CONSTANTS from '../constants';
 import { HistoryItem } from '../../shared/types';
-import { TabManager } from './TabManager';
+import { TabService } from './TabService';
 
 export class HistoryService {
   private readonly HISTORY_STORAGE_KEY = CONSTANTS.HISTORY_STORAGE_KEY;
-  private tabManager: TabManager;
+  private tabService: TabService;
   private history: HistoryItem[] = [];
   private historyTabId: string | null = null;
 
-  constructor(tabManager: TabManager) {
-    this.tabManager = tabManager;
+  constructor(tabService: TabService) {
+    this.tabService = tabService;
     this.loadHistory();
     this.setupHistoryPageCommunication();
   }
@@ -412,22 +412,22 @@ export class HistoryService {
 
   private getHistoryWebview(): any {
     if (this.historyTabId) {
-      return this.tabManager.getWebviewByTabId(this.historyTabId);
+      return this.tabService.getWebviewByTabId(this.historyTabId);
     }
     return null;
   }
 
   private navigateToUrl(url: string): void {
-    const activeTabId = this.tabManager.getActiveTabId();
+    const activeTabId = this.tabService.getActiveTabId();
     if (activeTabId && activeTabId !== this.historyTabId) {
-      const webview = this.tabManager.getActiveWebview();
+      const webview = this.tabService.getActiveWebview();
       if (webview) {
         webview.loadURL(url);
       }
     } else {
-      const newTabId = this.tabManager.createTab(url);
+      const newTabId = this.tabService.createTab(url);
       if (newTabId) {
-        this.tabManager.selectTab(newTabId);
+        this.tabService.selectTab(newTabId);
       }
     }
   }
@@ -435,7 +435,7 @@ export class HistoryService {
   public showHistoryPage(): void {
     
     try {
-      const webview = this.tabManager.getActiveWebview();
+      const webview = this.tabService.getActiveWebview();
       
       if (webview) {
         window.electronAPI.getResourcePath('src/renderer/history.html').then(historyFilePath => {
@@ -521,7 +521,7 @@ export class HistoryService {
           const cwd = window.electronAPI.cwd();
           const historyURL = `file://${window.electronAPI.path.join(cwd, 'src/renderer/history.html')}`;
           console.log('[History] Fallback to CWD path:', historyURL);
-          const newTabId = this.tabManager.createTab(historyURL);
+          const newTabId = this.tabService.createTab(historyURL);
         });
       }
     } catch (error) {

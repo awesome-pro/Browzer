@@ -1,4 +1,4 @@
-import { McpClientManager, McpServerConfig } from '../services/McpClientManager';
+import { McpClientManager, McpServerConfig } from '../services/McpClientService';
 
 /**
  * Lightweight UI helper that injects an MCP Servers section into the Settings page.

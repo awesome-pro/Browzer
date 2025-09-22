@@ -1,6 +1,6 @@
 import { WebpageContext } from '../types';
 import { extractPageContent } from '../utils';
-import CONSTANTS from '../../constants';
+import CONSTANTS from '../constants';
 
 /**
  * MentionService handles @ mention functionality for webpage context selection

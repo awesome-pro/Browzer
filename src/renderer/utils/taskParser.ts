@@ -1,4 +1,4 @@
-import { DoStep } from '../services/DoAgent';
+import { DoStep } from '../types';
 import { getBestSelector } from './browserAutomation';
 
 export interface TaskIntent {

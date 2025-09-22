@@ -1,5 +1,5 @@
 import { ExecuteResult, ExecuteStep, ExecuteTask } from '../types';
-import { TabManager } from './TabManager';
+import { TabService } from './TabService';
 import { SessionSelector } from '../components/SessionSelector';
 import { SmartRecordingEngine } from '../components/RecordingEngine';
 import { AnthropicPromptGenerator } from '../components/PropmtGenerator';
@@ -7,7 +7,7 @@ import { ActionValidator, UnifiedActionType, UnifiedExecuteStep } from '../../sh
 import { ExecuteStepRunner } from '../components/ExecuteStepRunner';
 
 export class ExecuteAgentService {
-  private tabManager: TabManager;
+  private tabService: TabService;
   private recordingEngine: SmartRecordingEngine;
   private isExecuting = false;
   private currentTask: ExecuteTask | null = null;
@@ -18,8 +18,8 @@ export class ExecuteAgentService {
   private readonly STEP_TIMEOUT = 30000; // Reduced to 30 seconds
   private readonly MAX_RETRIES_PER_STEP = 2; // Reduced retries
 
-  constructor(tabManager: TabManager) {
-    this.tabManager = tabManager;
+  constructor(tabService: TabService) {
+    this.tabService = tabService;
     this.recordingEngine = SmartRecordingEngine.getInstance();
     this.sessionSelector = new SessionSelector();
   }
@@ -516,7 +516,7 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
     let finalResult = null;
 
     // Get active webview
-    const webview = this.tabManager.getActiveWebview();
+    const webview = this.tabService.getActiveWebview();
     if (!webview) {
       throw new Error('No active webview found. Please ensure a tab is open.');
     }

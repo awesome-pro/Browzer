@@ -1,5 +1,5 @@
 import { IExtensionStore } from '../types';
-import CONSTANTS from '../../constants';
+import CONSTANTS from '../constants';
 
 /**
  * ExtensionStore handles the extension marketplace functionality

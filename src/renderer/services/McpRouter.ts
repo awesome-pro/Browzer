@@ -1,4 +1,4 @@
-import { McpClientManager, McpTool } from './McpClientManager';
+import { McpClientManager, McpTool } from './McpClientService';
 
 export interface ToolMatch {
   toolName: string;

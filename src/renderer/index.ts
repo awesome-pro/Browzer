@@ -5,10 +5,10 @@ import './recording.css';
 
 // Services
 import { BrowserService } from './services/BrowserService';
-import { TabManager } from './services/TabManager';
-import { WebviewManager } from './services/WebviewManager';
+import { TabService } from './services/TabService';
+import { WebviewService } from './services/WebviewService';
 import { AgentService } from './services/AgentService';
-import { ExtensionStore } from './services/ExtensionStore';
+import { ExtensionStore } from './services/ExtensionService';
 import { RecordingService } from './services/RecordingService';
 import { WorkflowService } from './services/WorkflowService';
 import { MentionService } from './services/MentionService';
@@ -17,10 +17,10 @@ import { AdBlockService } from './services/AdBlockService';
 
 // Types
 import { IpcRenderer, WebpageContext } from './types';
-import { McpClientManager } from './services/McpClientManager';
+import { McpClientManager } from './services/McpClientService';
 import { DevToolsManager } from './components/DevToolsManager';
 import { MemoryService } from './services/MemoryService';
-import CONSTANTS from '../constants';
+import CONSTANTS from './constants';
 import { getBrowserApiKeys } from './utils';
 
 // ========================= TYPES & INTERFACES =========================
@@ -33,8 +33,8 @@ interface AppState {
 class BrowzerApp {
   // Core services
   private browserService: BrowserService;
-  private tabManager: TabManager;
-  private webviewManager: WebviewManager;
+  private tabService: TabService;
+  private webviewService: WebviewService;
   private agentService: AgentService;
   private extensionStore: ExtensionStore;
   private recordingService: RecordingService;
@@ -64,9 +64,9 @@ class BrowzerApp {
     };
 
     // Initialize core services first
-    this.tabManager = new TabManager();
+    this.tabService = new TabService()
     this.extensionStore = new ExtensionStore();
-    this.historyService = new HistoryService(this.tabManager);
+    this.historyService = new HistoryService(this.tabService);
     this.adBlockService = new AdBlockService(this.ipcRenderer);
     this.recordingService = new RecordingService();
     this.mcpManager = new McpClientManager();
@@ -76,11 +76,11 @@ class BrowzerApp {
     // Initialize new modular services
     this.workflowService = new WorkflowService(this.ipcRenderer);
     this.mentionService = new MentionService();
-    this.browserService = new BrowserService(this.ipcRenderer, this.tabManager, this.extensionStore);
-    this.webviewManager = new WebviewManager(this.ipcRenderer, this.adBlockService, this.historyService);
+    this.browserService = new BrowserService(this.ipcRenderer, this.tabService, this.extensionStore);
+    this.webviewService = new WebviewService(this.ipcRenderer, this.adBlockService, this.historyService);
     this.agentService = new AgentService(
         this.ipcRenderer, 
-        this.tabManager, 
+        this.tabService, 
         this.mcpManager, 
         this.memoryService, 
         this.workflowService,
@@ -134,10 +134,10 @@ class BrowzerApp {
 
   private async initializeUI(): Promise<void> {
     // Initialize UI elements
-    this.tabManager.initializeElements();
+    this.tabService.initializeElements();
     this.browserService.initializeElements();
-    this.webviewManager.initializeElements();
-    this.webviewManager.initializeSidebar();
+    this.webviewService.initializeElements();
+    this.webviewService.initializeSidebar();
     this.devToolsManager.addDevToolsButton();
     this.devToolsManager.enableDevToolsForAllWebviews();
   }
@@ -178,11 +178,11 @@ class BrowzerApp {
     window.addEventListener('recording:start', (e: Event) => {
       const sessionId = (e as CustomEvent).detail?.sessionId || 
         this.recordingService.getActiveSession()?.id || 'unknown';
-      this.webviewManager.notifyAllWebviews('start-recording', sessionId);
+      this.webviewService.notifyAllWebviews('start-recording', sessionId);
     });
 
     window.addEventListener('recording:stop', () => {
-      this.webviewManager.notifyAllWebviews('stop-recording');
+      this.webviewService.notifyAllWebviews('stop-recording');
     });
 
     window.addEventListener('show-toast', (e: Event) => {
@@ -303,8 +303,8 @@ class BrowzerApp {
 
   private setupNavigationListeners(): void {
     this.browserService.onBackClick(() => {
-      const webview = this.tabManager.getActiveWebview();
-      if (webview && this.webviewManager.isWebviewReady(webview)) {
+      const webview = this.tabService.getActiveWebview();
+      if (webview && this.webviewService.isWebviewReady(webview)) {
         try {
           if (webview.canGoBack()) {
             webview.goBack();
@@ -316,8 +316,8 @@ class BrowzerApp {
     });
 
     this.browserService.onForwardClick(() => {
-      const webview = this.tabManager.getActiveWebview();
-      if (webview && this.webviewManager.isWebviewReady(webview)) {
+      const webview = this.tabService.getActiveWebview();
+      if (webview && this.webviewService.isWebviewReady(webview)) {
         try {
           if (webview.canGoForward()) {
             webview.goForward();
@@ -329,7 +329,7 @@ class BrowzerApp {
     });
 
     this.browserService.onReloadClick(() => {
-      const webview = this.tabManager.getActiveWebview();
+      const webview = this.tabService.getActiveWebview();
       if (webview) {
         webview.reload();
       }
@@ -353,15 +353,15 @@ class BrowzerApp {
   }
 
   private setupTabListeners(): void {
-    this.tabManager.onNewTab(() => {
+    this.tabService.onNewTab(() => {
       this.createNewTab();
     });
 
-    this.tabManager.onTabSelect((tabId: string) => {
+    this.tabService.onTabSelect((tabId: string) => {
       this.selectTab(tabId);
     });
 
-    this.tabManager.onTabClose((tabId: string) => {
+    this.tabService.onTabClose((tabId: string) => {
       this.closeTab(tabId);
     });
   }
@@ -376,7 +376,7 @@ class BrowzerApp {
             break;
           case 'w':
             e.preventDefault();
-            const activeTabId = this.tabManager.getActiveTabId();
+            const activeTabId = this.tabService.getActiveTabId();
             if (activeTabId) {
               this.closeTab(activeTabId);
             }
@@ -387,7 +387,7 @@ class BrowzerApp {
             break;
           case 'Tab':
             e.preventDefault();
-            this.tabManager.cycleTab(e.shiftKey ? -1 : 1);
+            this.tabService.cycleTab(e.shiftKey ? -1 : 1);
             break;
         }
       }
@@ -404,15 +404,15 @@ class BrowzerApp {
     });
 
     this.ipcRenderer.on('menu-close-tab', () => {
-      const activeTabId = this.tabManager.getActiveTabId();
+      const activeTabId = this.tabService.getActiveTabId();
       if (activeTabId) {
         this.closeTab(activeTabId);
       }
     });
 
     this.ipcRenderer.on('menu-reload', () => {
-      const webview = this.tabManager.getActiveWebview();
-      if (webview && this.webviewManager.isWebviewReady(webview)) {
+      const webview = this.tabService.getActiveWebview();
+      if (webview && this.webviewService.isWebviewReady(webview)) {
         try {
           webview.reload();
         } catch (error) {
@@ -422,8 +422,8 @@ class BrowzerApp {
     });
 
     this.ipcRenderer.on('menu-go-back', () => {
-      const webview = this.tabManager.getActiveWebview();
-      if (webview && this.webviewManager.isWebviewReady(webview)) {
+      const webview = this.tabService.getActiveWebview();
+      if (webview && this.webviewService.isWebviewReady(webview)) {
         try {
           if (webview.canGoBack()) {
             webview.goBack();
@@ -435,8 +435,8 @@ class BrowzerApp {
     });
 
     this.ipcRenderer.on('menu-go-forward', () => {
-      const webview = this.tabManager.getActiveWebview();
-      if (webview && this.webviewManager.isWebviewReady(webview)) {
+      const webview = this.tabService.getActiveWebview();
+      if (webview && this.webviewService.isWebviewReady(webview)) {
         try {
           if (webview.canGoForward()) {
             webview.goForward();
@@ -455,9 +455,9 @@ class BrowzerApp {
   // ========================= PUBLIC API METHODS =========================
   public createNewTab(url: string = CONSTANTS.NEW_TAB_URL): string | null {
     try {
-      const tabId = this.tabManager.createTab(url);
+      const tabId = this.tabService.createTab(url);
       if (tabId) {
-        const webview = this.webviewManager.createWebview(tabId, url);
+        const webview = this.webviewService.createWebview(tabId, url);
         if (webview) {
           setTimeout(() => {
             this.recordingService.setupWebviewRecording(webview);
@@ -476,16 +476,16 @@ class BrowzerApp {
 
   public selectTab(tabId: string): void {
     try {
-      this.tabManager.selectTab(tabId);
+      this.tabService.selectTab(tabId);
       this.browserService.updateNavigationButtons();
-      this.tabManager.saveTabs();
+      this.tabService.saveTabs();
     } catch (error) {
       console.error('[BrowzerApp] Failed to select tab:', error);
     }
   }
 
   public closeTab(tabId: string): void {
-    this.tabManager.closeTab(tabId);
+    this.tabService.closeTab(tabId);
   }
 
   public navigateToUrl(): void {
@@ -499,7 +499,7 @@ class BrowzerApp {
       }
 
       const processedUrl = this.browserService.processUrl(url);
-      const webview = this.tabManager.getActiveWebview();
+      const webview = this.tabService.getActiveWebview();
       if (webview) {
         webview.loadURL(processedUrl);
       }
@@ -582,8 +582,8 @@ class BrowzerApp {
       closeTab: this.closeTab.bind(this),
       
       // Services
-      tabManager: this.tabManager,
-      webviewManager: this.webviewManager,
+      tabService: this.tabService,
+      webviewService: this.webviewService,
       browserService: this.browserService,
       agentService: this.agentService,
       extensionStore: this.extensionStore,
@@ -595,9 +595,9 @@ class BrowzerApp {
       memoryService: this.memoryService,
       mcpManager: this.mcpManager,
 
-      tabs: this.tabManager.getAllTabs(),
-      activeTabId: this.tabManager.getActiveTabId(),
-      getActiveWebview: () => this.tabManager.getActiveWebview(),
+      tabs: this.tabService.getAllTabs(),
+      activeTabId: this.tabService.getActiveTabId(),
+      getActiveWebview: () => this.tabService.getActiveWebview(),
       navigateToUrl: this.navigateToUrl.bind(this),
       executeAgent: () => this.agentService.execute(),
       showExtensionStore: () => this.extensionStore.show(),
@@ -618,8 +618,8 @@ class BrowzerApp {
       this.recordingService.destroy();
       this.agentService.destroy();
       this.extensionStore.destroy();
-      this.tabManager.destroy();
-      this.webviewManager.destroy();
+      this.tabService.destroy();
+      this.webviewService.destroy();
       this.browserService.destroy();
       
       // Cleanup new modular services
