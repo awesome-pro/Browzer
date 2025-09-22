@@ -91,17 +91,20 @@ private handleWebviewAction(actionData: any): void {
       }
     }
 
+    const description = this.generateWebviewActionDescription(actionData);
+    const actionType = this.mapEventTypeToActionType(actionData.type);
+
     const action: SemanticAction = {
-      id: this.generateId(),
-      type: this.mapEventTypeToActionType(actionData.type),
+      id: `webview_${this.generateId()}`, // Add webview_ prefix to identify webview actions
+      type: actionType,
       timestamp: actionData.timestamp,
-      description: this.generateWebviewActionDescription(actionData),
+      description: description,
       target: this.convertWebviewElementToElementContext(actionData.target),
       value: processedValue,
       coordinates: actionData.coordinates,
       context: this.convertWebviewPageContext(actionData.pageContext),
       intent: this.inferIntent(
-        this.mapEventTypeToActionType(actionData.type),
+        actionType,
         this.convertWebviewElementToElementContext(actionData.target),
         processedValue
       )
@@ -109,6 +112,15 @@ private handleWebviewAction(actionData: any): void {
     
     // Check for duplicates and filter out low-quality actions
     if (this.shouldRecordAction(action)) {
+      // Dispatch custom event for real-time UI updates before recording
+      window.dispatchEvent(new CustomEvent('webview-recording-action', {
+        detail: {
+          type: actionType,
+          description: description,
+          timestamp: actionData.timestamp
+        }
+      }));
+      
       this.recordAction(action);
     }
   } catch (error) {
@@ -1212,6 +1224,18 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     
     if (significantActions.includes(action.type)) {
       this.captureScreenshot('action');
+    }
+
+    // Dispatch custom event for real-time UI updates
+    // Note: For webview actions, the event is already dispatched in handleWebviewAction
+    if (!action.id.includes('webview_')) {
+      window.dispatchEvent(new CustomEvent('webview-recording-action', {
+        detail: {
+          type: action.type,
+          description: action.description,
+          timestamp: action.timestamp
+        }
+      }));
     }
 
     console.log(`📝 Recorded: ${action.description}`);

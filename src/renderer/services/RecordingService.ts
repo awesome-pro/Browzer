@@ -2,6 +2,7 @@ import { IRecordingService } from '../types';
 import { SmartRecordingEngine } from '../components/RecordingEngine';
 import { RecordingControls } from '../components/RecordingControls';
 import { RecordingIndicator } from '../components/RecordingIndicator';
+import { RecordingActionsOverlay } from '../components/RecordingActionsOverlay';
 import { AnthropicPromptGenerator } from '../components/PropmtGenerator';
 
 /**
@@ -11,6 +12,7 @@ export class RecordingService implements IRecordingService {
   private recordingEngine: SmartRecordingEngine;
   private recordingControls: RecordingControls | null = null;
   private recordingIndicator: RecordingIndicator | null = null;
+  private recordingActionsOverlay: RecordingActionsOverlay | null = null;
   private isInitialized: boolean = false;
 
   constructor() {
@@ -21,6 +23,7 @@ export class RecordingService implements IRecordingService {
     try {
       this.recordingControls = new RecordingControls();
       this.recordingIndicator = new RecordingIndicator();
+      this.recordingActionsOverlay = new RecordingActionsOverlay();
       
       (window as any).sessionManager = {
         show: () => {
@@ -48,11 +51,29 @@ export class RecordingService implements IRecordingService {
       const sessionId = (e as CustomEvent).detail?.sessionId || 
         this.recordingEngine.getActiveSession()?.id || 'unknown';
       
+      // Show the actions overlay when recording starts
+      if (this.recordingActionsOverlay) {
+        this.recordingActionsOverlay.show();
+      }
+      
       this.notifyAllWebviews('start-recording', sessionId);
     });
     
     window.addEventListener('recording:stop', () => {
+      // Hide the actions overlay when recording stops
+      if (this.recordingActionsOverlay) {
+        this.recordingActionsOverlay.hide();
+      }
+      
       this.notifyAllWebviews('stop-recording');
+    });
+    
+    // Listen for recording actions from the engine
+    window.addEventListener('webview-recording-action', (e: Event) => {
+      const actionData = (e as CustomEvent).detail;
+      if (this.recordingActionsOverlay && actionData) {
+        this.recordingActionsOverlay.addAction(actionData);
+      }
     });
     
     window.addEventListener('show-toast', (e: Event) => {
@@ -453,6 +474,12 @@ export class RecordingService implements IRecordingService {
       if (this.recordingIndicator) {
         this.recordingIndicator.destroy();
         this.recordingIndicator = null;
+      }
+      
+      // Clean up actions overlay
+      if (this.recordingActionsOverlay) {
+        this.recordingActionsOverlay.hide();
+        this.recordingActionsOverlay = null;
       }
       
       // Remove session manager button
