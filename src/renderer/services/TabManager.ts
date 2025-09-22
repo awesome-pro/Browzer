@@ -54,8 +54,6 @@ export class TabManager implements ITabManager {
       this.setupEventListeners();
       this.setupAutoSaveEvents();
       this.loadTabs();
-      
-      console.log('[TabManager] Elements initialized successfully');
     } catch (error) {
       console.error('[TabManager] Failed to initialize elements:', error);
     }
@@ -77,7 +75,6 @@ export class TabManager implements ITabManager {
     this.tabPreviewCanvas.width = this.PREVIEW_WIDTH;
     this.tabPreviewCanvas.height = this.PREVIEW_HEIGHT;
 
-    console.log('[TabManager] Tab preview initialized');
   }
 
   private setupEventListeners(): void {
@@ -171,31 +168,31 @@ export class TabManager implements ITabManager {
   }
 
   // ========================= TAB MANAGEMENT =========================
-  public createTab(url: string = CONSTANTS.NEW_TAB_URL): string | null {
+  public createTab(url: string = CONSTANTS.NEW_TAB_URL, title?: string): string | null {
     if (!this.tabsContainer || !this.webviewsContainer) {
       console.error('[TabManager] Cannot create tab: containers not found');
       return null;
     }
-
+  
     try {
       const tabId = 'tab-' + Date.now();
       const webviewId = 'webview-' + tabId;
-
+  
       // Create tab element
       const tab = document.createElement('div');
       tab.className = 'tab';
       tab.id = tabId;
       tab.dataset.webviewId = webviewId;
-
-      const initialTitle = this.getInitialTitle(url);
+  
+      const initialTitle = title || this.getInitialTitle(url);
       tab.innerHTML = `
         <div class="tab-favicon"></div>
         <span class="tab-title">${initialTitle}</span>
         <button class="tab-close">×</button>
       `;
-
+  
       this.tabsContainer.appendChild(tab);
-
+  
       // Create tab info
       const newTab: TabInfo = {
         id: tabId,
@@ -207,12 +204,11 @@ export class TabManager implements ITabManager {
         currentHistoryIndex: -1,
         isProblematicSite: URLUtils.isProblematicSite(url)
       };
-
+  
       this.tabs.push(newTab);
       this.setupTabEventListeners(tab, tabId);
       this.saveTabs();
-
-      console.log('[TabManager] Tab created successfully:', tabId);
+  
       return tabId;
     } catch (error) {
       console.error('[TabManager] Error creating tab:', error);
@@ -232,7 +228,7 @@ export class TabManager implements ITabManager {
     }
     return 'Loading...';
   }
-
+  
   private setupTabEventListeners(tab: HTMLElement, tabId: string): void {
     tab.addEventListener('click', (e) => {
       if (!e.target || !(e.target as HTMLElement).classList.contains('tab-close')) {
@@ -274,17 +270,11 @@ export class TabManager implements ITabManager {
 
   public selectTab(tabId: string): void {
     try {
-      if (!this.tabs || this.tabs.length === 0) {
-        console.log('[TabManager] No tabs available');
-        return;
-      }
+      if (!this.tabs || this.tabs.length === 0) return;
 
       const tabIndex = this.tabs.findIndex(tab => tab.id === tabId);
-      if (tabIndex === -1) {
-        console.error('[TabManager] Tab not found:', tabId);
-        return;
-      }
-
+      if (tabIndex === -1) return;
+      
       this.activeTabId = tabId;
       this.tabs.forEach(tab => tab.isActive = tab.id === tabId);
 
@@ -299,9 +289,8 @@ export class TabManager implements ITabManager {
 
       this.handleTabVisibility(this.tabs[tabIndex]);
 
-      console.log('[TabManager] Tab selected:', tabId);
     } catch (error) {
-      console.error('[TabManager] Error in selectTab:', error);
+    console.error('[TabManager] Error in selectTab:', error);
     }
   }
 
@@ -334,32 +323,32 @@ export class TabManager implements ITabManager {
   public closeTab(tabId: string): void {
     try {
       if (this.tabs.length <= 1) {
-        console.log('[TabManager] Cannot close the last tab');
         return;
       }
-
+  
       const tabIndex = this.tabs.findIndex(tab => tab.id === tabId);
-      if (tabIndex === -1) {
-        console.error('[TabManager] Tab not found:', tabId);
-        return;
-      }
-
+      if (tabIndex === -1) return;
+  
       const webviewId = this.tabs[tabIndex].webviewId;
       const webview = document.getElementById(webviewId);
       const tabElement = document.getElementById(tabId);
-
+  
       if (tabElement) tabElement.remove();
       if (webview) webview.remove();
-
+  
       this.tabs.splice(tabIndex, 1);
-
+  
       if (this.activeTabId === tabId && this.tabs.length > 0) {
         const newTabId = this.tabs[Math.max(0, tabIndex - 1)].id;
         this.selectTab(newTabId);
       }
-
+  
+      // Notify history service about tab closure
+      window.dispatchEvent(new CustomEvent('tab-closed', { 
+        detail: { tabId } 
+      }));
+  
       this.saveTabs();
-      console.log('[TabManager] Tab closed:', tabId);
     } catch (error) {
       console.error('[TabManager] Error closing tab:', error);
     }
@@ -440,11 +429,9 @@ export class TabManager implements ITabManager {
     const loadingTabs = document.querySelectorAll('.tab.loading');
     
     if (loadingTabs.length > 0) {
-      console.log(`[TabManager] Found ${loadingTabs.length} tabs in loading state - clearing ALL`);
       
       loadingTabs.forEach(tab => {
         tab.classList.remove('loading');
-        console.log(`[TabManager] Force cleared loading state for tab: ${tab.id}`);
       });
     }
   }
@@ -496,7 +483,6 @@ export class TabManager implements ITabManager {
         this.tabPreviewLoading.classList.add('hidden');
       }
     } catch (error) {
-      console.error('[TabManager] Error capturing tab preview:', error);
       this.drawFallbackPreview(tab);
       this.tabPreviewLoading.classList.add('hidden');
     }
@@ -599,7 +585,6 @@ export class TabManager implements ITabManager {
         throw new Error('No data URL returned');
       }
     } catch (error) {
-      console.error('[TabManager] Fallback screenshot capture failed:', error);
       throw error;
     }
   }
@@ -684,7 +669,6 @@ export class TabManager implements ITabManager {
       const sessionData = JSON.parse(saved);
       if (!sessionData.tabs || sessionData.tabs.length === 0) return;
 
-      console.log('[TabManager] Loading saved tabs:', sessionData.tabs.length);
     } catch (error) {
       console.error('[TabManager] Error loading tabs:', error);
     }
@@ -811,6 +795,17 @@ export class TabManager implements ITabManager {
     return this.tabs.find(tab => tab.webviewId === webviewId) || null;
   }
   
+  public getTabById(tabId: string): TabInfo | null {
+    return this.tabs.find(tab => tab.id === tabId) || null;
+  }
+
+
+  public getWebviewByTabId(tabId: string): any {
+    const tab = this.getTabById(tabId);
+    if (!tab) return null;
+    return document.getElementById(tab.webviewId);
+  }
+  
   public getTabIdFromWebviewId(webviewId: string): string | null {
     const tab = this.getTabByWebviewId(webviewId);
     return tab ? tab.id : null;
@@ -848,7 +843,7 @@ export class TabManager implements ITabManager {
     });
     window.dispatchEvent(event);
   }
-
+  
   // ========================= CLEANUP =========================
   public destroy(): void {
     try {
@@ -889,8 +884,6 @@ export class TabManager implements ITabManager {
       this.newTabCallback = undefined;
       this.tabSelectCallback = undefined;
       this.tabCloseCallback = undefined;
-
-      console.log('[TabManager] Destroyed successfully');
     } catch (error) {
       console.error('[TabManager] Error during destruction:', error);
     }

@@ -346,6 +346,10 @@ class BrowzerApp {
     this.browserService.onRunAgentClick(() => {
       this.agentService.execute();
     });
+
+    this.browserService.onHistoryClick(() => {
+      this.historyService.showHistoryPage();
+    });
   }
 
   private setupTabListeners(): void {

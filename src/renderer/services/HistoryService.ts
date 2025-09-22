@@ -3,13 +3,15 @@ import { HistoryItem } from '../../shared/types';
 import { TabManager } from './TabManager';
 
 export class HistoryService {
-  private readonly HISTORY_STORAGE_KEY = 'browser_history';
+  private readonly HISTORY_STORAGE_KEY = CONSTANTS.HISTORY_STORAGE_KEY;
   private tabManager: TabManager;
   private history: HistoryItem[] = [];
+  private historyTabId: string | null = null;
 
   constructor(tabManager: TabManager) {
     this.tabManager = tabManager;
     this.loadHistory();
+    this.setupHistoryPageCommunication();
   }
 
   private loadHistory(): void {
@@ -20,7 +22,7 @@ export class HistoryService {
         console.log(`Loaded ${this.history.length} history items`);
       }
     } catch (error) {
-      console.error('Error loading history:', error);
+      console.error('[History] Error loading history:', error);
       this.history = [];
     }
   }
@@ -29,7 +31,7 @@ export class HistoryService {
     try {
       localStorage.setItem(this.HISTORY_STORAGE_KEY, JSON.stringify(this.history));
     } catch (error) {
-      console.error('Error saving history:', error);
+      console.error('[History] Error saving history:', error);
     }
   }
 
@@ -74,9 +76,8 @@ export class HistoryService {
       }
 
       this.saveHistory();
-      console.log('Added history item:', { url, title });
     } catch (error) {
-      console.error('Error adding history item:', error);
+      console.error('[History] Error adding history item:', error);
     }
   }
 
@@ -299,56 +300,179 @@ export class HistoryService {
     }
   }
 
+  private setupHistoryPageCommunication(): void {
+    window.addEventListener('message', (event) => {
+      if (event.data?.source === 'history-page') {
+        this.handleHistoryPageMessage(event.data);
+      }
+    });
+
+    window.addEventListener('tab-closed', (event: any) => {
+      if (event.detail?.tabId) {
+        this.onHistoryTabClosed(event.detail.tabId);
+      }
+    });
+  }
+
+  private handleHistoryPageMessage(message: any): void {
+    switch (message.type) {
+      case 'request-history-data':
+        this.sendHistoryDataToPage();
+        break;
+      
+      case 'delete-history-item':
+        this.deleteHistoryItem(message.itemId);
+        this.sendHistoryDataToPage();
+        break;
+      
+      case 'clear-history':
+        this.clearHistory();
+        this.sendHistoryDataToPage();
+        break;
+      
+      case 'navigate-to-url':
+        this.navigateToUrl(message.url);
+        break;
+      
+      case 'search-history':
+        this.sendSearchResults(message.query);
+        break;
+    }
+  }
+
+  private sendHistoryDataToPage(): void {
+    const historyWebview = this.getHistoryWebview();
+    if (historyWebview) {
+      const historyData = this.getHistory();
+      console.log('[History] Sending history data to page:', historyData.length, 'items');
+      
+      historyWebview.executeJavaScript(`
+        window.__pendingHistoryData = ${JSON.stringify(historyData)};
+        
+        if (window.historyManager) {
+          console.log('[History Page] historyManager found, sending data directly');
+          window.historyManager.receiveHistoryData(window.__pendingHistoryData);
+        } else if (window.receiveHistoryData) {
+          console.log('[History Page] receiveHistoryData function found, using that');
+          window.receiveHistoryData(window.__pendingHistoryData);
+        } else {
+          console.log('[History Page] No receiver found yet, will try again in 1 second');
+          setTimeout(() => {
+            if (window.historyManager) {
+              console.log('[History Page] historyManager found on retry, sending data');
+              window.historyManager.receiveHistoryData(window.__pendingHistoryData);
+            } else if (window.receiveHistoryData) {
+              console.log('[History Page] receiveHistoryData function found on retry');
+              window.receiveHistoryData(window.__pendingHistoryData);
+            } else {
+              console.warn('[History Page] Still no receiver found after delay');
+            }
+          }, 1000);
+        }
+      `).catch((err: any) => {
+        console.error('[History] Error sending history data:', err);
+      });
+    } else {
+      console.error('[History] No history webview found to send data to');
+    }
+  }
+
+  private sendSearchResults(query: string): void {
+    const historyWebview = this.getHistoryWebview();
+    if (historyWebview) {
+      const results = this.searchHistory(query);
+      console.log('[History] Sending search results to page:', results.length, 'items');
+      
+      historyWebview.executeJavaScript(`
+        window.__pendingSearchResults = ${JSON.stringify(results)};
+        
+        if (window.historyManager) {
+          console.log('[History Page] Sending search results to historyManager');
+          window.historyManager.receiveSearchResults(window.__pendingSearchResults);
+        } else if (window.receiveSearchResults) {
+          console.log('[History Page] Using receiveSearchResults function');
+          window.receiveSearchResults(window.__pendingSearchResults);
+        } else {
+          console.log('[History Page] No search results receiver found, will try again');
+          setTimeout(() => {
+            if (window.historyManager) {
+              window.historyManager.receiveSearchResults(window.__pendingSearchResults);
+            } else if (window.receiveSearchResults) {
+              window.receiveSearchResults(window.__pendingSearchResults);
+            }
+          }, 1000);
+        }
+      `).catch((err: any) => {
+        console.error('[History] Error sending search results:', err);
+      });
+    } else {
+      console.error('[History] No history webview found to send search results to');
+    }
+  }
+
+  private getHistoryWebview(): any {
+    if (this.historyTabId) {
+      return this.tabManager.getWebviewByTabId(this.historyTabId);
+    }
+    return null;
+  }
+
+  private navigateToUrl(url: string): void {
+    const activeTabId = this.tabManager.getActiveTabId();
+    if (activeTabId && activeTabId !== this.historyTabId) {
+      const webview = this.tabManager.getActiveWebview();
+      if (webview) {
+        webview.loadURL(url);
+      }
+    } else {
+      const newTabId = this.tabManager.createTab(url);
+      if (newTabId) {
+        this.tabManager.selectTab(newTabId);
+      }
+    }
+  }
+
   public showHistoryPage(): void {
-    console.log('=== SHOW HISTORY PAGE CALLED ===');
     
     try {
       const webview = this.tabManager.getActiveWebview();
-      console.log('Active webview found:', !!webview);
       
       if (webview) {
-        // For packaged apps, use getResourcePath instead of cwd
         window.electronAPI.getResourcePath('src/renderer/history.html').then(historyFilePath => {
           const historyURL = `file://${historyFilePath}`;
           console.log('[History] Resource path:', historyFilePath);
           console.log('[History] Loading history URL:', historyURL);
           
           const historyLoadHandler = () => {
-            console.log('History page loaded, injecting data...');
+          
+          try {
+            const historyData = localStorage.getItem(this.HISTORY_STORAGE_KEY) || '[]';
             
-            try {
-              const historyData = localStorage.getItem(this.HISTORY_STORAGE_KEY) || '[]';
-              const parsedHistory = JSON.parse(historyData);
-              console.log('Injecting history data:', parsedHistory.length, 'items');
-              
-              webview.executeJavaScript(`
-                if (window.receiveHistoryData) {
-                  window.receiveHistoryData(${historyData});
-                } else {
-                  window.__pendingHistoryData = ${historyData};
-                  setTimeout(() => {
-                    if (window.receiveHistoryData && window.__pendingHistoryData) {
-                      window.receiveHistoryData(window.__pendingHistoryData);
-                      delete window.__pendingHistoryData;
-                    }
-                  }, 500);
-                }
-              `).then(() => {
-                console.log('History data injected successfully');
-              }).catch((err: any) => {
-                console.error('Error injecting history data:', err);
-              });
-              
-            } catch (error) {
-              console.error('Error preparing history data:', error);
-            }
+            webview.executeJavaScript(`
+              if (window.receiveHistoryData) {
+                window.receiveHistoryData(${historyData});
+              } else {
+                window.__pendingHistoryData = ${historyData};
+                setTimeout(() => {
+                  if (window.receiveHistoryData && window.__pendingHistoryData) {
+                    window.receiveHistoryData(window.__pendingHistoryData);
+                    delete window.__pendingHistoryData;
+                  }
+                }, 500);
+              }
+            `).catch((err: any) => {
+              console.error('[History] Error injecting history data:', err);
+            });
             
-            webview.removeEventListener('did-finish-load', historyLoadHandler);
-          };
-            
+          } catch (error) {
+            console.error('Error preparing history data:', error);
+          }
+          
+          webview.removeEventListener('did-finish-load', historyLoadHandler);
+        };
+          
           webview.addEventListener('did-finish-load', historyLoadHandler);
           webview.loadURL(historyURL);
-          console.log('History URL loaded successfully');
         }).catch(error => {
           console.error('[History] Failed to get resource path:', error);
           // Fallback to development path
@@ -357,12 +481,9 @@ export class HistoryService {
           console.log('[History] Fallback to CWD path:', historyURL);
           
           const historyLoadHandler = () => {
-            console.log('History page loaded, injecting data...');
             
             try {
               const historyData = localStorage.getItem(this.HISTORY_STORAGE_KEY) || '[]';
-              const parsedHistory = JSON.parse(historyData);
-              console.log('Injecting history data:', parsedHistory.length, 'items');
               
               webview.executeJavaScript(`
                 if (window.receiveHistoryData) {
@@ -376,9 +497,7 @@ export class HistoryService {
                     }
                   }, 500);
                 }
-              `).then(() => {
-                console.log('History data injected successfully');
-              }).catch((err: any) => {
+              `).catch((err: any) => {
                 console.error('Error injecting history data:', err);
               });
               
@@ -390,30 +509,39 @@ export class HistoryService {
           };
           
           webview.addEventListener('did-finish-load', historyLoadHandler);
-          webview.loadURL(historyURL);
-          console.log('History URL loaded successfully (fallback)');
+          webview.loadURL(historyURL);  
         });
         
       } else {
-        console.log('[History] No active webview, creating new tab...');
-        // For packaged apps, use getResourcePath instead of cwd
         window.electronAPI.getResourcePath('src/renderer/history.html').then(historyFilePath => {
           const historyURL = `file://${historyFilePath}`;
           console.log('[History] Resource path:', historyFilePath);
-          console.log('[History] Creating new history tab with URL:', historyURL);
-          this.tabManager.createTab(historyURL);
         }).catch(error => {
           console.error('[History] Failed to get resource path:', error);
-          // Fallback to development path
           const cwd = window.electronAPI.cwd();
           const historyURL = `file://${window.electronAPI.path.join(cwd, 'src/renderer/history.html')}`;
           console.log('[History] Fallback to CWD path:', historyURL);
-          this.tabManager.createTab(historyURL);
+          const newTabId = this.tabManager.createTab(historyURL);
         });
       }
     } catch (error) {
-      console.error('[History] ⚠️ Error in showHistoryPage:', error);
-      // this.showToast('Error opening history page: ' + (error as Error).message, 'error');
+      console.error('[History] Error in showHistoryPage:', error);
+      this.showToast('[History] Error opening history page: ' + (error as Error).message, 'error');
     }
   }
+
+
+  private showToast(message: string, type: string = 'info'): void {
+    // Dispatch custom event for toast
+    window.dispatchEvent(new CustomEvent('show-toast', {
+      detail: { message, type }
+    }));
+  }
+
+  public onHistoryTabClosed(tabId: string): void {
+    if (this.historyTabId === tabId) {
+      this.historyTabId = null;
+    }
+  }
+
 } 

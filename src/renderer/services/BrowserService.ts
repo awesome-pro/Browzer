@@ -13,6 +13,7 @@ export class BrowserService implements IBrowserService {
   private reloadBtn: HTMLButtonElement | null = null;
   private goBtn: HTMLButtonElement | null = null;
   private runAgentBtn: HTMLButtonElement | null = null;
+  private historyBtn: HTMLButtonElement | null = null;
 
   private tabManager: TabManager;
   private extensionStore: ExtensionStore;
@@ -23,6 +24,7 @@ export class BrowserService implements IBrowserService {
   private goClickCallback?: () => void;
   private urlEnterCallback?: () => void;
   private runAgentClickCallback?: () => void;
+  private historyClickCallback?: () => void;
 
   constructor(ipcRenderer: IpcRenderer, tabManager: TabManager, extensionStore: ExtensionStore) {
     this.ipcRenderer = ipcRenderer;
@@ -38,6 +40,7 @@ export class BrowserService implements IBrowserService {
       this.reloadBtn = document.getElementById('reloadBtn') as HTMLButtonElement;
       this.goBtn = document.getElementById('goBtn') as HTMLButtonElement;
       this.runAgentBtn = document.getElementById('runAgentBtn') as HTMLButtonElement;
+      this.historyBtn = document.getElementById('historyBtn') as HTMLButtonElement;
 
       this.setupEventListeners();
       console.log('[BrowserService] Elements initialized successfully');
@@ -100,6 +103,15 @@ export class BrowserService implements IBrowserService {
         }
       });
     }
+
+    // History button
+    if (this.historyBtn) {
+      this.historyBtn.addEventListener('click', () => {
+        if (this.historyClickCallback) {
+          this.historyClickCallback();
+        }
+      });
+    }
   }
 
   public onBackClick(callback: () => void): void {
@@ -124,6 +136,10 @@ export class BrowserService implements IBrowserService {
 
   public onRunAgentClick(callback: () => void): void {
     this.runAgentClickCallback = callback;
+  }
+
+  public onHistoryClick(callback: () => void): void {
+    this.historyClickCallback = callback;
   }
 
   public updateNavigationButtons(): void {
@@ -275,6 +291,11 @@ export class BrowserService implements IBrowserService {
         this.runAgentBtn.parentNode?.replaceChild(newRunAgentBtn, this.runAgentBtn);
       }
       
+      if (this.historyBtn) {
+        const newHistoryBtn = this.historyBtn.cloneNode(true) as HTMLButtonElement;
+        this.historyBtn.parentNode?.replaceChild(newHistoryBtn, this.historyBtn);
+      }
+      
       if (this.urlBar) {
         const newUrlBar = this.urlBar.cloneNode(true) as HTMLInputElement;
         this.urlBar.parentNode?.replaceChild(newUrlBar, this.urlBar);
@@ -287,6 +308,7 @@ export class BrowserService implements IBrowserService {
       this.reloadBtn = null;
       this.goBtn = null;
       this.runAgentBtn = null;
+      this.historyBtn = null;
 
       // Clear callbacks
       this.backClickCallback = undefined;
@@ -295,6 +317,7 @@ export class BrowserService implements IBrowserService {
       this.goClickCallback = undefined;
       this.urlEnterCallback = undefined;
       this.runAgentClickCallback = undefined;
+      this.historyClickCallback = undefined;
 
       console.log('[BrowserService] Destroyed successfully');
     } catch (error) {
