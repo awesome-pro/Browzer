@@ -1714,6 +1714,25 @@ class WebviewRecordingEngine {
         )
       );
       
+      // Extract the actual destination URL from Google redirect URLs
+      let actualDestinationUrl = href;
+      let actualDestinationDomain = linkDomain;
+      
+      if (linkDomain.includes('google.com') && linkUrl.pathname === '/url') {
+        // This is a Google redirect URL, extract the actual destination
+        const urlParam = linkUrl.searchParams.get('url') || linkUrl.searchParams.get('q');
+        if (urlParam) {
+          try {
+            const destUrl = new URL(urlParam);
+            actualDestinationUrl = urlParam;
+            actualDestinationDomain = destUrl.hostname;
+            console.log(`🔍[Webview Preload] Extracted actual destination: ${actualDestinationUrl}`);
+          } catch (e) {
+            console.warn('[Webview Preload] Failed to parse destination URL:', urlParam);
+          }
+        }
+      }
+      
       // Convert external links or Google search result links to navigation actions
       if (isExternalLink || isGoogleSearchResult) {
         console.log('🔵[Webview Preload] Converting link click to navigation:', href);
@@ -1739,20 +1758,22 @@ class WebviewRecordingEngine {
             elementType: 'navigation',
             purpose: isGoogleSearchResult ? 'google_search_result' : 'external_navigation',
             context: isGoogleSearchResult ? 'google_search_result_click' : 'external_link_click',
-            href: href,
+            href: actualDestinationUrl, // Use actual destination URL
             target: linkElement.getAttribute('target'),
-            targetUrl: href,
+            targetUrl: actualDestinationUrl, // Use actual destination URL
             uniqueIdentifiers: [],
             semanticRole: 'navigation',
             interactionContext: isGoogleSearchResult ? 'google-search-result' : 'external-link',
             parentContext: null
           },
           value: {
-            url: href,
+            url: actualDestinationUrl, // Use actual destination URL
             linkText: linkElement.textContent?.trim() || '',
             navigationType: isGoogleSearchResult ? 'google_search_result' : 'external_link',
             fromDomain: currentDomain,
-            toDomain: linkDomain
+            toDomain: actualDestinationDomain, // Use actual destination domain
+            originalUrl: href, // Store the original URL for reference
+            isRedirect: actualDestinationUrl !== href // Flag if this was a redirect
           },
           coordinates: this.getEventCoordinates(event),
           pageContext: this.getPageContext()

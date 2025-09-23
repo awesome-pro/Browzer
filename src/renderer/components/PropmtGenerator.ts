@@ -6,6 +6,9 @@ export class AnthropicPromptGenerator {
   static generateClaudeSystemPrompt(session: SmartRecordingSession): string {
     const context = this.convertToClaudeContext(session);
     
+    // Preprocess the steps to improve descriptions
+    this.improveNavigationDescriptions(context.steps);
+    
     return `You are a precision browser automation expert that generates executable step sequences based on recorded user workflows.
 
 ## CORE MISSION
@@ -613,5 +616,42 @@ ${this.extractExactSelectors(session)}
     return { searchTerms, domains, actions };
   }
 
-
+  /**
+   * Improves navigation descriptions for better clarity in the prompt
+   * Especially handles Google search result navigation
+   */
+  private static improveNavigationDescriptions(steps: any[]): void {
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      
+      // Fix Google search result navigation descriptions
+      if (step.action === 'navigation' && step.description) {
+        // Check for Google URL redirects
+        if (step.description.includes('google.com/url') || 
+            step.description.includes('Navigate to google.com')) {
+          
+          // Look ahead for the actual destination
+          const nextStep = steps[i + 1];
+          if (nextStep && nextStep.action === 'click' && 
+              nextStep.description.includes('Page loaded')) {
+            
+            // Extract the actual destination from the next step
+            const urlMatch = nextStep.description.match(/https?:\/\/([^\/\s]+)/);
+            if (urlMatch) {
+              const domain = urlMatch[1].replace('www.', '');
+              
+              // Replace with a clearer description
+              step.description = `Navigate from search results to ${domain}`;
+              
+              // If we have link text, include it
+              const linkTextMatch = step.description.match(/\("([^"]+)"\)/);
+              if (linkTextMatch) {
+                step.description = `Navigate from search results to ${domain} ("${linkTextMatch[1]}")`;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }

@@ -47,7 +47,6 @@ export class AgentService implements IAgentService {
   public setupControls(): void {
     try {
       this.setupAgentControls();
-      console.log('[AgentService] Controls setup successfully');
     } catch (error) {
       console.error('[AgentService] Failed to setup controls:', error);
     }
@@ -59,7 +58,6 @@ export class AgentService implements IAgentService {
     const lastProcessedTime = this.globalQueryTracker.get(normalizedQuery) || 0;
     
     if (currentTime - lastProcessedTime < windowMs) {
-      console.log('🚨 [GLOBAL DUPLICATE FIX] Query recently processed, skipping:', normalizedQuery.substring(0, 50));
       return true;
     }
     
@@ -82,10 +80,8 @@ export class AgentService implements IAgentService {
     // Initialize chat UI in the fixed container
     const chatInputContainer = document.querySelector('.chat-input-container');
     if (chatInputContainer) {
-      console.log('[AgentService] Chat input container found');   
       let chatInputArea = document.querySelector('.chat-input-area');
       if (!chatInputArea) {
-        console.log('[AgentService] Creating chat input area');
         chatInputArea = document.createElement('div');
         chatInputArea.className = 'chat-input-area';
         chatInputArea.innerHTML = `
@@ -112,14 +108,12 @@ export class AgentService implements IAgentService {
         chatInputContainer.appendChild(chatInputArea);
         this.setupChatInputHandlers();
       } else {
-        console.log('[AgentService] Chat input area already exists, ensuring handlers are set up');
         this.setupChatInputHandlers();
       }
     }
   }
 
   private setupChatInputHandlers(): void {
-    console.log('[AgentService] Setting up chat input handlers...');
     
     setTimeout(() => {
       const sendButton = document.getElementById('sendMessageBtn');
@@ -130,10 +124,8 @@ export class AgentService implements IAgentService {
         return;
       }
       
-      console.log('[AgentService] Found chat elements, attaching handlers...');
       
       if ((sendButton as any).hasHandlers) {
-        console.log('[AgentService] Handlers already set up, skipping');
         return;
       }
       
@@ -142,7 +134,6 @@ export class AgentService implements IAgentService {
         if (message) {
           const selectedMode = document.querySelector('input[name="chatMode"]:checked') as HTMLInputElement;
           const mode = selectedMode ? selectedMode.value : 'ask';
-          console.log('[AgentService] Selected mode:', mode);
           
           let placeholderText = 'Ask a follow-up question...';
           if (mode === 'do') {
@@ -155,7 +146,6 @@ export class AgentService implements IAgentService {
           this.addMessageToChat('user', message);
           
           if (mode === 'do') {
-            console.log('[AgentService] Using DoAgent for automation task');
             this.processDoTask(message);
           } else if (mode === 'execute') {
             if (this.executeAgentService) {
@@ -168,10 +158,8 @@ export class AgentService implements IAgentService {
             }
           } else {
             if (this.selectedWebpageContexts.length > 0) {
-              console.log('🚨 [SEND DEBUG] Found contexts, calling processFollowupQuestionWithContexts');
               this.processFollowupQuestionWithContexts(message, this.selectedWebpageContexts);
             } else {
-              console.log('🚨 [SEND DEBUG] Calling processFollowupQuestion');
               this.processFollowupQuestion(message);
             }
           }
@@ -226,7 +214,6 @@ export class AgentService implements IAgentService {
 
   public async execute(): Promise<void> {
     if (this.isExecuting) {
-      console.log('[AgentService] Agent already executing, skipping');
       return;
     }
 
@@ -267,7 +254,6 @@ export class AgentService implements IAgentService {
       }
 
       if (this.isQueryRecentlyProcessed(query)) {
-        console.log('🚨 [GLOBAL DUPLICATE FIX] Duplicate query detected in executeAgent, aborting');
         this.showToast('This query was just processed, skipping duplicate', 'info');
         return;
       }
@@ -323,7 +309,6 @@ export class AgentService implements IAgentService {
         } finally {
           // Always clear the execution flag
           this.isExecuting = false;
-          console.log('[executeAgent] Workflow execution finished, clearing execution flag');
         }
         
         return; // Don't execute single extension path
@@ -345,7 +330,6 @@ export class AgentService implements IAgentService {
         }]
       };
       
-      console.log('🚨 [SINGLE EXTENSION DEBUG] Creating progress indicator for single extension:', singleExtensionWorkflowData);
       const progressElement = this.workflowService.addWorkflowProgressToChat(singleExtensionWorkflowData);
       
       // Start the progress indicator
@@ -419,7 +403,6 @@ export class AgentService implements IAgentService {
           }
           
           if (summary && summary.trim()) {
-            console.log('[Memory] Storing agent result in memory from workflow-complete');
             
             // Get current page info for memory context
             const webview = this.getActiveWebview();
@@ -441,82 +424,9 @@ export class AgentService implements IAgentService {
       this.addMessageToChat('assistant', `Error: ${(error as Error).message}`);
     } finally {
       this.isExecuting = false;
-      console.log('[AgentService] Clearing execution flag on function completion');
     }
   }
 
-  private setupSessionSelectorUI(): void {
-    // Check if we need to create the session list container
-    let sessionListContainer = document.querySelector('.session-list-container');
-    
-    if (!sessionListContainer) {
-      // Create the session list container
-      const agentContainer = document.querySelector('.agent-container');
-      const chatSidebar = document.createElement('div');
-      chatSidebar.className = 'chat-sidebar';
-      
-      const chatSidebarContent = document.createElement('div');
-      chatSidebarContent.className = 'chat-sidebar-content';
-      
-      sessionListContainer = document.createElement('div');
-      sessionListContainer.className = 'session-list-container';
-      
-      // Create session list header
-      const sessionListHeader = document.createElement('div');
-      sessionListHeader.className = 'session-list-header';
-      sessionListHeader.innerHTML = `
-        <h3>Recording Sessions</h3>
-        <button class="refresh-btn" title="Refresh">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/>
-            <path d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/>
-          </svg>
-        </button>
-      `;
-      
-      // Create session list items container
-      const sessionListItems = document.createElement('div');
-      sessionListItems.className = 'session-list-items';
-      sessionListItems.id = 'sessionListItems';
-      
-      // Assemble the session list container
-      sessionListContainer.appendChild(sessionListHeader);
-      sessionListContainer.appendChild(sessionListItems);
-      
-      // Add to the DOM
-      if (agentContainer) {
-        chatSidebarContent.appendChild(sessionListContainer);
-        chatSidebar.appendChild(chatSidebarContent);
-        
-        // Insert before the agent-results
-        const agentResults = document.getElementById('agentResults');
-        if (agentResults) {
-          agentContainer.insertBefore(chatSidebar, agentResults);
-          
-          // Add session selection required message
-          const selectionMessage = document.createElement('div');
-          selectionMessage.className = 'session-selection-required';
-          selectionMessage.id = 'sessionSelectionRequired';
-          selectionMessage.innerHTML = `
-            <strong>Please select a recording session</strong>
-            <p>Select a recording from the list to use as context for your task</p>
-          `;
-          agentResults.insertBefore(selectionMessage, agentResults.firstChild);
-        } else {
-          agentContainer.appendChild(chatSidebar);
-        }
-      }
-      
-      // Setup refresh button
-      const refreshBtn = sessionListHeader.querySelector('.refresh-btn');
-      if (refreshBtn) {
-        refreshBtn.addEventListener('click', () => this.loadRecordingSessions());
-      }
-    }
-    
-    // Load the recording sessions
-    this.loadRecordingSessions();
-  }
 
   private loadRecordingSessions(): void {
     if (!this.recordingService) {
@@ -667,11 +577,6 @@ export class AgentService implements IAgentService {
         });
       }
     }
-    
-    console.log(`[MCP] Retrieved ${tools.length} tools for Ask query`);
-    if (tools.length > 0) {
-      console.log('[MCP] Available tools:', tools.map(t => t.name).join(', '));
-    }
     return tools;
   }
 
@@ -687,7 +592,6 @@ export class AgentService implements IAgentService {
 
   private async processFollowupQuestion(question: string): Promise<void> {
     if (this.isExecuting) {
-      console.log('[AgentService] Agent already executing, skipping');
       return;
     }
 
@@ -799,7 +703,6 @@ export class AgentService implements IAgentService {
           }
           
           if (summary && summary.trim()) {
-            console.log('[Memory] Storing followup result in memory');
             
             // Get current page info for memory context
             const webview = this.getActiveWebview();
@@ -823,7 +726,6 @@ export class AgentService implements IAgentService {
 
   private async processFollowupQuestionWithContexts(question: string, contexts: WebpageContext[]): Promise<void> {
     if (this.isExecuting) {
-      console.log('[AgentService] Workflow already executing, skipping follow-up execution');
       this.showToast('Workflow already in progress...', 'info');
       return;
     }
@@ -853,7 +755,6 @@ export class AgentService implements IAgentService {
       }
       
       const currentUrl = activeWebview.src || '';
-      console.log('[AgentService] Extracting page content from:', currentUrl);
       const pageContent = await extractPageContent(activeWebview);
       
       const enhancedPageContent = {
@@ -937,10 +838,6 @@ export class AgentService implements IAgentService {
         mcpTools: await this.getMcpToolsForAsk() // Add MCP tools to extension data
       };
       
-      console.log(`[processFollowupQuestionWithContexts] Executing extension with question: ${extensionId} (confidence: ${routingResult.confidence}) - ${question}`);
-      console.log(`Follow-up with contexts routing reason: ${routingResult.reason}`);
-      
-      const startTime = Date.now();
       
       try {
         const result = await this.ipcRenderer.invoke('execute-python-extension', {
@@ -951,9 +848,6 @@ export class AgentService implements IAgentService {
           selectedProvider: provider
         });
         
-        const endTime = Date.now();
-        
-        console.log('[processFollowupQuestionWithContexts] Extension result received:', result);
         
         // Complete the progress indicator
         if (progressElement && (progressElement as any).progressIndicator) {
@@ -999,8 +893,6 @@ export class AgentService implements IAgentService {
           }
           
           if (summary && summary.trim()) {
-            console.log('[Memory] Storing followup with contexts result in memory');
-            
             // Get current page info for memory context
             const webview = this.getActiveWebview();
             const url = webview?.src || '';
@@ -1207,7 +1099,6 @@ export class AgentService implements IAgentService {
   }
 
   private async processDoTask(taskInstruction: string): Promise<void> {
-    console.log('[AgentService] Processing task:', taskInstruction);
     
     if (!CONSTANTS.DOAGENT_ENABLED) {
       this.addMessageToChat('assistant', 'DoAgent functionality is disabled in this build.');
@@ -1215,7 +1106,6 @@ export class AgentService implements IAgentService {
     }
   
     if (this.isExecuting) {
-      console.log('[processDoTask] Workflow already executing, skipping task execution');
       this.showToast('Task already in progress...', 'info');
       return;
     }
@@ -1230,7 +1120,6 @@ export class AgentService implements IAgentService {
       }
       
       const doAgent = new DoAgentService(activeWebview, (task: DoTask, step: DoStep) => {
-        console.log('[DoAgentService Progress]', `Step ${step.id}: ${step.description} - ${step.status}`);
         
         let progressMessage = `**${step.id}:** ${step.description}`;
         
@@ -1382,7 +1271,6 @@ export class AgentService implements IAgentService {
     } finally {
       // Always clear execution flag
       this.isExecuting = false;
-      console.log('[processDoTask] Clearing execution flag');
     }
   }
   
@@ -1449,7 +1337,6 @@ export class AgentService implements IAgentService {
             return questionMatch || answerMatch;
           }).slice(0, 5); // Take top 5 relevant memories
           
-          console.log(`[Memory] Found ${relevantMemories.length} relevant memories for query:`, query);
           
           // Format memories with proper structure expected by Python agents
           relevantMemories.forEach((memory: any) => {
@@ -1486,7 +1373,6 @@ export class AgentService implements IAgentService {
         console.error('[Memory] Error retrieving memories:', memoryError);
       }
       
-           console.log(`[Memory] Built conversation history with ${conversationHistory.length} items (${conversationHistory.filter(item => item.isMemory).length} from memory)`);
        return conversationHistory;
        
      } catch (error) {
@@ -1500,7 +1386,6 @@ export class AgentService implements IAgentService {
       this.isExecuting = false;
       this.executeAgentService.destroy();
       
-      console.log('[AgentService] Destroyed successfully');
     } catch (error) {
       console.error('[AgentService] Error during destruction:', error);
     }

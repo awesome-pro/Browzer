@@ -310,29 +310,49 @@ private getBestSelector(uniqueIdentifiers: string[], text: string, elementType: 
 }
 
 private cleanGoogleUrl(url: string): string {
-  if (!url || !url.includes('google.com')) {
+  if (!url) {
     return url;
   }
   
   try {
     const urlObj = new URL(url);
     
-    // Only keep essential Google search parameters
-    const essentialParams = ['q', 'tbm', 'safe', 'lr', 'hl'];
-    const cleanParams = new URLSearchParams();
-    
-    for (const param of essentialParams) {
-      const value = urlObj.searchParams.get(param);
-      if (value) {
-        cleanParams.set(param, value);
+    // Handle Google redirect URLs
+    if (urlObj.hostname.includes('google.com') && urlObj.pathname === '/url') {
+      // Extract the actual destination URL from the 'url' parameter
+      const destinationUrl = urlObj.searchParams.get('url') || urlObj.searchParams.get('q');
+      if (destinationUrl) {
+        try {
+          // Validate that it's a proper URL
+          new URL(destinationUrl);
+          return destinationUrl;
+        } catch (e) {
+          // If parsing fails, fall through to normal Google URL cleaning
+        }
       }
     }
     
-    // Reconstruct URL with only essential parameters
-    const cleanUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}${cleanParams.toString() ? '?' + cleanParams.toString() : ''}`;
+    // If it's a regular Google search URL, clean it up
+    if (url.includes('google.com')) {
+      // Only keep essential Google search parameters
+      const essentialParams = ['q', 'tbm', 'safe', 'lr', 'hl'];
+      const cleanParams = new URLSearchParams();
+      
+      for (const param of essentialParams) {
+        const value = urlObj.searchParams.get(param);
+        if (value) {
+          cleanParams.set(param, value);
+        }
+      }
+      
+      // Reconstruct URL with only essential parameters
+      const cleanUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}${cleanParams.toString() ? '?' + cleanParams.toString() : ''}`;
+      
+      console.log(`🔧[RecordingEngine] Cleaned Google URL: ${url.substring(0, 100)}... → ${cleanUrl}`);
+      return cleanUrl;
+    }
     
-    console.log(`🔧[RecordingEngine] Cleaned Google URL: ${url.substring(0, 100)}... → ${cleanUrl}`);
-    return cleanUrl;
+    return url;
   } catch (e) {
     console.warn('[RecordingEngine] Failed to clean Google URL:', e);
     return url;
@@ -459,11 +479,15 @@ private generateWebviewActionDescription(actionData: any): string {
         
         if (navType === 'google_search_result') {
           try {
-            const urlObj = new URL(url);
+            // Check if this is a Google redirect URL or the actual destination
+            const isRedirect = value.isRedirect;
+            const actualUrl = isRedirect ? value.url : url;
+            const urlObj = new URL(actualUrl);
             const domain = urlObj.hostname.replace('www.', '');
-            return `Navigate to ${domain} ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${this.cleanGoogleUrl(url)}`;
+            
+            return `Navigate from search results to ${domain} ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${this.cleanGoogleUrl(actualUrl)}`;
           } catch (e) {
-            return `Navigate to search result ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${url}`;
+            return `Navigate from search results to website ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''}`;
           }
         } else if (navType === 'external_link' || navType === 'external_navigation') {
           try {
@@ -471,10 +495,10 @@ private generateWebviewActionDescription(actionData: any): string {
             const domain = urlObj.hostname.replace('www.', '');
             return `Navigate to ${domain} ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${url}`;
           } catch (e) {
-            return `Navigate to external page${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${url}`;
+            return `Navigate to external page ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${url}`;
           }
         } else if (navType === 'in_page_navigation') {
-          return `Navigate within page${linkText ? ` to "${linkText}"` : ''}`;
+          return `Navigate within page ${linkText ? ` to "${linkText}"` : ''}`;
         } else if (url) {
           try {
             const urlObj = new URL(url);
@@ -1128,22 +1152,19 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     );
     
     if (isDuplicate) {
-      console.log(`🔄 Skipping duplicate action: ${action.description}`);
       return false;
     }
-    
+
     // Check if action is too soon after last significant action
     if (now - this.lastSignificantAction < this.MIN_ACTION_GAP) {
       // Allow text input and navigation actions even if close together
       if (![ActionType.TEXT_INPUT, ActionType.NAVIGATION].includes(action.type)) {
-        console.log(`⏱️ Skipping action too soon after last: ${action.description}`);
         return false;
       }
     }
     
     // Filter out low-quality actions
     if (this.isLowQualityAction(action)) {
-      console.log(`🗑️ Skipping low-quality action: ${action.description}`);
       return false;
     }
     
@@ -1237,8 +1258,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
         }
       }));
     }
-
-    console.log(`📝 Recorded: ${action.description}`);
   }
 
   private generateElementDescription(element: Element): string {

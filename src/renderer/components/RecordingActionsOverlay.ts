@@ -125,8 +125,7 @@ export class RecordingActionsOverlay {
     if (this.recentActionHashes.has(actionHash)) {
       const lastTime = this.recentActionHashes.get(actionHash) || 0;
       if (now - lastTime < this.deduplicationWindow) {
-        // Skip duplicate action
-        console.log('Skipping duplicate action:', action.description);
+        // Skip duplicate action 
         return;
       }
     }
