@@ -652,6 +652,33 @@ ${this.extractExactSelectors(session)}
           }
         }
       }
+      
+      // Improve dynamic content descriptions
+      if ((step.action === 'click' || step.action === 'dynamic_content') && 
+          step.description && step.description.includes('Dynamic content loaded')) {
+        
+        // Make dynamic content descriptions more informative
+        if (step.description.includes('unknown')) {
+          // Replace "unknown" with better context
+          if (step.target && step.target.includes('page:')) {
+            // Extract page title if available
+            const titleMatch = step.target.match(/page: ([^"]+)/);
+            if (titleMatch) {
+              step.description = `Content loaded on page: "${titleMatch[1]}"`;
+            } else {
+              step.description = 'Content loaded on page';
+            }
+          } else if (i > 0 && steps[i-1].action === 'navigation') {
+            // If preceded by navigation, reference the page we navigated to
+            step.description = 'Content loaded after navigation';
+          } else {
+            step.description = 'Dynamic content loaded on page';
+          }
+        }
+        
+        // Clean up redundant "loaded" mentions
+        step.description = step.description.replace('loaded loaded', 'loaded');
+      }
     }
   }
 }

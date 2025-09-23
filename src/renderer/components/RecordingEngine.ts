@@ -400,7 +400,19 @@ private generateWebviewActionDescription(actionData: any): string {
   
   if (type === 'dynamic_content_loaded') {
     // Value is already a formatted string from webview
-    return typeof value === 'string' ? value : `Dynamic content loaded on page`;
+    if (typeof value === 'string') {
+      return value;
+    }
+    
+    // Fallback with more context
+    const pageTitle = element.text || '';
+    const context = element.context || 'page';
+    
+    if (pageTitle && pageTitle.length > 0) {
+      return `${pageTitle} on ${context}`;
+    }
+    
+    return `Content loaded on ${context}`;
   }
   
   // Generate more meaningful descriptions based on element type and purpose
@@ -475,7 +487,7 @@ private generateWebviewActionDescription(actionData: any): string {
       if (value && typeof value === 'object') {
         const navType = value.navigationType;
         const url = value.url || value.toUrl;
-        const linkText = value.linkText;
+        // const linkText = value.linkText;
         
         if (navType === 'google_search_result') {
           try {
@@ -485,27 +497,27 @@ private generateWebviewActionDescription(actionData: any): string {
             const urlObj = new URL(actualUrl);
             const domain = urlObj.hostname.replace('www.', '');
             
-            return `Navigate from search results to ${domain} ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${this.cleanGoogleUrl(actualUrl)}`;
+            return `Navigate from search results to ${domain} → ${this.cleanGoogleUrl(actualUrl)}`;
           } catch (e) {
-            return `Navigate from search results to website ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''}`;
+            return `Navigate from search results to website ${url}`;
           }
         } else if (navType === 'external_link' || navType === 'external_navigation') {
           try {
             const urlObj = new URL(url);
             const domain = urlObj.hostname.replace('www.', '');
-            return `Navigate to ${domain} ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${url}`;
+            return `Navigate to ${domain} → ${url}`;
           } catch (e) {
-            return `Navigate to external page ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''} → ${url}`;
+            return `Navigate to external page → ${url}`;
           }
         } else if (navType === 'in_page_navigation') {
-          return `Navigate within page ${linkText ? ` to "${linkText}"` : ''}`;
+          return `Navigate within page`;
         } else if (url) {
           try {
             const urlObj = new URL(url);
             const domain = urlObj.hostname.replace('www.', '');
-            return `Navigate to ${domain} ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''}`;
+            return `Navigate to ${domain}`;
           } catch (e) {
-            return `Navigate to ${url} ${linkText ? ` ("${linkText.substring(0, 40)}")` : ''}`;
+            return `Navigate to ${url}`;
           }
         }
       }

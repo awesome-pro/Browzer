@@ -1249,8 +1249,9 @@ class WebviewRecordingEngine {
     this.lastInteractionTime = now;
 
     // Determine what type of content loaded
-    let contentType = 'unknown';
+    let contentType = 'page_content';
     let contentDescription = 'Dynamic content loaded';
+    let contentContext = this.detectPageContext();
     
     // Check for specific content types
     if (window.location.hostname.includes('google.com')) {
@@ -1258,20 +1259,79 @@ class WebviewRecordingEngine {
       if (searchResults.length > 0) {
         contentType = 'search_results';
         contentDescription = `Google search results (${searchResults.length} results)`;
+        contentContext = 'search_results_page';
       }
     } else if (window.location.hostname.includes('amazon.com')) {
       const productResults = document.querySelectorAll('[data-component-type="s-search-result"]');
       if (productResults.length > 0) {
         contentType = 'product_results';
         contentDescription = `Amazon product results (${productResults.length} products)`;
+        contentContext = 'product_listing_page';
+      }
+    } else {
+      // Enhanced content type detection for common patterns
+      const contentTypeDetectors = [
+        { selector: '.product, .product-item, .product-card', type: 'product_listing', description: 'Product listing' },
+        { selector: '.cart, .shopping-cart, .basket', type: 'shopping_cart', description: 'Shopping cart' },
+        { selector: '.checkout, .payment-form', type: 'checkout', description: 'Checkout process' },
+        { selector: '.article, .blog-post, .post-content', type: 'article_content', description: 'Article content' },
+        { selector: '.comments, .comment-section', type: 'comments', description: 'Comment section' },
+        { selector: '.gallery, .carousel, .slider', type: 'media_gallery', description: 'Media gallery' },
+        { selector: '.video-player, .video-container', type: 'video_player', description: 'Video player' },
+        { selector: '.form, form', type: 'form', description: 'Form content' },
+        { selector: '.menu, .navigation, nav', type: 'navigation', description: 'Navigation menu' },
+        { selector: '.results, .search-results', type: 'search_results', description: 'Search results' },
+        { selector: '.feed, .timeline, .stream', type: 'content_feed', description: 'Content feed' },
+        { selector: '.modal, .dialog, .popup', type: 'modal_dialog', description: 'Modal dialog' },
+        { selector: '.notification, .alert, .toast', type: 'notification', description: 'Notification' }
+      ];
+      
+      for (const detector of contentTypeDetectors) {
+        const elements = document.querySelectorAll(detector.selector);
+        if (elements.length > 0) {
+          contentType = detector.type;
+          contentDescription = `${detector.description} loaded`;
+          contentContext = detector.type.replace('_', ' ');
+          break;
+        }
+      }
+      
+      // If still no specific type detected, try to infer from page structure
+      if (contentType === 'page_content') {
+        // Look for main content area
+        const mainContent = document.querySelector('main, #main, .main, [role="main"]');
+        if (mainContent) {
+          contentDescription = 'Main content';
+          contentContext = 'main_content_area';
+        }
+        
+        // Check for headings to describe content better
+        const headings = document.querySelectorAll('h1, h2');
+        if (headings.length > 0) {
+          const pageTitle = document.title || '';
+          const headingText = headings[0].textContent?.trim() || '';
+          
+          if (headingText && headingText.length > 0) {
+            contentDescription = `Content loaded: "${headingText.substring(0, 40)}"`;
+          } else if (pageTitle && pageTitle.length > 0) {
+            contentDescription = `Content loaded for: "${pageTitle.substring(0, 40)}"`;
+          }
+        }
       }
     }
     
     // Only record if we can identify specific content or if it's taking significant time
     const loadTime = now - this.pageLoadingState.loadStartTime;
-    if (contentType === 'unknown' && loadTime < 1000) {
+    if (contentType === 'page_content' && loadTime < 1000) {
       return; // Skip recording minor dynamic changes
     }
+
+    // Get current URL for context
+    const currentUrl = window.location.href;
+    const domain = window.location.hostname.replace('www.', '');
+    
+    // Create a more descriptive value
+    const valueDescription = `${contentDescription} loaded in ${loadTime}ms on ${domain}`;
 
     const actionData = {
       type: 'dynamic_content_loaded',
@@ -1282,28 +1342,108 @@ class WebviewRecordingEngine {
         id: '',
         className: 'dynamic-content',
         text: contentDescription,
-        selector: '',
+        selector: this.getContentSelector(contentType),
         xpath: '',
         attributes: {},
         boundingRect: { x: 0, y: 0, width: 0, height: 0 },
         isVisible: true,
         elementType: 'dynamic_content',
         purpose: 'content_loading',
-        context: 'dynamic_content_change',
+        context: contentContext,
         href: null,
         target: null,
-        targetUrl: window.location.href,
+        targetUrl: currentUrl,
         uniqueIdentifiers: [],
         semanticRole: 'dynamic_content',
         interactionContext: contentType,
         parentContext: null
       },
-      value: `${contentDescription} loaded in ${loadTime}ms on ${window.location.href}`,
+      value: valueDescription,
       coordinates: null,
       pageContext: this.getPageContext()
     };
 
     this.sendRecordingAction(actionData);
+  }
+  
+  private detectPageContext(): string {
+    // Try to determine the page context from URL and page structure
+    const url = window.location.href;
+    const pathname = window.location.pathname;
+    
+    // Check URL patterns
+    if (pathname === '/' || pathname === '') {
+      return 'homepage';
+    }
+    
+    if (pathname.includes('/product/') || pathname.includes('/item/')) {
+      return 'product_page';
+    }
+    
+    if (pathname.includes('/search') || url.includes('q=') || url.includes('query=')) {
+      return 'search_page';
+    }
+    
+    if (pathname.includes('/cart') || pathname.includes('/basket')) {
+      return 'cart_page';
+    }
+    
+    if (pathname.includes('/checkout') || pathname.includes('/payment')) {
+      return 'checkout_page';
+    }
+    
+    if (pathname.includes('/account') || pathname.includes('/profile')) {
+      return 'account_page';
+    }
+    
+    if (pathname.includes('/blog') || pathname.includes('/article') || pathname.includes('/post')) {
+      return 'article_page';
+    }
+    
+    // Check page structure
+    if (document.querySelector('form[action*="login"], form[id*="login"]')) {
+      return 'login_page';
+    }
+    
+    if (document.querySelector('form[action*="register"], form[id*="register"], form[action*="signup"]')) {
+      return 'signup_page';
+    }
+    
+    // Default to current page with title
+    const pageTitle = document.title;
+    if (pageTitle && pageTitle.length > 0) {
+      return `page: ${pageTitle.substring(0, 30)}`;
+    }
+    
+    return 'content_page';
+  }
+  
+  private getContentSelector(contentType: string): string {
+    // Return appropriate selector based on content type
+    switch (contentType) {
+      case 'search_results':
+        return '#search, #results, .search-results';
+      case 'product_results':
+        return '.products, .product-grid, .product-list';
+      case 'product_listing':
+        return '.products, .product-grid, .product-list';
+      case 'article_content':
+        return 'article, .article, .post-content';
+      case 'comments':
+        return '.comments, .comment-section';
+      case 'media_gallery':
+        return '.gallery, .carousel, .slider';
+      case 'form':
+        return 'form, .form';
+      case 'navigation':
+        return 'nav, .navigation, .menu';
+      case 'content_feed':
+        return '.feed, .timeline, .stream';
+      case 'modal_dialog':
+        return '.modal, .dialog, .popup';
+      default:
+        return 'main, #content, .content';
+    }
   }
 
   private getTargetUrl(element: Element): string | null {
@@ -1851,18 +1991,11 @@ class WebviewRecordingEngine {
           return `Page loaded in ${loadTime}ms - Google search for "${query}"`;
         }
       } catch (e) {
-        // Fallback to original if URL parsing fails
+        console.warn('[Webview Preload] Failed to parse Google URL:', url);
       }
     }
     
-    // For other URLs, show clean version
-    try {
-      const urlObj = new URL(url);
-      const cleanUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`;
-      return `Page loaded in ${loadTime}ms - ${cleanUrl}`;
-    } catch (e) {
-      return `Page loaded in ${loadTime}ms - ${url}`;
-    }
+    return `Page loaded in ${loadTime}ms - ${url}`;
   }
 
   // Helper methods
