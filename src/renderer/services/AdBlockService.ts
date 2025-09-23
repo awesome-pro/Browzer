@@ -15,8 +15,6 @@ export class AdBlockService {
   }
 
   public setupAdBlocker(): void {
-    console.log('[AdBlockService] Setting up ad blocker controls...');
-    
     // Get UI elements
     const adBlockEnabledCheckbox = document.getElementById('adBlockEnabled') as HTMLInputElement;
     const domainInput = document.getElementById('domainInput') as HTMLInputElement;
@@ -29,7 +27,6 @@ export class AdBlockService {
     const allowedDomainsList = document.getElementById('allowedDomainsList') as HTMLDivElement;
     
     if (!adBlockEnabledCheckbox || !domainInput || !blockDomainBtn || !allowDomainBtn) {
-      console.error('[AdBlockService] Required UI elements not found');
       return;
     }
     
@@ -43,7 +40,6 @@ export class AdBlockService {
         const result = await this.ipcRenderer.invoke('toggle-adblock', enabled);
         
         if (result.success) {
-          console.log(`[AdBlockService] Ad blocking ${enabled ? 'enabled' : 'disabled'}`);
           this.showToast(`Ad blocking ${enabled ? 'enabled' : 'disabled'}`, 'success');
 
           // Re-inject CSS into all webviews
@@ -57,13 +53,11 @@ export class AdBlockService {
             }, 100);
           });
         } else {
-          console.error('[AdBlockService] Failed to toggle ad blocker:', result.error);
           this.showToast('Failed to toggle ad blocker', 'error');
           // Revert checkbox state
           adBlockEnabledCheckbox.checked = !enabled;
         }
       } catch (error) {
-        console.error('[AdBlockService] Error toggling ad blocker:', error);
         this.showToast('Error toggling ad blocker', 'error');
       }
     });
@@ -78,16 +72,13 @@ export class AdBlockService {
       try {
         const result = await this.ipcRenderer.invoke('add-blocked-domain', domain);
         if (result.success) {
-          console.log(`[AdBlockService] Added blocked domain: ${domain}`);
           this.showToast(`Blocked domain: ${domain}`, 'success');
           domainInput.value = '';
           this.loadAdBlockerStatus();
         } else {
-          console.error('[AdBlockService] Failed to add blocked domain:', result.error);
           this.showToast('Failed to add blocked domain', 'error');
         }
       } catch (error) {
-        console.error('[AdBlockService] Error adding blocked domain:', error);
         this.showToast('Error adding blocked domain', 'error');
       }
     });
@@ -102,16 +93,13 @@ export class AdBlockService {
       try {
         const result = await this.ipcRenderer.invoke('add-allowed-domain', domain);
         if (result.success) {
-          console.log(`[AdBlockService] Added allowed domain: ${domain}`);
           this.showToast(`Allowed domain: ${domain}`, 'success');
           domainInput.value = '';
           this.loadAdBlockerStatus();
         } else {
-          console.error('[AdBlockService] Failed to add allowed domain:', result.error);
           this.showToast('Failed to add allowed domain', 'error');
         }
       } catch (error) {
-        console.error('[AdBlockService] Error adding allowed domain:', error);
         this.showToast('Error adding allowed domain', 'error');
       }
     });
@@ -127,8 +115,6 @@ export class AdBlockService {
         }
       }
     });
-    
-    console.log('[AdBlockService] Ad blocker controls set up successfully');
   }
 
   public async loadAdBlockerStatus(): Promise<void> {
@@ -150,9 +136,7 @@ export class AdBlockService {
       if (cssRulesCount) cssRulesCount.textContent = status.stats.cssRules.toString();
       if (filterRulesCount) filterRulesCount.textContent = status.stats.filterRules.toString();
       
-      console.log('[AdBlockService] Status loaded:', status);
     } catch (error) {
-      console.error('[AdBlockService] Error loading status:', error);
       
       // Set default values
       const blockedDomainsCount = document.getElementById('blockedDomainsCount') as HTMLSpanElement;
@@ -169,19 +153,16 @@ export class AdBlockService {
     if (!webview) return;
     
     if (!webview.id || !webview.src || webview.src === 'about:blank') {
-      console.log('[AdBlockService] Skipping CSS injection - webview not ready');
       return;
     }
     
     try {
       this.ipcRenderer.invoke('get-adblock-css').then((cssRules: string) => {
         if (!cssRules || !cssRules.trim()) {
-          console.log('[AdBlockService] No CSS rules to inject');
           return;
         }
         
         if (!webview || !webview.executeJavaScript) {
-          console.log('[AdBlockService] Webview no longer valid, skipping injection');
           return;
         }
         
@@ -189,7 +170,6 @@ export class AdBlockService {
           (function() {
             try {
               if (!document || !document.head) {
-                console.log('[AdBlock] Document not ready, skipping CSS injection');
                 return;
               }
               
@@ -205,7 +185,6 @@ export class AdBlockService {
               style.innerHTML = \`${cssRules.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`;
               document.head.appendChild(style);
               
-              console.log('[AdBlock] CSS rules injected successfully');
             } catch (injectionError) {
               console.warn('[AdBlock] CSS injection failed:', injectionError.message);
             }
@@ -218,15 +197,12 @@ export class AdBlockService {
           if (!error.message.includes('Object has been destroyed') && 
               !error.message.includes('navigation') &&
               !error.message.includes('Script failed to execute')) {
-            console.warn('[AdBlockService] Script execution failed:', error.message);
           }
         });
         
       }).catch((error: any) => {
-        console.error('[AdBlockService] Error getting CSS rules:', error);
       });
     } catch (error) {
-      console.error('[AdBlockService] Error in CSS injection setup:', error);
     }
   }
 
@@ -250,10 +226,6 @@ export class AdBlockService {
   }
 
   public destroy(): void {
-    try {
-      console.log('[AdBlockService] Destroyed successfully');
-    } catch (error) {
-      console.error('[AdBlockService] Error during destruction:', error);
-    }
+    console.log('[AdBlockService] Destroyed successfully');
   }
 }

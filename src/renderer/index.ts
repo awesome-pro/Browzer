@@ -108,9 +108,7 @@ class BrowzerApp {
     try {
       document.addEventListener('DOMContentLoaded', this.handleDOMContentLoaded);
       this.setupGlobalErrorHandler();
-      console.log('[BrowzerApp] Initialization started');
     } catch (error) {
-      console.error('[BrowzerApp] Initialization failed:', error);
       throw error;
     }
   }
@@ -126,7 +124,6 @@ class BrowzerApp {
       this.agentService.setupControls();
       await this.syncApiKeysWithBackend();
       this.state.isInitialized = true;
-      console.log('[BrowzerApp] Application initialized successfully');
     } catch (error) {
       console.error('[BrowzerApp] DOM initialization failed:', error);
     }
@@ -151,8 +148,6 @@ class BrowzerApp {
     this.adBlockService.initialize();
     
     this.setupRecordingIntegration();
-    
-    console.log('[BrowzerApp] All services initialized successfully');
   }
 
   private async syncApiKeysWithBackend(): Promise<void> {
@@ -160,15 +155,12 @@ class BrowzerApp {
       const apiKeys = getBrowserApiKeys();
       const provider = 'anthropic';
       
-      console.log('[DEBUG] Syncing API keys with backend...');
       
       // Update API keys in ExtensionManager
       await this.ipcRenderer.invoke('update-browser-api-keys', apiKeys);
       
       // Update selected provider in ExtensionManager
       await this.ipcRenderer.invoke('update-selected-provider', provider);
-      
-      console.log('[DEBUG] Successfully synced API keys and provider with backend');
     } catch (error) {
       console.error('[DEBUG] Failed to sync API keys with backend:', error);
     }
@@ -263,7 +255,6 @@ class BrowzerApp {
 
   private async getMcpToolsForAsk(): Promise<any[]> {
     if (!this.mcpManager) {
-      console.log('[MCP] No MCP Manager available, returning empty tools list');
       return [];
     }
   
@@ -281,11 +272,6 @@ class BrowzerApp {
             serverName: toolInfo.serverName
           });
         }
-      }
-      
-      console.log(`[MCP] Retrieved ${tools.length} tools for Ask query`);
-      if (tools.length > 0) {
-        console.log('[MCP] Available tools:', tools.map(t => t.name).join(', '));
       }
       return tools;
     } catch (error) {
@@ -546,27 +532,7 @@ class BrowzerApp {
 
   public async testMcpIntegration(): Promise<any[]> {
     try {
-      const tools = await this.getMcpToolsForAsk();
-      console.log('✅ MCP Tools Retrieved:', tools.length);
-      
-      if (tools.length > 0) {
-        console.log('📋 Available MCP Tools:');
-        tools.forEach((tool, i) => {
-          console.log(`   ${i + 1}. ${tool.name} (${tool.serverName})`);
-          console.log(`      Description: ${tool.description || 'No description'}`);
-        });
-        
-        console.log('\n💡 To test: Ask a question that could use these tools');
-        console.log('   Example: "Find my latest email" (if gmail tools available)');
-        console.log('   Example: "Create a Trello card" (if trello tools available)');
-      } else {
-        console.log('⚠️ No MCP tools found. Make sure you have:');
-        console.log('   1. Added MCP servers in Settings → MCP Servers');
-        console.log('   2. Enabled the servers');
-        console.log('   3. Servers are connected successfully');
-      }
-      
-      return tools;
+      return await this.getMcpToolsForAsk();
     } catch (error) {
       console.error('❌ MCP Integration test failed:', error);
       return [];
@@ -628,7 +594,6 @@ class BrowzerApp {
       this.adBlockService.destroy();
       
       this.state.isInitialized = false;
-      console.log('[BrowzerApp] Application destroyed');
     } catch (error) {
       console.error('[BrowzerApp] Cleanup failed:', error);
     }
@@ -646,8 +611,6 @@ const initializeApplication = async () => {
     
     // Expose public API to window
     (window as any).browzerApp = browzerApp.getPublicAPI();
-    
-    console.log('[Bootstrap] Browzer application started successfully');
   } catch (error) {
     console.error('[Bootstrap] Failed to initialize Browzer application:', error);
     
