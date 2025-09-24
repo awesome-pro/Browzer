@@ -251,7 +251,7 @@ export enum ActionType {
     NAVIGATE = 'navigate',
     
     // Input Actions
-    TEXT_INPUT = 'text_input',
+    TYPE = 'type',
     CLEAR = 'clear',
     
     // Click Actions
@@ -415,12 +415,12 @@ export enum ActionType {
           
         case 'input':
         case 'keyup':
-          return ActionType.TEXT_INPUT;
+          return ActionType.TYPE;
           
         case 'change':
           if (tagName === 'select') return ActionType.SELECT;
           if (inputType === 'checkbox' || inputType === 'radio') return ActionType.TOGGLE;
-          return ActionType.TEXT_INPUT;
+          return ActionType.TYPE;
           
         case 'submit':
           return ActionType.SUBMIT;
@@ -439,7 +439,7 @@ export enum ActionType {
           if (['Enter', 'Tab', 'Escape', 'ArrowUp', 'ArrowDown'].includes(key)) {
             return ActionType.KEYPRESS;
           }
-          return ActionType.TEXT_INPUT;
+          return ActionType.TYPE;
           
         default:
           return ActionType.CLICK;
@@ -450,7 +450,7 @@ export enum ActionType {
     static getExecutionMethod(action: ActionType): string {
       const methodMap: Record<ActionType, string> = {
         [ActionType.NAVIGATE]: 'navigate',
-        [ActionType.TEXT_INPUT]: 'textInput',
+        [ActionType.TYPE]: 'type',
         [ActionType.CLEAR]: 'clear',
         [ActionType.CLICK]: 'click',
         [ActionType.SELECT]: 'select',
@@ -500,7 +500,7 @@ export enum ActionType {
       switch (action) {
         case ActionType.NAVIGATE:
           return `Navigate to ${target || value}`;
-        case ActionType.TEXT_INPUT:
+        case ActionType.TYPE:
           return `Type "${value}" in ${target}`;
         case ActionType.CLEAR:
           return `Clear ${target}`;

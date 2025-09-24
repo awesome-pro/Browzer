@@ -60,7 +60,7 @@ ${this.extractProvenSelectors(session)}
 
 ### AVAILABLE ACTIONS:
 • **navigate** - Go to URL (target: URL)
-• **text_input** - Enter text (target: CSS selector, value: text)
+• **type** - Enter text (target: CSS selector, value: text)
 • **click** - Click element (target: CSS selector)
 • **wait_for_element** - Wait for element (target: CSS selector, value: timeout_ms)
 • **wait_for_dynamic_content** - Wait for page load (value: timeout_ms)
@@ -101,7 +101,7 @@ ${this.extractProvenSelectors(session)}
 \`\`\`json
 [
   {
-    "action": "text_input",
+    "action": "type",
     "target": "#APjFqb",
     "value": "search query",
     "reasoning": "Enter search query in Google search box"
@@ -167,105 +167,11 @@ ${this.extractProvenSelectors(session)}
   }
 
   static generateClaudeUserPrompt(newTaskInstruction: string, session: SmartRecordingSession): string {
-    // Handle special case where user just wants to replicate the exact task
-    const isReplicationRequest = this.isTaskReplicationRequest(newTaskInstruction);
-    
-    if (isReplicationRequest) {
-      return this.generateReplicationPrompt(session);
-    }
-    
-    const workflowMapping = this.generateWorkflowMapping(session, newTaskInstruction);
-    
-    return `## 🎯 NEW TASK EXECUTION REQUEST
-
-**NEW TASK:** ${newTaskInstruction}
-
-## 📋 WORKFLOW ADAPTATION MAPPING
-${workflowMapping}
-
-## ⚡ EXECUTION REQUIREMENTS
-
-**CRITICAL:** Generate a JSON array that follows the EXACT workflow pattern from the recording, but adapted for this new task.
-
-**Key Adaptations Needed:**
-${this.generateSpecificAdaptations(session, newTaskInstruction)}
-
-**Expected Workflow Pattern:**
-${this.generateExpectedPattern(session)}
-
----
-**GENERATE THE JSON ARRAY NOW** (Pure JSON only, no explanations)`;
+    return `${newTaskInstruction}`;
   }
 
-  private static isTaskReplicationRequest(instruction: string): boolean {
-    const replicationKeywords = [
-      'execute the task',
-      'run the task',
-      'repeat the task',
-      'do the same',
-      'replicate',
-      'same task',
-      'exact same',
-      'reproduce'
-    ];
-    
-    const lowerInstruction = instruction.toLowerCase().trim();
-    return replicationKeywords.some(keyword => lowerInstruction.includes(keyword));
-  }
 
-  private static generateReplicationPrompt(session: SmartRecordingSession): string {
-    return `## 🔄 EXACT TASK REPLICATION REQUEST
 
-**INSTRUCTION:** Replicate the EXACT same task that was recorded.
-
-## ⚡ REPLICATION REQUIREMENTS
-
-**CRITICAL:** Generate a JSON array that EXACTLY replicates the recorded workflow with the SAME values, URLs, and targets.
-
-**DO NOT CHANGE:**
-- URLs or domain names
-- Form input values  
-- Button/link text
-- Navigation paths
-- Wait times
-
-**EXACT WORKFLOW TO REPLICATE:**
-${session.actions.map((action, index) => {
-  return `${index + 1}. [${action.type.toUpperCase()}] ${action.description}
-   └─ TARGET: ${action.target.description}${action.value ? `
-   └─ VALUE: "${action.value}"` : ''}`;
-}).join('\n\n')}
-
-**EXACT SELECTORS TO USE:**
-${this.extractExactSelectors(session)}
-
----
-**GENERATE THE EXACT REPLICATION JSON ARRAY NOW** (Pure JSON only, no explanations)`;
-  }
-
-  private static extractExactSelectors(session: SmartRecordingSession): string {
-    const selectors = new Set<string>();
-    
-    session.actions.forEach(action => {
-      if (action.target && action.target.selector) {
-        selectors.add(action.target.selector);
-      }
-      
-      // Extract selectors from descriptions
-      const selectorMatches = action.description.match(/\[([^\]]+)\]/g);
-      if (selectorMatches) {
-        selectorMatches.forEach(match => {
-          const selector = match.replace(/[\[\]]/g, '');
-          if (selector.includes('#') || selector.includes('.') || selector.includes('[')) {
-            selectors.add(selector);
-          }
-        });
-      }
-    });
-    
-    const selectorList = Array.from(selectors).filter(s => s && s.length > 0);
-    return selectorList.slice(0, 10).map(selector => `• \`${selector}\``).join('\n');
-  }
 
   // Helper method to extract critical elements from the session
   private static extractCriticalElements(session: SmartRecordingSession): string {
@@ -282,7 +188,7 @@ ${this.extractExactSelectors(session)}
     
     // Extract form interactions
     const formSteps = session.actions.filter(action => 
-      action.type === 'text_input' || action.description.includes('Type')
+      action.type === 'type' || action.description.includes('Type')
     );
     
     if (formSteps.length > 0) {
@@ -382,7 +288,7 @@ ${this.extractExactSelectors(session)}
     }
     
     // Form field adaptations
-    const textInputs = session.actions.filter(action => action.type === 'text_input');
+    const textInputs = session.actions.filter(action => action.type === 'type');
     if (textInputs.length > 0) {
       const exampleValue = textInputs[0].value;
       adaptations.push(`• **Form Values**: Change "${exampleValue}" to match new task requirements`);
@@ -460,13 +366,13 @@ ${this.extractExactSelectors(session)}
     const clipboardActions = [ActionType.COPY, ActionType.CUT, ActionType.PASTE];
     const hasClipboardActions = clipboardActions.some(action => uniqueTypes.includes(action));
     
-    if (uniqueTypes.includes(ActionType.TEXT_INPUT) && uniqueTypes.includes(ActionType.NAVIGATION)) {
+    if (uniqueTypes.includes(ActionType.TYPE) && uniqueTypes.includes(ActionType.NAVIGATION)) {
       return "Search & Navigate";
     } else if (hasFormActions && uniqueTypes.includes(ActionType.FORM_SUBMIT)) {
       return "Advanced Form Interaction";
     } else if (hasClipboardActions) {
       return "Content Manipulation";
-    } else if (uniqueTypes.includes(ActionType.CLICK) && uniqueTypes.includes(ActionType.TEXT_INPUT)) {
+    } else if (uniqueTypes.includes(ActionType.CLICK) && uniqueTypes.includes(ActionType.TYPE)) {
       return "Form Interaction";
     } else if (uniqueTypes.includes(ActionType.NAVIGATION)) {
       return "Multi-page Navigation";
@@ -527,7 +433,7 @@ ${this.extractExactSelectors(session)}
 
   private static mapToUnifiedAction(legacyActionType: string): ActionType {
     const actionMap: Record<string, ActionType> = {
-        'text_input': ActionType.TEXT_INPUT,
+        'type': ActionType.TYPE,
       'click': ActionType.CLICK,
       'select': ActionType.SELECT,
       'toggle': ActionType.TOGGLE,
@@ -557,7 +463,7 @@ ${this.extractExactSelectors(session)}
     
     // Add contexts from significant actions only
     session.actions
-      .filter(action => ['click', 'text_input', 'select', 'submit', 'navigate'].includes(this.mapToUnifiedAction(action.type)))
+      .filter(action => ['click', 'type', 'select', 'submit', 'navigate'].includes(this.mapToUnifiedAction(action.type)))
       .forEach(action => {
         if (action.context && !structures.has(action.context.url)) {
           structures.set(action.context.url, {
@@ -572,49 +478,6 @@ ${this.extractExactSelectors(session)}
   }
 
 
-  /**
-   * Extract keywords from task descriptions
-   */
-  private static extractKeywords(task: string): { searchTerms: string[]; domains: string[]; actions: string[] } {
-    const searchTerms: string[] = [];
-    const domains: string[] = [];
-    const actions: string[] = [];
-    
-    // Extract quoted terms or key phrases
-    const quotedTerms = task.match(/"([^"]+)"/g);
-    if (quotedTerms) {
-      searchTerms.push(...quotedTerms.map(term => term.replace(/"/g, '')));
-    }
-    
-    // Extract domain-related keywords
-    const domainKeywords = ['google', 'wikipedia', 'github', 'linkedin', 'facebook', 'twitter', 'amazon', 'youtube'];
-    domainKeywords.forEach(domain => {
-      if (task.toLowerCase().includes(domain)) {
-        domains.push(domain);
-      }
-    });
-    
-    // Extract action keywords
-    const actionKeywords = ['search', 'find', 'create', 'write', 'login', 'buy', 'download', 'upload', 'delete', 'edit'];
-    actionKeywords.forEach(action => {
-      if (task.toLowerCase().includes(action)) {
-        actions.push(action);
-      }
-    });
-    
-    // If no quoted terms, extract potential search terms (words that might be search targets)
-    if (searchTerms.length === 0) {
-      const words = task.split(' ').filter(word => 
-        word.length > 3 && 
-        !['search', 'find', 'look', 'for', 'about', 'information', 'data'].includes(word.toLowerCase())
-      );
-      if (words.length > 0) {
-        searchTerms.push(words.join(' '));
-      }
-    }
-    
-    return { searchTerms, domains, actions };
-  }
 
   /**
    * Improves navigation descriptions for better clarity in the prompt

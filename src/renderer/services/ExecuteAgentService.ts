@@ -310,10 +310,10 @@ export class ExecuteAgentService {
       'navigate': ActionType.NAVIGATE,
       'go_to': ActionType.NAVIGATE,
       'visit': ActionType.NAVIGATE,
-      'type': ActionType.TEXT_INPUT,
-      'input': ActionType.TEXT_INPUT,
-      'enter': ActionType.TEXT_INPUT,
-      'fill': ActionType.TEXT_INPUT,
+      'type': ActionType.TYPE,
+      'input': ActionType.TYPE,
+      'enter': ActionType.TYPE,
+      'fill': ActionType.TYPE,
       'clear': ActionType.CLEAR,
       'click': ActionType.CLICK,
       'press': ActionType.CLICK,
@@ -428,7 +428,7 @@ I'll modify the specific targets, values, and selectors from the recording to ma
   private identifyWorkflowPattern(session: any): string {
     const actions = session.actions.map((a: any) => a.type);
     const hasSearch = session.taskGoal.toLowerCase().includes('search');
-    const hasForm = actions.includes('text_input') && actions.includes('submit');
+    const hasForm = actions.includes('input') && actions.includes('submit');
     const hasNavigation = actions.includes('navigation');
     
     if (hasSearch) return 'search and discovery';

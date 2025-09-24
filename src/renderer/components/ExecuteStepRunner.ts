@@ -83,7 +83,7 @@ export class ExecuteStepRunner {
       case ActionType.NAVIGATE:
         return await this.navigate(step);
       
-      case ActionType.TEXT_INPUT:
+      case ActionType.TYPE:
         return await this.textInput(step);
       
       case ActionType.CLEAR:
@@ -239,7 +239,7 @@ export class ExecuteStepRunner {
     const text = step.value as string;
 
     if (!selector || !text) {
-      throw new Error('Both selector and text are required for text_input action');
+      throw new Error('Both selector and text are required for type action');
     }
 
     console.log(`[ExecuteStepRunner] Typing "${text}" into ${selector}`);
@@ -306,8 +306,8 @@ export class ExecuteStepRunner {
 
     const result = await this.webview.executeJavaScript(script);
 
-    if (!result.success) {
-      throw new Error(`Text_input action failed: ${result.error}`);
+    if (!result.success) {  
+      throw new Error(`Type action failed: ${result.error}`);
     }
 
     return result;

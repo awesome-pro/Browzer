@@ -280,7 +280,7 @@ class WebviewRecordingEngine {
     }
 
     const actionData = {
-      type: 'text_input',
+      type: 'type',
       timestamp: buffer.startTime,
       sessionId: this.sessionId,
       target: this.captureElement(target),
@@ -456,7 +456,7 @@ class WebviewRecordingEngine {
           case 'email': return 'email_input';
           case 'password': return 'password_input';
           case 'text':
-          default: return 'text_input';
+          default: return 'type';
         }
       case 'textarea': return 'text_area';
       case 'select': return 'dropdown';

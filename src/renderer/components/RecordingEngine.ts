@@ -461,7 +461,7 @@ private generateWebviewActionDescription(actionData: any): string {
         return `Click ${elementType}${text ? ` ("${text.substring(0, 30)}")` : ''}${contextSuffix}`;
       }
       
-    case 'text_input':
+    case 'type':
       if (purpose === 'search_input') {
         return `Search for "${value}"`;
       } else if (purpose === 'email_input') {
@@ -737,7 +737,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     }
 
     // Handle input events with debouncing
-    const targetKey = `text_input_${elementContext.selector}`;
+    const targetKey = `type_${elementContext.selector}`;
     this.debounceAction(targetKey, () => {
       this.finalizeTextInput(elementContext, target.value);
     });
@@ -748,13 +748,13 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
 
     const action: SemanticAction = {
       id: this.generateId(),
-      type: ActionType.TEXT_INPUT,
+      type: ActionType.TYPE,
       timestamp: Date.now(),
       description: `Enter "${this.maskSensitiveValue(finalValue)}" in ${elementContext.description}`,
       target: elementContext,
       value: this.maskSensitiveValue(finalValue),
       context: this.capturePageContext(),
-      intent: this.inferIntent(ActionType.TEXT_INPUT, elementContext, finalValue)
+      intent: this.inferIntent(ActionType.TYPE, elementContext, finalValue)
     };
 
     this.recordAction(action);
@@ -1039,7 +1039,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     const description = elementContext.description.toLowerCase();
 
     switch (actionType) {
-      case ActionType.TEXT_INPUT:
+      case ActionType.TYPE:
         if (description.includes('search')) return 'search';
         if (description.includes('email')) return 'enter_email';
         if (description.includes('password')) return 'enter_password';
@@ -1170,7 +1170,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     // Check if action is too soon after last significant action
     if (now - this.lastSignificantAction < this.MIN_ACTION_GAP) {
       // Allow text input and navigation actions even if close together
-      if (![ActionType.TEXT_INPUT, ActionType.NAVIGATION].includes(action.type)) {
+      if (![ActionType.TYPE, ActionType.NAVIGATION].includes(action.type)) {
         return false;
       }
     }
@@ -1228,7 +1228,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     }
     
     // Skip only completely empty text inputs
-    if (action.type === ActionType.TEXT_INPUT) {
+    if (action.type === ActionType.TYPE) {
       const value = action.value as string;
       return !value || value.trim().length === 0;
     }
@@ -1249,7 +1249,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
 
     // Capture screenshot for significant actions
     const significantActions = [
-      ActionType.CLICK, ActionType.FORM_SUBMIT, ActionType.NAVIGATION, ActionType.TEXT_INPUT,
+      ActionType.CLICK, ActionType.FORM_SUBMIT, ActionType.NAVIGATION, ActionType.TYPE,
       ActionType.PAGE_LOAD, ActionType.SEARCH_RESULTS, ActionType.SELECT_OPTION, 
       ActionType.TOGGLE_CHECKBOX, ActionType.SELECT_RADIO, ActionType.SELECT_FILE,
       ActionType.COPY, ActionType.CUT, ActionType.PASTE
@@ -1574,8 +1574,8 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
   private mapEventTypeToActionType(eventType: string): ActionType {
     switch (eventType) {
       case 'click': return ActionType.CLICK;
-      case 'input': return ActionType.TEXT_INPUT;
-      case 'text_input': return ActionType.TEXT_INPUT; // Handle aggregated text input from webview
+      case 'input': return ActionType.TYPE;
+      case 'type': return ActionType.TYPE; // Handle aggregated text input from webview
       case 'keypress': return ActionType.NAVIGATION; // Map keypress (like Enter) to navigation
       case 'change': return ActionType.SELECT;
       case 'submit': return ActionType.FORM_SUBMIT;
