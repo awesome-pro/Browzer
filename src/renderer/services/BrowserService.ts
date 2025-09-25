@@ -14,6 +14,8 @@ export class BrowserService implements IBrowserService {
   private goBtn: HTMLButtonElement | null = null;
   private runAgentBtn: HTMLButtonElement | null = null;
   private historyBtn: HTMLButtonElement | null = null;
+  private settingsBtn: HTMLButtonElement | null = null;
+  private extensionsBtn: HTMLButtonElement | null = null;
 
   private tabService: TabService;
   private extensionStore: ExtensionStore;
@@ -25,6 +27,8 @@ export class BrowserService implements IBrowserService {
   private urlEnterCallback?: () => void;
   private runAgentClickCallback?: () => void;
   private historyClickCallback?: () => void;
+  private settingsClickCallback?: () => void;
+  private extensionsClickCallback?: () => void;
 
   constructor(ipcRenderer: IpcRenderer, tabService: TabService, extensionStore: ExtensionStore) {
     this.ipcRenderer = ipcRenderer;
@@ -41,6 +45,8 @@ export class BrowserService implements IBrowserService {
       this.goBtn = document.getElementById('goBtn') as HTMLButtonElement;
       this.runAgentBtn = document.getElementById('runAgentBtn') as HTMLButtonElement;
       this.historyBtn = document.getElementById('historyBtn') as HTMLButtonElement;
+      this.settingsBtn = document.getElementById('settingsBtn') as HTMLButtonElement;
+      this.extensionsBtn = document.getElementById('extensionsBtn') as HTMLButtonElement;
 
       this.setupEventListeners();
       this.setupNavigationUpdateListener();
@@ -122,6 +128,24 @@ export class BrowserService implements IBrowserService {
         }
       });
     }
+    
+    // Settings button
+    if (this.settingsBtn) {
+      this.settingsBtn.addEventListener('click', () => {
+        if (this.settingsClickCallback) {
+          this.settingsClickCallback();
+        }
+      });
+    }
+    
+    // Extensions button
+    if (this.extensionsBtn) {
+      this.extensionsBtn.addEventListener('click', () => {
+        if (this.extensionsClickCallback) {
+          this.extensionsClickCallback();
+        }
+      });
+    }
   }
 
   public onBackClick(callback: () => void): void {
@@ -152,6 +176,14 @@ export class BrowserService implements IBrowserService {
     this.historyClickCallback = callback;
   }
 
+  public onSettingsClick(callback: () => void): void {
+    this.settingsClickCallback = callback;
+  }
+
+  public onExtensionsClick(callback: () => void): void {
+    this.extensionsClickCallback = callback;
+  }
+
   public updateNavigationButtons(): void {
     const webview = this.tabService.getActiveWebview();
     
@@ -173,15 +205,11 @@ export class BrowserService implements IBrowserService {
           if (this.forwardBtn) {
             this.forwardBtn.disabled = !canGoForward;
           }
-          
-          console.log('[BrowserService] Navigation buttons updated:', { canGoBack, canGoForward });
         } catch (error) {
-          console.log('[BrowserService] Webview methods not available yet, retrying...', error);
           // Retry after a short delay if webview isn't fully ready
           setTimeout(() => this.updateNavigationButtons(), 500);
         }
       } else {
-        console.log('[BrowserService] Webview not ready, disabling navigation buttons');
         this.disableNavigationButtons();
         
         // Retry checking webview readiness
@@ -339,6 +367,8 @@ export class BrowserService implements IBrowserService {
       this.goBtn = null;
       this.runAgentBtn = null;
       this.historyBtn = null;
+      this.settingsBtn = null;
+      this.extensionsBtn = null;
 
       // Clear callbacks
       this.backClickCallback = undefined;
@@ -348,8 +378,9 @@ export class BrowserService implements IBrowserService {
       this.urlEnterCallback = undefined;
       this.runAgentClickCallback = undefined;
       this.historyClickCallback = undefined;
+      this.settingsClickCallback = undefined;
+      this.extensionsClickCallback = undefined;
 
-      console.log('[BrowserService] Destroyed successfully');
     } catch (error) {
       console.error('[BrowserService] Error during destruction:', error);
     }

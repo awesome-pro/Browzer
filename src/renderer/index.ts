@@ -14,6 +14,7 @@ import { WorkflowService } from './services/WorkflowService';
 import { MentionService } from './services/MentionService';
 import { HistoryService } from './services/HistoryService';
 import { AdBlockService } from './services/AdBlockService';
+import { SettingsService } from './services/SettingsService';
 
 // Types
 import { IpcRenderer, WebpageContext } from './types';
@@ -44,6 +45,7 @@ class BrowzerApp {
   private mentionService: MentionService;
   private historyService: HistoryService;
   private adBlockService: AdBlockService;
+  private settingsService: SettingsService;
   
   // External services
   private ipcRenderer: IpcRenderer;
@@ -76,6 +78,7 @@ class BrowzerApp {
     // Initialize new modular services
     this.workflowService = new WorkflowService(this.ipcRenderer);
     this.mentionService = new MentionService();
+    this.settingsService = new SettingsService(this.tabService);
     this.browserService = new BrowserService(this.ipcRenderer, this.tabService, this.extensionStore);
     this.webviewService = new WebviewService(this.ipcRenderer, this.adBlockService, this.historyService);
     this.agentService = new AgentService(
@@ -151,6 +154,7 @@ class BrowzerApp {
     
     this.workflowService.initialize();
     this.adBlockService.initialize();
+    // SettingsService is already initialized in the constructor
     
     this.setupRecordingIntegration();
   }
@@ -340,6 +344,14 @@ class BrowzerApp {
 
     this.browserService.onHistoryClick(() => {
       this.historyService.showHistoryPage();
+    });
+
+    this.browserService.onSettingsClick(async () => {
+      await this.settingsService.showSettingsPage();
+    });
+
+    this.browserService.onExtensionsClick(() => {
+      this.settingsService.showExtensionsPanel();
     });
   }
 

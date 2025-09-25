@@ -84,19 +84,7 @@ export class WebviewService implements IWebviewService {
       
       if (url === CONSTANTS.NEW_TAB_URL) {
         finalUrl = this.homepageUrl;
-        console.log('[WebviewService] Setting homepage URL:', finalUrl);
-      } else if (url.startsWith('file://browzer-settings')) {
-        try {
-          const settingsFilePath = await (window as any).electronAPI.getResourcePath('src/renderer/settings.html');
-          const settingsPath = `file://${settingsFilePath}`;
-          const anchorIndex = url.indexOf('#');
-          finalUrl = anchorIndex !== -1 ? settingsPath + url.substring(anchorIndex) : settingsPath;
-          console.log('[WebviewManager] Setting settings URL:', finalUrl);
-        } catch (error) {
-          console.error('[WebviewManager] Settings path error:', error);
-          const cwd = (window as any).electronAPI.cwd();
-          finalUrl = `file://${(window as any).electronAPI.path.join(cwd, 'src/renderer/settings.html')}`;
-        }
+
       } else {
         console.log('[WebviewManager] Setting regular URL:', finalUrl);
       }
@@ -161,13 +149,11 @@ export class WebviewService implements IWebviewService {
 
     // Navigation events
     webview.addEventListener('will-navigate', (e: any) => {
-      console.log('[WebviewService] Navigation will start to:', e.url);
       this.updateUrlBar(webview, e.url);
       this.notifyTabUrlChange(webview, e.url);
     });
 
     webview.addEventListener('did-navigate', (e: any) => {
-      console.log('[WebviewService] Navigation completed to:', e.url);
       this.updateUrlBar(webview, e.url);
       this.notifyTabUrlChange(webview, e.url);
       
@@ -180,7 +166,6 @@ export class WebviewService implements IWebviewService {
     });
 
     webview.addEventListener('did-navigate-in-page', (e: any) => {
-      console.log('[WebviewService] In-page navigation to:', e.url);
       this.updateUrlBar(webview, e.url);
       this.notifyTabUrlChange(webview, e.url);
       
@@ -193,12 +178,10 @@ export class WebviewService implements IWebviewService {
     });
 
     webview.addEventListener('page-title-updated', (e: any) => {
-      console.log('[WebviewService] Title updated:', e.title);
       this.handleTitleUpdate(webview, e.title);
     });
 
     webview.addEventListener('page-favicon-updated', (e: any) => {
-      console.log('[WebviewService] Favicon updated:', e.favicons);
       if (e.favicons && e.favicons.length > 0) {
         this.handleFaviconUpdate(webview, e.favicons[0]);
       }
@@ -217,20 +200,18 @@ export class WebviewService implements IWebviewService {
 
     // Certificate errors
     webview.addEventListener('certificate-error', (e: any) => {
-      console.log('[WebviewManager] Certificate error for:', e.url);
+      console.log('[WebviewService] Certificate error for:', e.url);
     });
 
     // IPC messages
     webview.addEventListener('ipc-message', (event: any) => {
-      console.log('[WebviewManager] Received ipc-message from webview:', webview.id, 'channel:', event.channel);
+      console.log('[WebviewService] Received ipc-message from webview:', webview.id, 'channel:', event.channel);
     });
 
     // DOM ready event
     webview.addEventListener('dom-ready', () => {
       this.handleDomReady(webview);
     });
-
-    console.log('[WebviewManager] All event listeners set up for:', webview.id);
   }
 
   private handleLoadingStart(webview: any): void {
