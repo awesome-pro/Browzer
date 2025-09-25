@@ -119,10 +119,15 @@ class BrowzerApp {
       await this.initializeServices();
       this.setupEventListeners();
       this.setupIpcListeners();
+      this.setupWebviewEventListeners();
+
       this.workflowService.setupWorkflowEventListeners();
       this.adBlockService.setupAdBlocker();
       this.agentService.setupControls();
       await this.syncApiKeysWithBackend();
+
+      await this.tabService.enhancedRestoreTabs();
+
       this.state.isInitialized = true;
     } catch (error) {
       console.error('[BrowzerApp] DOM initialization failed:', error);
@@ -447,6 +452,7 @@ class BrowzerApp {
         if (webview) {
           setTimeout(() => {
             this.recordingService.setupWebviewRecording(webview);
+            this.setupWebviewTitleAndFaviconListeners(webview);
           }, 100);
           
           this.selectTab(tabId);
@@ -457,6 +463,88 @@ class BrowzerApp {
     } catch (error) {
       console.error('[BrowzerApp] Failed to create new tab:', error);
       return null;
+    }
+  }
+
+  private setupWebviewEventListeners(): void {
+    // Listen for webview title updates
+    window.addEventListener('webview-title-updated', (e: any) => {
+      const { webviewId, title } = e.detail;
+      const webview = document.getElementById(webviewId) as any;
+      if (webview) {
+        this.tabService.updateTabTitle(webview, title);
+      }
+    });
+  
+    // Listen for webview favicon updates
+    window.addEventListener('webview-favicon-updated', (e: any) => {
+      const { webviewId, faviconUrl } = e.detail;
+      const webview = document.getElementById(webviewId) as any;
+      if (webview) {
+        this.tabService.updateTabFavicon(webview, faviconUrl);
+      }
+    });
+  
+    // Listen for webview URL changes
+    window.addEventListener('webview-url-changed', (e: any) => {
+      const { webviewId, url } = e.detail;
+      const tabId = this.tabService.getTabIdFromWebviewId(webviewId);
+      if (tabId) {
+        this.tabService.updateTabUrl(tabId, url);
+      }
+    });
+  
+    // Listen for webview navigation changes
+    window.addEventListener('webview-navigation-changed', (e: any) => {
+      this.browserService.updateNavigationButtons();
+    });
+  
+    // Listen for new tab requests from webviews
+    window.addEventListener('webview-new-tab', (e: any) => {
+      const { url } = e.detail;
+      this.createNewTab(url);
+    });
+  }
+
+  private setupWebviewTitleAndFaviconListeners(webview: any): void {
+    try {
+      // Title update listener
+      webview.addEventListener('page-title-updated', (e: any) => {
+        this.tabService.updateTabTitle(webview, e.title);
+      });
+
+      // Favicon update listener
+      webview.addEventListener('page-favicon-updated', (e: any) => {
+        if (e.favicons && e.favicons.length > 0) {
+          this.tabService.updateTabFavicon(webview, e.favicons[0]);
+        }
+      });
+
+      // Alternative title listeners for different events
+      webview.addEventListener('did-finish-load', async () => {
+        try {
+          const title = await webview.executeJavaScript('document.title');
+          if (title) {
+            this.tabService.updateTabTitle(webview, title);
+          }
+        } catch (error) {
+          console.log('[BrowzerApp] Could not get title via executeJavaScript:', error);
+        }
+      });
+
+      // Navigation listeners to update URL and navigation buttons
+      webview.addEventListener('did-navigate', (e: any) => {
+        this.tabService.updateTabUrl(this.tabService.getTabIdFromWebviewId(webview.id)!, e.url);
+        this.browserService.updateNavigationButtons();
+      });
+
+      webview.addEventListener('did-navigate-in-page', (e: any) => {
+        this.tabService.updateTabUrl(this.tabService.getTabIdFromWebviewId(webview.id)!, e.url);
+        this.browserService.updateNavigationButtons();
+      });
+
+    } catch (error) {
+      console.error('[BrowzerApp] Error setting up webview listeners:', error);
     }
   }
 

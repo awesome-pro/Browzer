@@ -43,10 +43,20 @@ export class BrowserService implements IBrowserService {
       this.historyBtn = document.getElementById('historyBtn') as HTMLButtonElement;
 
       this.setupEventListeners();
+      this.setupNavigationUpdateListener();
+
       console.log('[BrowserService] Elements initialized successfully');
     } catch (error) {
       console.error('[BrowserService] Failed to initialize elements:', error);
     }
+  }
+
+  private setupNavigationUpdateListener(): void {
+    window.addEventListener('tab-selected', () => {
+      setTimeout(() => {
+        this.updateNavigationButtons();
+      }, 200);
+    });
   }
 
   private setupEventListeners(): void {
@@ -144,28 +154,40 @@ export class BrowserService implements IBrowserService {
 
   public updateNavigationButtons(): void {
     const webview = this.tabService.getActiveWebview();
-  if (webview && this.tabService.isWebviewReady(webview)) {
-    try {
-      if (this.backBtn) {
-        this.backBtn.disabled = !webview.canGoBack();
+    
+    if (!webview) {
+      this.disableNavigationButtons();
+      return;
+    }
+
+    // Wait for webview to be ready before checking navigation state
+    setTimeout(() => {
+      if (this.tabService.isWebviewReady(webview)) {
+        try {
+          const canGoBack = webview.canGoBack();
+          const canGoForward = webview.canGoForward();
+          
+          if (this.backBtn) {
+            this.backBtn.disabled = !canGoBack;
+          }
+          if (this.forwardBtn) {
+            this.forwardBtn.disabled = !canGoForward;
+          }
+          
+          console.log('[BrowserService] Navigation buttons updated:', { canGoBack, canGoForward });
+        } catch (error) {
+          console.log('[BrowserService] Webview methods not available yet, retrying...', error);
+          // Retry after a short delay if webview isn't fully ready
+          setTimeout(() => this.updateNavigationButtons(), 500);
+        }
+      } else {
+        console.log('[BrowserService] Webview not ready, disabling navigation buttons');
+        this.disableNavigationButtons();
+        
+        // Retry checking webview readiness
+        setTimeout(() => this.updateNavigationButtons(), 1000);
       }
-      if (this.forwardBtn) {
-        this.forwardBtn.disabled = !webview.canGoForward();
-      }
-    } catch (error) {
-      console.log('⚠️ Webview not ready for navigation buttons, using defaults');
-      // Fallback to disabled state if webview methods fail
-      if (this.backBtn) this.backBtn.disabled = true;
-      if (this.forwardBtn) this.forwardBtn.disabled = true;
-    }
-  } else {
-    if (this.backBtn) {
-      this.backBtn.disabled = true;
-    }
-    if (this.forwardBtn) {
-      this.forwardBtn.disabled = true;
-    }
-  }
+    }, 100);
   }
 
   public setNavigationState(state: NavigationState): void {
@@ -205,18 +227,27 @@ export class BrowserService implements IBrowserService {
       return url;
     }
 
-    // Search query detection
-    if (!url.includes('.') || url.includes(' ')) {
+    // Trim whitespace
+    url = url.trim();
+
+    // Search query detection (enhanced)
+    const hasSpaces = url.includes(' ');
+    const hasDot = url.includes('.');
+    const hasProtocol = url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file://');
+    
+    // If it contains spaces or doesn't look like a URL, treat as search
+    if (hasSpaces || (!hasProtocol && !hasDot)) {
       return 'https://www.google.com/search?q=' + encodeURIComponent(url);
     }
 
-    // Add protocol if missing
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    // Add protocol if missing for URLs
+    if (!hasProtocol && hasDot) {
       return 'https://' + url;
     }
 
     return url;
   }
+
 
   public enableNavigationButtons(canGoBack: boolean, canGoForward: boolean): void {
     if (this.backBtn) {
@@ -248,18 +279,17 @@ export class BrowserService implements IBrowserService {
       return; 
     }
   
-    // If it looks like a search query rather than a URL, use Google search
-    if (!url.includes('.') || url.includes(' ')) {
-      url = 'https://www.google.com/search?q=' + encodeURIComponent(url);
-    } 
-    // Add https:// if missing
-    else if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://' + url;
-    }
-  
+    // Process URL (includes search detection and protocol addition)
+    const processedUrl = this.processUrl(url);
+    
     const webview = this.tabService.getActiveWebview();
     if (webview) {
-      webview.loadURL(url);
+      webview.loadURL(processedUrl);
+      
+      // Update navigation buttons after navigation starts
+      setTimeout(() => {
+        this.updateNavigationButtons();
+      }, 500);
     }
   }
 

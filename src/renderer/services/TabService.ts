@@ -175,18 +175,18 @@ export class TabService implements ITabService {
     }
   
     try {
-      const tabId = 'tab-' + Date.now();
+      const tabId = 'tab-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
       const webviewId = 'webview-' + tabId;
   
-      // Create tab element
+      // Create tab element with loading state
       const tab = document.createElement('div');
-      tab.className = 'tab';
+      tab.className = 'tab loading';
       tab.id = tabId;
       tab.dataset.webviewId = webviewId;
   
       const initialTitle = title || this.getInitialTitle(url);
       tab.innerHTML = `
-        <div class="tab-favicon"></div>
+        <div class="tab-favicon loading"></div>
         <span class="tab-title">${initialTitle}</span>
         <button class="tab-close">×</button>
       `;
@@ -207,7 +207,9 @@ export class TabService implements ITabService {
   
       this.tabs.push(newTab);
       this.setupTabEventListeners(tab, tabId);
-      this.saveTabs();
+      
+      // Don't save immediately, let the webview creation complete first
+      setTimeout(() => this.saveTabs(), 1000);
   
       return tabId;
     } catch (error) {
@@ -278,6 +280,7 @@ export class TabService implements ITabService {
       this.activeTabId = tabId;
       this.tabs.forEach(tab => tab.isActive = tab.id === tabId);
 
+      // Update DOM classes
       document.querySelectorAll('.tab').forEach(tab => {
         tab.classList.remove('active');
       });
@@ -287,10 +290,25 @@ export class TabService implements ITabService {
         tabElement.classList.add('active');
       }
 
+      // Handle webview visibility
       this.handleTabVisibility(this.tabs[tabIndex]);
+      
+      // Update URL bar with current tab's URL
+      const urlBar = document.getElementById('urlBar') as HTMLInputElement;
+      if (urlBar) {
+        urlBar.value = this.tabs[tabIndex].url;
+      }
+
+      // Update navigation buttons
+      setTimeout(() => {
+        const customEvent = new CustomEvent('tab-selected', { 
+          detail: { tabId, url: this.tabs[tabIndex].url } 
+        });
+        window.dispatchEvent(customEvent);
+      }, 100);
 
     } catch (error) {
-    console.error('[TabService] Error in selectTab:', error);
+      console.error('[TabService] Error in selectTab:', error);
     }
   }
 
@@ -374,25 +392,45 @@ export class TabService implements ITabService {
   public async updateTabTitle(webview: any, title: string): Promise<void> {
     try {
       const tabId = this.getTabIdFromWebviewId(webview.id);
-      if (tabId) {
-        const tabTitle = document.querySelector(`#${tabId} .tab-title`);
-        if (tabTitle) {
-          let pageTitle = title || webview.getTitle() || 'New Tab';
-          
-          const tab = this.tabs.find(t => t.id === tabId);
-          if (tab && tab.url.startsWith('file://browzer-settings')) {
-            pageTitle = '⚙️ Browzer Settings';
-          }
-          
-          tabTitle.textContent = pageTitle;
-          
-          if (tab) {
-            tab.title = pageTitle;
-          }
-          
-          this.saveTabs();
+      if (!tabId) return;
+
+      const tabTitle = document.querySelector(`#${tabId} .tab-title`) as HTMLElement;
+      if (!tabTitle) return;
+
+      let pageTitle = title || '';
+      
+      // Handle empty titles
+      if (!pageTitle || pageTitle.trim() === '') {
+        try {
+          pageTitle = await webview.executeJavaScript('document.title') || 'New Tab';
+        } catch (error) {
+          pageTitle = 'New Tab';
         }
       }
+      
+      // Handle special pages
+      const tab = this.tabs.find(t => t.id === tabId);
+      if (tab) {
+        if (tab.url.startsWith('file://browzer-settings')) {
+          pageTitle = '⚙️ Browzer Settings';
+        } else if (tab.url === 'file://browzer-store') {
+          pageTitle = '🪟 Extension Store';
+        }
+        
+        // Update tab object
+        tab.title = pageTitle;
+      }
+      
+      // Update DOM
+      tabTitle.textContent = pageTitle;
+      
+      // Clear loading state if it exists
+      const tabElement = document.getElementById(tabId);
+      if (tabElement) {
+        tabElement.classList.remove('loading');
+      }
+      
+      this.saveTabs();
     } catch (error) {
       console.error('[TabService] Error updating tab title:', error);
     }
@@ -403,6 +441,15 @@ export class TabService implements ITabService {
     if (tab) {
       tab.url = url;
       tab.isProblematicSite = URLUtils.isProblematicSite(url);
+      
+      // Update URL bar if this is the active tab
+      if (tabId === this.activeTabId) {
+        const urlBar = document.getElementById('urlBar') as HTMLInputElement;
+        if (urlBar) {
+          urlBar.value = url;
+        }
+      }
+      
       this.saveTabs();
     }
   }
@@ -410,15 +457,18 @@ export class TabService implements ITabService {
   public updateTabFavicon(webview: any, faviconUrl: string): void {
     try {
       const tabId = this.getTabIdFromWebviewId(webview.id);
-      if (tabId) {
-        const faviconContainer = document.querySelector(`#${tabId} .tab-favicon`) as HTMLElement;
-        if (faviconContainer) {
-          faviconContainer.style.backgroundImage = `url(${faviconUrl})`;
-          faviconContainer.style.backgroundSize = 'contain';
-          faviconContainer.style.backgroundRepeat = 'no-repeat';
-          faviconContainer.style.backgroundPosition = 'center';
-          faviconContainer.classList.add('has-favicon');
-        }
+      if (!tabId) return;
+      
+      const faviconContainer = document.querySelector(`#${tabId} .tab-favicon`) as HTMLElement;
+      if (faviconContainer && faviconUrl) {
+        faviconContainer.style.backgroundImage = `url(${faviconUrl})`;
+        faviconContainer.style.backgroundSize = '16px 16px';
+        faviconContainer.style.backgroundRepeat = 'no-repeat';
+        faviconContainer.style.backgroundPosition = 'center';
+        faviconContainer.classList.add('has-favicon');
+        
+        // Remove any default favicon styles
+        faviconContainer.classList.remove('loading');
       }
     } catch (error) {
       console.error('[TabService] Error updating favicon:', error);
@@ -676,6 +726,7 @@ export class TabService implements ITabService {
 
   public async enhancedRestoreTabs(): Promise<void> {
     if (!this.tabsContainer || !this.webviewsContainer) {
+      console.log('[TabService] Containers not ready, creating default tab');
       setTimeout(() => {
         if (this.newTabCallback) {
           this.newTabCallback();
@@ -692,48 +743,58 @@ export class TabService implements ITabService {
         try {
           savedSession = JSON.parse(savedSessionJSON);
         } catch (parseErr) {
+          console.error('[TabService] Invalid saved session data, removing');
           localStorage.removeItem(CONSTANTS.SAVED_TABS_KEY);
-          if (this.newTabCallback) {
-            this.newTabCallback();
-          }
+          this.createDefaultTab();
           return;
         }
         
-        if (savedSession && savedSession.tabs && savedSession.tabs.length > 0) {
+        if (savedSession?.tabs?.length > 0) {
+          console.log(`[TabService] Restoring ${savedSession.tabs.length} tabs`);
+          
           // Clear current state
           this.tabs = [];
           this.tabsContainer.innerHTML = '';
           this.webviewsContainer.innerHTML = '';
           
-          let restoredCount = 0;
-          let activeTabToRestore = null;
+          let activeTabToRestore: string | null = null;
           const restoredTabIds: string[] = [];
           
-          // Create tabs without selecting them immediately
-          for (let i = 0; i < savedSession.tabs.length; i++) {
-            const tabData = savedSession.tabs[i];
+          // Restore each tab
+          for (const tabData of savedSession.tabs) {
             try {
               if (tabData.url && tabData.url !== 'about:blank') {
-                const newTabId = this.createTab(tabData.url);
-                
-                if (newTabId) {
-                  restoredCount++;
-                  restoredTabIds.push(newTabId);
+                // Use the callback to create tab properly with webview
+                if (this.newTabCallback) {
+                  this.newTabCallback(); // This will trigger createNewTab in the main app
                   
-                  // Update the tab title if it was saved
-                  if (tabData.title && tabData.title !== 'New Tab') {
-                    setTimeout(() => {
-                      const titleElement = document.querySelector(`#${newTabId} .tab-title`);
-                      if (titleElement) {
-                        titleElement.textContent = tabData.title;
+                  // Wait for tab to be created then update it
+                  setTimeout(() => {
+                    const latestTab = this.tabs[this.tabs.length - 1];
+                    if (latestTab) {
+                      // Update URL if different from default
+                      if (tabData.url !== CONSTANTS.NEW_TAB_URL) {
+                        const webview = document.getElementById(latestTab.webviewId) as any;
+                        if (webview) {
+                          webview.loadURL(tabData.url);
+                        }
                       }
-                    }, 100);
-                  }
-                  
-                  // Remember which tab was active
-                  if (tabData.isActive || tabData.webviewId === savedSession.activeTabId) {
-                    activeTabToRestore = newTabId;
-                  }
+                      
+                      // Update title
+                      if (tabData.title && tabData.title !== 'New Tab') {
+                        const titleElement = document.querySelector(`#${latestTab.id} .tab-title`);
+                        if (titleElement) {
+                          titleElement.textContent = tabData.title;
+                        }
+                        latestTab.title = tabData.title;
+                      }
+                      
+                      restoredTabIds.push(latestTab.id);
+                      if (tabData.isActive) {
+                        activeTabToRestore = latestTab.id;
+                      }
+                    }
+                  }, 100);
                 }
               }
             } catch (tabErr) {
@@ -741,31 +802,29 @@ export class TabService implements ITabService {
             }
           }
           
-          // Wait for all webviews to be ready, then select the active tab
-          if (restoredCount > 0) {
+          // Select the active tab after restoration
+          if (restoredTabIds.length > 0) {
             setTimeout(() => {
-              if (activeTabToRestore && restoredTabIds.includes(activeTabToRestore)) {
-                this.selectTab(activeTabToRestore);
-              } else if (restoredTabIds.length > 0) {
-                this.selectTab(restoredTabIds[0]);
-              }
-              
-              // Show notification after tab selection
-              setTimeout(() => {
-                this.showToast(`Restored ${restoredCount} tabs from previous session`, 'success');
-              }, 500);
-              
-            }, 800);
-            
-            return;
+              const tabToSelect = activeTabToRestore || restoredTabIds[0];
+              this.selectTab(tabToSelect);
+              this.showToast(`Restored ${restoredTabIds.length} tabs from previous session`, 'success');
+            }, 500);
+          } else {
+            this.createDefaultTab();
           }
+          
+          return;
         }
       }
     } catch (err) {
       console.error('[TabService] Error in tab restoration:', err);
     }
     
-    // Create fallback tab if no tabs were restored
+    // Create default tab if no tabs were restored
+    this.createDefaultTab();
+  }
+
+  private createDefaultTab(): void {
     if (this.newTabCallback) {
       this.newTabCallback();
     }

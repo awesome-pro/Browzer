@@ -124,7 +124,36 @@ export class WebviewService implements IWebviewService {
 
     webview.addEventListener('did-finish-load', () => {
       this.handleLoadingFinish(webview);
+      
+      // Additional title and favicon detection as backup methods
+      setTimeout(async () => {
+        try {
+          const title = await webview.executeJavaScript('document.title');
+          if (title && title.trim()) {
+            this.handleTitleUpdate(webview, title);
+          }
+        } catch (error) {
+          console.log('[WebviewService] Could not get title via JS execution:', error);
+        }
+      }, 1000);
+
+      setTimeout(async () => {
+        try {
+          const favicon = await webview.executeJavaScript(`
+            (function() {
+              const favicon = document.querySelector('link[rel*="icon"]');
+              return favicon ? favicon.href : null;
+            })()
+          `);
+          if (favicon) {
+            this.handleFaviconUpdate(webview, favicon);
+          }
+        } catch (error) {
+          console.log('[WebviewService] Could not get favicon via JS execution:', error);
+        }
+      }, 1500);
     });
+
 
     webview.addEventListener('did-fail-load', () => {
       this.handleLoadingFail(webview);
@@ -132,19 +161,49 @@ export class WebviewService implements IWebviewService {
 
     // Navigation events
     webview.addEventListener('will-navigate', (e: any) => {
-      console.log('[WebviewManager] Navigation will start to:', e.url);
+      console.log('[WebviewService] Navigation will start to:', e.url);
       this.updateUrlBar(webview, e.url);
+      this.notifyTabUrlChange(webview, e.url);
     });
 
     webview.addEventListener('did-navigate', (e: any) => {
-      console.log('[WebviewManager] Navigation completed to:', e.url);
+      console.log('[WebviewService] Navigation completed to:', e.url);
       this.updateUrlBar(webview, e.url);
+      this.notifyTabUrlChange(webview, e.url);
+      
+      // Trigger navigation button update
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('webview-navigation-changed', { 
+          detail: { webviewId: webview.id } 
+        }));
+      }, 200);
     });
 
     webview.addEventListener('did-navigate-in-page', (e: any) => {
-      console.log('[WebviewManager] In-page navigation to:', e.url);
+      console.log('[WebviewService] In-page navigation to:', e.url);
       this.updateUrlBar(webview, e.url);
+      this.notifyTabUrlChange(webview, e.url);
+      
+      // Trigger navigation button update for in-page navigation too
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('webview-navigation-changed', { 
+          detail: { webviewId: webview.id } 
+        }));
+      }, 200);
     });
+
+    webview.addEventListener('page-title-updated', (e: any) => {
+      console.log('[WebviewService] Title updated:', e.title);
+      this.handleTitleUpdate(webview, e.title);
+    });
+
+    webview.addEventListener('page-favicon-updated', (e: any) => {
+      console.log('[WebviewService] Favicon updated:', e.favicons);
+      if (e.favicons && e.favicons.length > 0) {
+        this.handleFaviconUpdate(webview, e.favicons[0]);
+      }
+    });
+
 
     // New window handling
     webview.addEventListener('new-window', (e: any) => {
@@ -181,6 +240,31 @@ export class WebviewService implements IWebviewService {
     }
   }
 
+  private handleTitleUpdate(webview: any, title: string): void {
+    // Dispatch custom event for tab service to handle
+    const titleEvent = new CustomEvent('webview-title-updated', {
+      detail: { webviewId: webview.id, title: title }
+    });
+    window.dispatchEvent(titleEvent);
+  }
+
+  // NEW: Handle favicon updates
+  private handleFaviconUpdate(webview: any, faviconUrl: string): void {
+    // Dispatch custom event for tab service to handle
+    const faviconEvent = new CustomEvent('webview-favicon-updated', {
+      detail: { webviewId: webview.id, faviconUrl: faviconUrl }
+    });
+    window.dispatchEvent(faviconEvent);
+  }
+
+  private notifyTabUrlChange(webview: any, url: string): void {
+    const urlEvent = new CustomEvent('webview-url-changed', {
+      detail: { webviewId: webview.id, url: url }
+    });
+    window.dispatchEvent(urlEvent);
+  }
+
+
   private handleLoadingFinish(webview: any): void {
     const tabElement = this.getTabElementByWebviewId(webview.id);
     if (tabElement) {
@@ -188,6 +272,7 @@ export class WebviewService implements IWebviewService {
     }
   
     this.updateUrlBar(webview, webview.src);
+    this.notifyTabUrlChange(webview, webview.src);
     
     this.setupRecordingForWebview(webview);
 
@@ -198,11 +283,19 @@ export class WebviewService implements IWebviewService {
       this.historyService.addVisit(url, webviewTitle);
     } 
 
+    // Inject ad block CSS
     setTimeout(() => {
       if (webview && !webview.isDestroyed && webview.executeJavaScript) {
         this.adBlockService.injectAdBlockCSS(webview);
       }
     }, 500);
+
+    // Update navigation buttons after page load
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('webview-navigation-changed', { 
+        detail: { webviewId: webview.id } 
+      }));
+    }, 1000);
   }
 
   private handleLoadingFail(webview: any): void {
