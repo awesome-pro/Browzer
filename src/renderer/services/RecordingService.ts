@@ -56,6 +56,10 @@ export class RecordingService implements IRecordingService {
         this.recordingActionsOverlay.show();
       }
       
+      // Start native event monitoring
+      this.startNativeEventMonitoring(sessionId);
+      
+      // Start webview recording
       this.notifyAllWebviews('start-recording', sessionId);
     });
     
@@ -65,6 +69,10 @@ export class RecordingService implements IRecordingService {
         this.recordingActionsOverlay.hide();
       }
       
+      // Stop native event monitoring
+      this.stopNativeEventMonitoring();
+      
+      // Stop webview recording
       this.notifyAllWebviews('stop-recording');
     });
     
@@ -463,23 +471,43 @@ export class RecordingService implements IRecordingService {
     }, 3000);
   }
 
-  public destroy(): void {
+  /**
+   * Start native event monitoring
+   * This sends a message to the main process to start monitoring events at the Electron level
+   */
+  private startNativeEventMonitoring(sessionId: string): void {
     try {
-      // Cleanup recording components
-      if (this.recordingControls) {
-        this.recordingControls.destroy();
-        this.recordingControls = null;
+      const ipcRenderer = (window as any).electronAPI;
+      if (ipcRenderer && ipcRenderer.ipcSend) {
+        ipcRenderer.ipcSend('start-native-recording', sessionId);
+        console.log('[RecordingService] Started native event monitoring');
       }
-      
-      if (this.recordingIndicator) {
-        this.recordingIndicator.destroy();
-        this.recordingIndicator = null;
+    } catch (error) {
+      console.error('[RecordingService] Failed to start native event monitoring:', error);
+    }
+  }
+  
+  /**
+   * Stop native event monitoring
+   * This sends a message to the main process to stop monitoring events at the Electron level
+   */
+  private stopNativeEventMonitoring(): void {
+    try {
+      const ipcRenderer = (window as any).electronAPI;
+      if (ipcRenderer && ipcRenderer.ipcSend) {
+        ipcRenderer.ipcSend('stop-native-recording');
+        console.log('[RecordingService] Stopped native event monitoring');
       }
-      
-      // Clean up actions overlay
-      if (this.recordingActionsOverlay) {
-        this.recordingActionsOverlay.hide();
-        this.recordingActionsOverlay = null;
+    } catch (error) {
+      console.error('[RecordingService] Failed to stop native event monitoring:', error);
+    }
+  }
+
+  public destroy(): void {
+    // Cleanup resources
+    try {
+    if (this.recordingControls) {
+      this.recordingControls.destroy();
       }
       
       // Remove session manager button
@@ -495,8 +523,9 @@ export class RecordingService implements IRecordingService {
       
       this.isInitialized = false;
       console.log('[RecordingService] Recording service destroyed successfully');
-    } catch (error) {
+    } catch (error: any) {
       console.error('[RecordingService] Error during destruction:', error);
+      
     }
   }
 }

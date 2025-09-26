@@ -344,6 +344,17 @@ export class WebviewService implements IWebviewService {
       }
     }, 1000);
     
+    // Register webview with native event monitor
+    try {
+      const webContentsId = webview.getWebContentsId();
+      if (webContentsId) {
+        this.ipcRenderer.send('register-webview-for-monitoring', webContentsId);
+        console.log('[WebviewManager] Registered webview with native event monitor, ID:', webContentsId);
+      }
+    } catch (error) {
+      console.error('[WebviewManager] Failed to register webview with native event monitor:', error);
+    }
+    
     this.setupRecordingForWebview(webview);
   }
 

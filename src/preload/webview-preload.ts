@@ -8,6 +8,15 @@ class WebviewRecordingEngine {
   private navigationObserver: MutationObserver | null = null;
   private loadingObserver: MutationObserver | null = null;
   
+  // New observers for enhanced detection
+  private shadowObservers = new Map<string, MutationObserver>();
+  private intersectionObserver: IntersectionObserver | null = null;
+  private componentObserver: MutationObserver | null = null;
+  
+  // Track shadow roots for event delegation
+  private shadowRoots = new Set<ShadowRoot>();
+  private reactRootElements = new Set<Element>();
+  
   // Text input aggregation
   private textInputBuffer = new Map<Element, {
     value: string;
@@ -23,6 +32,13 @@ class WebviewRecordingEngine {
     searchResultsDetected: false,
     lastDOMChangeTime: 0
   };
+  
+  // Track interactive elements for better event detection
+  private interactiveElements = new Set<Element>();
+  
+  // Deduplication tracking
+  private recentActions: Array<{hash: string, timestamp: number}> = [];
+  private readonly DEDUP_WINDOW = 2000; // 2 second window for deduplication
   
 
   constructor() {
@@ -42,11 +58,22 @@ class WebviewRecordingEngine {
     // Send initial page context
     this.sendPageContext('load');
     
-    // Test IPC communication
+    // Register this webview with the native event monitor
     try {
+      const webContentsId = (window as any).getWebContentsId?.() || 
+                          (window as any).webContentsId || 
+                          (window as any).currentWebContentsId;
+      
+      if (webContentsId) {
+        ipcRenderer.send('register-webview-for-monitoring', webContentsId);
+        console.log('[Webview Preload] Registered with native event monitor, ID:', webContentsId);
+      }
+      
+      // Test IPC communication
       ipcRenderer.send('webview-preload-loaded', {
         url: window.location.href,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        webContentsId
       });
     } catch (error) {
       console.error('[Webview Preload] IPC communication failed:', error);
@@ -61,10 +88,25 @@ class WebviewRecordingEngine {
     this.isRecording = true;
     this.sessionId = sessionId;
     
+    // Start our standard event recording
     this.setupEventListeners();
     this.setupLoadingDetection();
     this.setupSearchResultsDetection();
     this.sendPageContext('recording-start');
+    
+    // Also start native event recording
+    try {
+      const webContentsId = (window as any).getWebContentsId?.() || 
+                          (window as any).webContentsId || 
+                          (window as any).currentWebContentsId;
+      
+      if (webContentsId) {
+        ipcRenderer.send('start-native-recording', sessionId);
+        console.log('[Webview Preload] Started native recording, session ID:', sessionId);
+      }
+    } catch (error) {
+      console.error('[Webview Preload] Failed to start native recording:', error);
+    }
   }
 
   private stopRecording(): void {
@@ -89,18 +131,42 @@ class WebviewRecordingEngine {
     
     this.removeEventListeners();
     this.sendPageContext('recording-stop');
+    
+    // Also stop native event recording
+    try {
+      ipcRenderer.send('stop-native-recording');
+      console.log('[Webview Preload] Stopped native recording');
+    } catch (error) {
+      console.error('[Webview Preload] Failed to stop native recording:', error);
+    }
   }
 
   private setupEventListeners(): void {
     
     // Comprehensive event listening for all user interactions
-    const events = ['click', 'input', 'change', 'submit', 'keydown', 'keyup', 'paste', 'cut', 'copy', 'contextmenu'];
+    const events = ['click', 'input', 'change', 'submit', 'keydown', 'keyup', 'paste', 'cut', 'copy', 'contextmenu', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'];
     
+    // Enhanced event capture that works with Shadow DOM and React/framework events
     events.forEach(eventType => {
       const handler = (event: Event) => this.handleEvent(event, eventType);
-      document.addEventListener(eventType, handler, true);
+      
+      // Use capture phase and make it passive for better performance
+      window.addEventListener(eventType, handler, { capture: true, passive: true });
+      
+      // Also add to document for cases where window events might be stopped
+      document.addEventListener(eventType, handler, { capture: true, passive: true });
+      
       this.eventHandlers.set(eventType, handler);
+      
+      // Store for cleanup
+      this.eventHandlers.set(`document_${eventType}`, handler);
     });
+
+    // Setup Shadow DOM penetration
+    this.setupShadowDOMEventCapture();
+
+    // Setup React/framework component detection
+    this.setupFrameworkComponentDetection();
 
     // Setup enhanced clipboard monitoring
     this.setupClipboardMonitoring();
@@ -114,12 +180,43 @@ class WebviewRecordingEngine {
     // Setup network monitoring
     this.setupNetworkMonitoring();
 
+    // Setup intersection observer for better visibility detection
+    this.setupIntersectionObserver();
   }
 
   private removeEventListeners(): void {
     
     this.eventHandlers.forEach((handler, eventType) => {
-      document.removeEventListener(eventType, handler, true);
+      // Remove from window
+      if (!eventType.startsWith('document_') && !eventType.startsWith('shadow_')) {
+        window.removeEventListener(eventType, handler, { capture: true });
+      } else if (eventType.startsWith('document_')) {
+        // Remove from document for document_* prefixed handlers
+        const actualEventType = eventType.replace('document_', '');
+        document.removeEventListener(actualEventType, handler, { capture: true });
+      } else if (eventType.startsWith('shadow_')) {
+        // Remove from shadow roots for shadow_* prefixed handlers
+        // Format is shadow_[index]_[eventType]
+        const parts = eventType.split('_');
+        if (parts.length >= 3) {
+          const shadowIndex = parseInt(parts[1], 10);
+          const actualEventType = parts.slice(2).join('_');
+          
+          // Find the shadow root by index
+          let i = 0;
+          for (const shadowRoot of this.shadowRoots) {
+            if (i === shadowIndex) {
+              try {
+                shadowRoot.removeEventListener(actualEventType, handler, { capture: true });
+              } catch (e) {
+                console.warn(`[Webview Preload] Failed to remove event listener from shadow root:`, e);
+              }
+              break;
+            }
+            i++;
+          }
+        }
+      }
     });
     this.eventHandlers.clear();
 
@@ -132,6 +229,31 @@ class WebviewRecordingEngine {
       this.loadingObserver.disconnect();
       this.loadingObserver = null;
     }
+    
+    // Clean up shadow DOM observers
+    if (this.shadowObservers) {
+      this.shadowObservers.forEach(observer => observer.disconnect());
+      this.shadowObservers.clear();
+    }
+    
+    // Clean up intersection observer
+    if (this.intersectionObserver) {
+      this.intersectionObserver.disconnect();
+      this.intersectionObserver = null;
+    }
+    
+    // Clean up framework component observers
+    if (this.componentObserver) {
+      this.componentObserver.disconnect();
+      this.componentObserver = null;
+    }
+    
+    // Clear tracked elements
+    this.shadowRoots.clear();
+    this.reactRootElements.clear();
+    this.interactiveElements.clear();
+    
+    console.log('[Webview Preload] All event listeners and observers removed');
   }
 
   private handleEvent(event: Event, eventType: string): void {
@@ -351,52 +473,160 @@ class WebviewRecordingEngine {
     }
     
     // Elements with interactive roles
-    const interactiveRoles = ['button', 'link', 'checkbox', 'radio', 'tab', 'menuitem', 'option'];
+    const interactiveRoles = ['button', 'link', 'checkbox', 'radio', 'tab', 'menuitem', 'option', 'switch', 'listitem'];
     if (interactiveRoles.includes(role || '')) return true;
     
     // Elements with click handlers or tabindex
     if ((target as HTMLElement).onclick || target.hasAttribute('tabindex')) return true;
     
     // Common clickable class patterns
-    const clickablePatterns = ['btn', 'button', 'link', 'clickable', 'toggle', 'menu', 'nav', 'tab'];
+    const clickablePatterns = [
+      'btn', 'button', 'link', 'clickable', 'toggle', 'menu', 'nav', 'tab',
+      // Framework-specific patterns
+      'react-', 'ng-', 'v-', 'vue-', 'svelte-',
+      // Linear.app specific patterns
+      'linear-', 'icon-button', 'action-', 'item-', 'card-', 'list-item'
+    ];
     if (clickablePatterns.some(pattern => className.includes(pattern))) return true;
+    
+    // Check for data attributes commonly used in modern frameworks
+    const dataAttributes = ['data-testid', 'data-component-name', 'data-id', 'data-element-id', 'data-action'];
+    for (const attr of dataAttributes) {
+      if (target.hasAttribute(attr)) {
+        const value = target.getAttribute(attr)?.toLowerCase() || '';
+        // Check if attribute value suggests interactivity
+        if (value.includes('button') || value.includes('link') || value.includes('action') || 
+            value.includes('click') || value.includes('toggle') || value.includes('menu')) {
+          return true;
+        }
+      }
+    }
     
     // Elements with cursor pointer style
     const computedStyle = window.getComputedStyle(target);
     if (computedStyle.cursor === 'pointer') return true;
+    
+    // Check if element has event listeners (this is more reliable in modern frameworks)
+    // Note: This is a heuristic and might not work in all cases
+    const hasListeners = this.hasEventListeners(target);
+    if (hasListeners) return true;
     
     // Check if parent is clickable (for nested elements like icons in buttons)
     const parent = target.parentElement;
     if (parent && parent !== target) {
       const parentTag = parent.tagName?.toLowerCase();
       const parentRole = parent.getAttribute('role');
+      const parentClass = parent.className?.toString().toLowerCase() || '';
+      
       if (['a', 'button'].includes(parentTag) || 
-          ['button', 'link'].includes(parentRole || '')) {
+          ['button', 'link'].includes(parentRole || '') ||
+          clickablePatterns.some(pattern => parentClass.includes(pattern))) {
         return true;
       }
+    }
+    
+    // Check for elements in our tracked interactive elements set
+    if (this.interactiveElements.has(target)) return true;
+    
+    // Check for elements in framework roots
+    if (this.isInFrameworkComponent(target)) return true;
+    
+    return false;
+  }
+  
+  // Check if an element has event listeners attached
+  private hasEventListeners(element: Element): boolean {
+    // This is a heuristic approach since we can't directly access event listeners
+    // Look for common patterns that suggest event listeners
+    
+    // Check for onclick attribute
+    if (element.hasAttribute('onclick')) return true;
+    
+    // Check for common event handler attributes
+    const eventAttrs = ['onclick', 'onmousedown', 'onmouseup', 'ontouchstart', 'ontouchend', 'onkeydown', 'onkeyup'];
+    for (const attr of eventAttrs) {
+      if (element.hasAttribute(attr)) return true;
+    }
+    
+    // Check for React/framework event handler props
+    const reactHandlerProps = ['onClick', 'onMouseDown', 'onMouseUp', 'onTouchStart', 'onTouchEnd'];
+    for (const prop of reactHandlerProps) {
+      // We can't directly check React props, but we can check for data attributes that might indicate them
+      if (element.hasAttribute(`data-${prop.toLowerCase()}`)) return true;
+    }
+    
+    return false;
+  }
+  
+  // Check if an element is inside a framework component
+  private isInFrameworkComponent(element: Element): boolean {
+    // Check if the element itself is a framework component
+    if (this.reactRootElements.has(element)) return true;
+    
+    // Check if the element is inside a framework component
+    let parent = element.parentElement;
+    while (parent) {
+      if (this.reactRootElements.has(parent)) return true;
+      parent = parent.parentElement;
     }
     
     return false;
   }
 
 
-  private isSignificantEvent(event: Event, target: Element ): boolean {
+  private isSignificantEvent(event: Event, target: Element): boolean {
     if (!target) return false;
     
     // Skip events on script/style tags
     const tagName = target.tagName?.toLowerCase();
     if (['script', 'style', 'meta', 'head'].includes(tagName)) return false;
 
+    // Skip events that are not user-initiated
+    if (!this.isUserInitiatedEvent(event)) return false;
+    
     // Focus on interactive elements and form inputs
-    const interactiveTags = ['input', 'button', 'select', 'textarea', 'a', 'form'];
-    if (interactiveTags.includes(tagName)) return true;
+    const interactiveTags = ['input', 'button', 'select', 'textarea', 'a', 'form', 'label', 'div', 'span'];
+    if (interactiveTags.includes(tagName)) {
+      // For div and span, only consider them if they have other interactive properties
+      if (tagName === 'div' || tagName === 'span') {
+        return this.isClickableElement(target);
+      }
+      return true;
+    }
 
     // Elements with event handlers
     if ((target as HTMLElement).onclick || target.getAttribute('tabindex')) return true;
 
     // Elements with interactive roles
     const role = target.getAttribute('role');
-    if (['button', 'link', 'textbox', 'checkbox', 'radio'].includes(role || '')) return true;
+    if (['button', 'link', 'textbox', 'checkbox', 'radio', 'tab', 'menuitem', 'switch', 'listitem'].includes(role || '')) return true;
+
+    // Check for framework-specific attributes
+    if (target.hasAttribute('data-testid') || 
+        target.hasAttribute('data-component-name') || 
+        target.hasAttribute('data-action')) {
+      return true;
+    }
+    
+    // Check for Linear.app specific elements
+    const className = target.className?.toString().toLowerCase() || '';
+    if (className.includes('linear-') || 
+        className.includes('button') || 
+        className.includes('link') || 
+        className.includes('clickable') || 
+        className.includes('action')) {
+      return true;
+    }
+    
+    // Check if element is in our tracked interactive elements
+    if (this.interactiveElements.has(target)) return true;
+    
+    // Check if element is in a framework component
+    if (this.isInFrameworkComponent(target)) return true;
+    
+    // Check if element has pointer cursor
+    const computedStyle = window.getComputedStyle(target);
+    if (computedStyle.cursor === 'pointer') return true;
 
     return false;
   }
@@ -841,7 +1071,7 @@ class WebviewRecordingEngine {
   private getPageContext(): any {
     return {
       url: window.location.href,
-      title: document.title,
+      title: window.document.title,
       timestamp: Date.now(),
       viewport: {
         width: window.innerWidth,
@@ -875,14 +1105,24 @@ class WebviewRecordingEngine {
       attributeFilter: ['title']
     });
 
-    // Also listen for popstate events (back/forward navigation)
-    window.addEventListener('popstate', () => {
-      const currentUrl = window.location.href;
-      if (currentUrl !== lastUrl) {
-        this.recordNavigationEvent(lastUrl, currentUrl, document.title);
-        lastUrl = currentUrl;
-      }
-    });
+    const popstateHandler = () => {
+      console.log('[Webview Preload] SPA navigation detected via popstate');
+      this.sendPageContext('navigation');  // Trigger context send for navigation
+    };
+    window.addEventListener('popstate', popstateHandler, { capture: true, passive: true });
+    this.eventHandlers.set('popstate', popstateHandler);
+
+    const originalPushState = history.pushState;
+    history.pushState = function (...args) {
+      originalPushState.apply(this, args);
+      window.dispatchEvent(new Event('popstate'));  // Trigger our listener
+    };
+
+    const originalReplaceState = history.replaceState;
+    history.replaceState = function (...args) {
+      originalReplaceState.apply(this, args);
+      window.dispatchEvent(new Event('popstate'));
+    };
 
     // Listen for hashchange events (in-page navigation)
     window.addEventListener('hashchange', (event) => {
@@ -1063,7 +1303,7 @@ class WebviewRecordingEngine {
 
   private setupSearchResultsDetection(): void {
     // Detect Google search results specifically
-    if (window.location.hostname.includes('google.com')) {
+    if (document.location.hostname.includes('google.com')) {
       // Wait for search results to load with better detection
       const checkForResults = () => {
         // Look for actual search result elements
@@ -1607,7 +1847,7 @@ class WebviewRecordingEngine {
       }
     };
 
-    document.addEventListener('focus', formFocusHandler, true);
+    window.addEventListener('focus', formFocusHandler, true);
     this.eventHandlers.set('focus_monitor', formFocusHandler);
     
     console.log('🔵[Webview Preload] Form interaction monitoring enabled');
@@ -1768,6 +2008,492 @@ class WebviewRecordingEngine {
     };
 
     this.sendRecordingAction(actionData);
+  }
+
+  // Shadow DOM penetration - detect and attach listeners to shadow roots
+  private setupShadowDOMEventCapture(): void {
+    // First, find any existing shadow roots
+    this.findAndAttachToShadowRoots(document.documentElement);
+    
+    // Then, set up an observer to detect new shadow roots
+    const shadowRootObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === 'childList') {
+          mutation.addedNodes.forEach(node => {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              this.findAndAttachToShadowRoots(node as Element);
+            }
+          });
+        }
+      }
+    });
+    
+    // Observe the entire document for changes
+    shadowRootObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true
+    });
+    
+    // Store for cleanup
+    this.shadowObservers.set('document', shadowRootObserver);
+    
+    console.log('[Webview Preload] Shadow DOM event capture initialized');
+  }
+  
+  // Recursively find shadow roots and attach event listeners
+  private findAndAttachToShadowRoots(root: Node): void {
+    // Check if this element has a shadow root
+    if (root instanceof Element && root.shadowRoot && !this.shadowRoots.has(root.shadowRoot)) {
+      this.attachToShadowRoot(root.shadowRoot);
+    }
+    
+    // Recursively check children
+    if (root.hasChildNodes()) {
+      root.childNodes.forEach(child => {
+        this.findAndAttachToShadowRoots(child);
+      });
+    }
+  }
+  
+  // Attach event listeners to a shadow root
+  private attachToShadowRoot(shadowRoot: ShadowRoot): void {
+    if (this.shadowRoots.has(shadowRoot)) return;
+    
+    this.shadowRoots.add(shadowRoot);
+    
+    // Add event listeners to this shadow root
+    const events = ['click', 'input', 'change', 'submit', 'keydown', 'keyup', 'paste', 'cut', 'copy', 'contextmenu', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'];
+    
+    events.forEach(eventType => {
+      const handler = (event: Event) => this.handleEvent(event, eventType);
+      shadowRoot.addEventListener(eventType, handler, { capture: true, passive: true });
+      
+      // Store for cleanup with a unique key
+      const key = `shadow_${this.shadowRoots.size}_${eventType}`;
+      this.eventHandlers.set(key, handler);
+    });
+    
+    // Also observe this shadow root for changes
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === 'childList') {
+          mutation.addedNodes.forEach(node => {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              this.findAndAttachToShadowRoots(node);
+            }
+          });
+        }
+      }
+    });
+    
+    observer.observe(shadowRoot, {
+      childList: true,
+      subtree: true
+    });
+    
+    // Store for cleanup
+    const observerKey = `shadow_${this.shadowRoots.size}_observer`;
+    this.shadowObservers.set(observerKey, observer);
+    
+    console.log('[Webview Preload] Attached to Shadow DOM:', shadowRoot.host.tagName);
+  }
+  
+  // Framework component detection (React, Angular, Vue, etc.)
+  private setupFrameworkComponentDetection(): void {
+    // Look for common framework root elements and component patterns
+    const frameworkRootSelectors = [
+      // React
+      '[data-reactroot]',
+      '#root',
+      // Angular
+      '[ng-version]',
+      '[_nghost]',
+      // Vue
+      '[data-v-app]',
+      // Common app roots
+      '#app',
+      '.app',
+      // Linear.app specific selectors
+      '.linear-app',
+      '.linear-app-container',
+      '[data-component-name]',
+      '[data-testid]'
+    ];
+    
+    // First, check for existing framework roots
+    frameworkRootSelectors.forEach(selector => {
+      try {
+        const elements = document.querySelectorAll(selector);
+        elements.forEach(element => {
+          this.reactRootElements.add(element);
+          console.log(`[Webview Preload] Detected framework root: ${selector}`, element.tagName);
+        });
+      } catch (e) {
+        // Some selectors might be invalid in certain contexts
+      }
+    });
+    
+    // Set up observer to detect framework components that might be added dynamically
+    this.componentObserver = new MutationObserver((mutations) => {
+      let hasNewComponents = false;
+      
+      for (const mutation of mutations) {
+        if (mutation.type === 'childList') {
+          mutation.addedNodes.forEach(node => {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              const element = node as Element;
+              
+              // Check if this is a framework component
+              if (this.isFrameworkComponent(element)) {
+                this.reactRootElements.add(element);
+                hasNewComponents = true;
+              }
+              
+              // Also check children
+              frameworkRootSelectors.forEach(selector => {
+                try {
+                  const components = element.querySelectorAll(selector);
+                  components.forEach(component => {
+                    this.reactRootElements.add(component);
+                    hasNewComponents = true;
+                  });
+                } catch (e) {
+                  // Some selectors might be invalid
+                }
+              });
+            }
+          });
+        }
+      }
+      
+      if (hasNewComponents) {
+        console.log(`[Webview Preload] Detected new framework components, total: ${this.reactRootElements.size}`);
+      }
+    });
+    
+    // Observe the entire document
+    this.componentObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-reactroot', 'data-testid', 'data-component-name']
+    });
+    
+    // Check if we're on Linear.app and apply special handling
+    if (window.location.hostname.includes('linear.app')) {
+      this.setupLinearAppSpecificHandling();
+    }
+  }
+  
+  // Special handling for Linear.app
+  private setupLinearAppSpecificHandling(): void {
+    console.log('[Webview Preload] 🔍 Detected Linear.app - applying special handling');
+    
+    // Linear.app specific selectors for interactive elements
+    const linearSelectors = [
+      // Navigation elements
+      '[data-testid="sidebar"] a',
+      '[data-testid="sidebar"] [role="button"]',
+      '[data-testid="sidebar-item"]',
+      '[data-testid="navigation-item"]',
+      '[data-testid="header-navigation-item"]',
+      // Action buttons
+      '[data-testid="issue-create"]',
+      '[data-testid="issue-edit"]',
+      '[data-testid="issue-save"]',
+      '[data-testid="issue-cancel"]',
+      // Common interactive elements
+      '[data-testid*="button"]',
+      '[data-testid*="link"]',
+      '[data-testid*="action"]',
+      '[data-testid*="menu"]',
+      '[data-testid*="dropdown"]',
+      // Classes
+      '.linear-button',
+      '.linear-icon-button',
+      '.linear-action',
+      '.linear-menu-item',
+      '.linear-dropdown-trigger'
+    ];
+    
+    // First, find existing elements
+    linearSelectors.forEach(selector => {
+      try {
+        const elements = document.querySelectorAll(selector);
+        elements.forEach(element => {
+          this.interactiveElements.add(element);
+          
+          // Add click event listener directly to ensure capture
+          const clickHandler = (event: Event) => {
+            this.handleLinearAppEvent(event, 'click', element);
+          };
+          element.addEventListener('click', clickHandler, { capture: true, passive: false });
+          
+          // Store for cleanup with a unique key
+          const key = `linear_${this.interactiveElements.size}_click`;
+          this.eventHandlers.set(key, clickHandler);
+        });
+      } catch (e) {
+        // Some selectors might be invalid
+      }
+    });
+    
+    // Set up a special observer for Linear.app dynamic content
+    const linearObserver = new MutationObserver((mutations) => {
+      let newElements = false;
+      
+      for (const mutation of mutations) {
+        if (mutation.type === 'childList') {
+          mutation.addedNodes.forEach(node => {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              const element = node as Element;
+              
+              // Check if this element matches any of our Linear.app selectors
+              linearSelectors.forEach(selector => {
+                try {
+                  const matches = element.matches(selector) ? [element] : element.querySelectorAll(selector);
+                  if (matches.length > 0) {
+                    newElements = true;
+                    matches.forEach(match => {
+                      this.interactiveElements.add(match);
+                      
+                      // Add click event listener directly
+                      const clickHandler = (event: Event) => {
+                        this.handleLinearAppEvent(event, 'click', match);
+                      };
+                      match.addEventListener('click', clickHandler, { capture: true, passive: false });
+                      
+                      // Store for cleanup
+                      const key = `linear_${this.interactiveElements.size}_click`;
+                      this.eventHandlers.set(key, clickHandler);
+                    });
+                  }
+                } catch (e) {
+                  // Some selectors might be invalid
+                }
+              });
+            }
+          });
+        }
+      }
+      
+      if (newElements) {
+        console.log(`[Webview Preload] Found new Linear.app interactive elements, total: ${this.interactiveElements.size}`);
+      }
+    });
+    
+    // Observe the entire document for Linear.app elements
+    linearObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-testid', 'class']
+    });
+    
+    // Store for cleanup
+    this.shadowObservers.set('linear', linearObserver);
+    
+    // Also try to intercept React synthetic events by monkey-patching
+    this.interceptReactEvents();
+  }
+  
+  // Handle Linear.app specific events
+  private handleLinearAppEvent(event: Event, eventType: string, element: Element): void {
+    if (!this.isRecording) return;
+    
+    // Prevent duplicate events
+    const now = Date.now();
+    const elementId = element.getAttribute('data-testid') || element.id || element.className;
+    const eventKey = `${elementId}_${eventType}_${now}`;
+    
+    // Check if we've already processed this event recently
+    if (this.recentActions.some(action => action.hash === eventKey && now - action.timestamp < 300)) {
+      return;
+    }
+    
+    // Add to recent actions
+    this.recentActions.push({ hash: eventKey, timestamp: now });
+    
+    // Clean up old actions
+    this.recentActions = this.recentActions.filter(action => now - action.timestamp < this.DEDUP_WINDOW);
+    
+    // Generate a descriptive element context
+    const elementContext = this.captureElement(element);
+    
+    // Create action data
+    const actionData = {
+      type: eventType,
+      timestamp: now,
+      sessionId: this.sessionId,
+      target: elementContext,
+      value: this.getElementValue(element, event),
+      coordinates: this.getEventCoordinates(event),
+      pageContext: this.getPageContext()
+    };
+    
+    console.log('[Webview Preload] 🔵 Captured Linear.app event:', eventType, elementContext.description || elementContext.text);
+    
+    // Send the action
+    this.sendRecordingAction(actionData);
+  }
+  
+  // Try to intercept React synthetic events
+  private interceptReactEvents(): void {
+    try {
+      // This is a heuristic approach to intercept React's event system
+      // It's not guaranteed to work in all cases, but it's worth a try
+      
+      // Try to find React's event handler
+      const originalAddEventListener = Element.prototype.addEventListener;
+      Element.prototype.addEventListener = function(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) {
+        // Call the original method
+        const result = originalAddEventListener.call(this, type, listener, options);
+        
+        // If this is a click event and we're on Linear.app, add our own listener
+        if (type === 'click' && window.location.hostname.includes('linear.app')) {
+          const element = this as Element;
+          if (element.getAttribute && (element.getAttribute('data-testid') || element.className?.toString().includes('linear-'))) {
+            console.log('[Webview Preload] 🔍 Intercepted React event listener for:', element.tagName, element.getAttribute('data-testid') || element.className);
+          }
+        }
+        
+        return result;
+      };
+      
+      console.log('[Webview Preload] 🔧 Intercepted React event system');
+    } catch (e) {
+      console.warn('[Webview Preload] Failed to intercept React events:', e);
+    }
+  }
+  
+  // Check if an element is likely a framework component
+  private isFrameworkComponent(element: Element): boolean {
+    // Check for React components
+    if (element.hasAttribute('data-reactroot') ||
+        element.hasAttribute('data-testid') ||
+        element.hasAttribute('data-component-name')) {
+      return true;
+    }
+    
+    // Check for Angular components
+    if (element.hasAttribute('ng-version') ||
+        element.hasAttribute('_nghost')) {
+      return true;
+    }
+    
+    // Check for Vue components
+    if (element.hasAttribute('data-v-app') ||
+        element.hasAttribute('data-v')) {
+      return true;
+    }
+    
+    // Check for common component patterns
+    const className = element.className?.toString().toLowerCase() || '';
+    if (className.includes('component') ||
+        className.includes('container') ||
+        className.includes('wrapper') ||
+        className.includes('linear-')) {
+      return true;
+    }
+    
+    return false;
+  }
+  
+  // Setup intersection observer to track visible elements
+  private setupIntersectionObserver(): void {
+    // Create intersection observer to track visible elements
+    this.intersectionObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(entry => {
+          const element = entry.target;
+          
+          if (entry.isIntersecting) {
+            // Element is visible
+            if (this.isInteractiveElement(element)) {
+              this.interactiveElements.add(element);
+            }
+          } else {
+            // Element is no longer visible
+            this.interactiveElements.delete(element);
+          }
+        });
+      },
+      {
+        root: null, // viewport
+        threshold: 0.1 // 10% visibility is enough
+      }
+    );
+    
+    // Start observing all interactive elements
+    this.observeInteractiveElements();
+  }
+  
+  // Find and observe all interactive elements
+  private observeInteractiveElements(): void {
+    // Common interactive element selectors
+    const interactiveSelectors = [
+      'a', 'button', 'input', 'select', 'textarea',
+      '[role="button"]', '[role="link"]', '[role="checkbox"]',
+      '[role="radio"]', '[role="tab"]', '[role="menuitem"]',
+      '[tabindex]', '.btn', '.button', '.link', '.clickable',
+      // Linear.app specific selectors
+      '.linear-component', '[data-testid]', '[data-component-name]',
+      '.linear-button', '.linear-link', '.linear-icon-button'
+    ];
+    
+    // Query for all interactive elements
+    interactiveSelectors.forEach(selector => {
+      try {
+        const elements = document.querySelectorAll(selector);
+        elements.forEach(element => {
+          if (this.isInteractiveElement(element)) {
+            this.intersectionObserver?.observe(element);
+          }
+        });
+      } catch (e) {
+        // Some selectors might be invalid
+      }
+    });
+  }
+  
+  // Enhanced method to check if an element is interactive
+  private isInteractiveElement(element: Element): boolean {
+    const tagName = element.tagName?.toLowerCase();
+    const role = element.getAttribute('role');
+    const computedStyle = window.getComputedStyle(element);
+    
+    // Always interactive elements
+    if (['a', 'button', 'input', 'select', 'textarea', 'label'].includes(tagName)) {
+      return true;
+    }
+    
+    // Elements with interactive roles
+    if (['button', 'link', 'checkbox', 'radio', 'tab', 'menuitem', 'option'].includes(role || '')) {
+      return true;
+    }
+    
+    // Elements with click handlers or tabindex
+    if ((element as HTMLElement).onclick || element.hasAttribute('tabindex')) {
+      return true;
+    }
+    
+    // Elements with pointer cursor
+    if (computedStyle.cursor === 'pointer') {
+      return true;
+    }
+    
+    // Check for Linear.app specific interactive elements
+    const className = element.className?.toString().toLowerCase() || '';
+    if (className.includes('button') || 
+        className.includes('link') || 
+        className.includes('clickable') ||
+        className.includes('linear-') ||
+        element.hasAttribute('data-testid') ||
+        element.hasAttribute('data-component-name')) {
+      return true;
+    }
+    
+    return false;
   }
 
   private cleanPageLoadValue(loadTime: number, url: string): string {

@@ -506,6 +506,10 @@ class BrowzerApp {
         }
       });
     });
+    
+    // Initialize native event monitor
+    const { initializeNativeEventMonitor } = require('./native-event-monitor');
+    initializeNativeEventMonitor();
 
       ipcMain.on('recording-context', (event, contextData) => {
         

@@ -33,7 +33,20 @@ export class SmartRecordingEngine {
   private eventListeners: Map<string, EventListener> = new Map();
 
   private constructor() {
-    this.initializeWebviewEventHandlers()
+    this.initializeWebviewEventHandlers();
+    this.initializeNativeEventHandlers();
+  }
+  
+  // Initialize native event handlers
+  private initializeNativeEventHandlers(): void {
+    // Listen for native events from the main process
+    window.addEventListener('native-recording-event', ((event: Event) => {
+      const customEvent = event as CustomEvent;
+      const eventData = customEvent.detail;
+      this.handleNativeEvent(eventData);
+    }) as EventListener);
+    
+    console.log('[RecordingEngine] Native event handlers initialized');
   }
 
   static getInstance(): SmartRecordingEngine {
@@ -58,6 +71,11 @@ export class SmartRecordingEngine {
       
       ipcRenderer.ipcOn('webview-recording-network', (networkData: any) => {
         this.handleWebviewNetwork(networkData);
+      });
+      
+      // Add handler for native events from the main process
+      ipcRenderer.ipcOn('native-event', (eventData: any) => {
+        this.handleNativeEvent(eventData);
       });
       
     } else {
@@ -153,6 +171,437 @@ private handleWebviewNetwork(networkData: any): void {
     context: this.convertWebviewPageContext(networkData.pageContext),
     // source: 'webview'
   });
+}
+
+/**
+ * Handle native events from the main process
+ * These events bypass Content Security Policy restrictions
+ * and work on sites like Linear.app, Google apps, GitHub, etc.
+ */
+private handleNativeEvent(eventData: any): void {
+  if (!this.isRecording || !this.activeSession) {
+    console.log('[RecordingEngine] Skipping event - not recording or no active session');
+    return;
+  }
+  
+  if (!eventData) {
+    console.error('[RecordingEngine] Received undefined/null event data');
+    return;
+  }
+  
+  console.log('[RecordingEngine] Processing native event:', eventData.type, {
+    url: eventData.url,
+    title: eventData.title,
+    timestamp: eventData.timestamp
+  });
+  
+  try {
+    // Process different types of native events
+    switch (eventData.type) {
+      case 'navigation':
+      case 'in_page_navigation':
+      case 'history_push_state':
+      case 'history_replace_state':
+        console.log('[RecordingEngine] Handling navigation event:', eventData.url);
+        this.handleNativeNavigationEvent(eventData);
+        break;
+        
+      case 'click':
+      case 'mousedown':
+      case 'mouseup':
+        console.log('[RecordingEngine] Handling click event');
+        this.handleNativeClickEvent(eventData);
+        break;
+        
+      case 'input':
+      case 'change':
+        console.log('[RecordingEngine] Handling input event');
+        this.handleNativeInputEvent(eventData);
+        break;
+        
+      case 'keydown':
+      case 'keyup':
+      case 'keypress':
+        console.log('[RecordingEngine] Handling key event');
+        this.handleNativeKeyEvent(eventData);
+        break;
+        
+      case 'submit':
+        console.log('[RecordingEngine] Handling form submit event');
+        this.handleNativeFormSubmitEvent(eventData);
+        break;
+        
+      case 'react_synthetic_event':
+        console.log('[RecordingEngine] Handling React synthetic event');
+        this.handleNativeReactEvent(eventData);
+        break;
+        
+      case 'dom_significant_change':
+        console.log('[RecordingEngine] Handling DOM change event');
+        this.handleNativeDOMChangeEvent(eventData);
+        break;
+        
+      default:
+        console.log('[RecordingEngine] Handling generic event:', eventData.type);
+        // For other event types, create a generic action
+        this.recordNativeAction(eventData);
+    }
+  } catch (error) {
+    console.error('[RecordingEngine] Error processing native event:', error);
+  }
+}
+
+/**
+ * Handle native navigation events
+ */
+private handleNativeNavigationEvent(eventData: any): void {
+  if (!eventData.url) {
+    console.error('[RecordingEngine] Navigation event missing URL');
+    return;
+  }
+
+  console.log('[RecordingEngine] Processing navigation to:', eventData.url);
+  
+  const pageContext = {
+    url: eventData.url,
+    title: eventData.title || 'Unknown Page',
+    timestamp: eventData.timestamp || Date.now(),
+    viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+    userAgent: navigator.userAgent,
+    keyElements: []
+  };
+  
+  // Update last page context
+  this.lastPageContext = pageContext;
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.NAVIGATION,
+    timestamp: eventData.timestamp || Date.now(),
+    description: `Navigate to ${eventData.title || eventData.url}`,
+    target: {
+      description: `Page: ${eventData.title || 'Unknown Page'}`,
+      selector: '',
+      xpath: '',
+      role: 'page',
+      isVisible: true,
+      isInteractive: false,
+      context: 'native_navigation'
+    },
+    context: pageContext,
+    intent: 'navigate_to_page'
+  };
+  
+  console.log('[RecordingEngine] Recording navigation action:', action.description);
+  this.recordAction(action);
+  
+  // Dispatch an event for the UI to update
+  window.dispatchEvent(new CustomEvent('webview-recording-action', {
+    detail: {
+      type: ActionType.NAVIGATION,
+      description: action.description,
+      timestamp: action.timestamp
+    }
+  }));
+  
+  // Update pages visited
+  if (this.activeSession && !this.activeSession.metadata.pagesVisited.includes(eventData.url)) {
+    this.activeSession.metadata.pagesVisited.push(eventData.url);
+    console.log('[RecordingEngine] Updated visited pages list');
+  }
+}
+
+/**
+ * Handle native click events
+ */
+private handleNativeClickEvent(eventData: any): void {
+  if (!eventData.target) return;
+  
+  const target = eventData.target;
+  const elementContext = this.convertNativeElementToElementContext(target);
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.CLICK,
+    timestamp: eventData.timestamp,
+    description: `Click ${elementContext.description || target.tagName}`,
+    target: elementContext,
+    coordinates: eventData.coordinates,
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp,
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: this.inferIntent(ActionType.CLICK, elementContext)
+  };
+  
+  this.recordAction(action);
+}
+
+/**
+ * Handle native input events
+ */
+private handleNativeInputEvent(eventData: any): void {
+  if (!eventData.target) return;
+  
+  const target = eventData.target;
+  const elementContext = this.convertNativeElementToElementContext(target);
+  
+  // Skip empty inputs or very short inputs (likely incomplete)
+  if (!eventData.value || eventData.value.length < 2) return;
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.TYPE,
+    timestamp: eventData.timestamp,
+    description: `Enter "${this.maskSensitiveValue(eventData.value)}" in ${elementContext.description || target.tagName}`,
+    target: elementContext,
+    value: this.maskSensitiveValue(eventData.value),
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp,
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: this.inferIntent(ActionType.TYPE, elementContext, eventData.value)
+  };
+  
+  this.recordAction(action);
+}
+
+/**
+ * Handle native key events
+ */
+private handleNativeKeyEvent(eventData: any): void {
+  if (!eventData.target || !eventData.key) return;
+  
+  // Only record special keys like Enter, Escape, etc.
+  const specialKeys = ['Enter', 'Escape', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+  if (!specialKeys.includes(eventData.key)) return;
+  
+  const target = eventData.target;
+  const elementContext = this.convertNativeElementToElementContext(target);
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.KEYPRESS,
+    timestamp: eventData.timestamp,
+    description: `Press ${eventData.key} key`,
+    target: elementContext,
+    value: eventData.key,
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp,
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: 'keyboard_navigation'
+  };
+  
+  this.recordAction(action);
+}
+
+/**
+ * Handle native form submit events
+ */
+private handleNativeFormSubmitEvent(eventData: any): void {
+  if (!eventData.target) return;
+  
+  const target = eventData.target;
+  const elementContext = this.convertNativeElementToElementContext(target);
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.FORM_SUBMIT,
+    timestamp: eventData.timestamp,
+    description: `Submit form`,
+    target: elementContext,
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp,
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: this.inferIntent(ActionType.FORM_SUBMIT, elementContext)
+  };
+  
+  this.recordAction(action);
+}
+
+/**
+ * Handle native React synthetic events
+ */
+private handleNativeReactEvent(eventData: any): void {
+  if (!eventData.target) return;
+  
+  const target = eventData.target;
+  const elementContext = this.convertNativeElementToElementContext(target);
+  
+  // Map React event names to our action types
+  const reactEventMap: Record<string, ActionType> = {
+    'onClick': ActionType.CLICK,
+    'onChange': ActionType.TYPE,
+    'onSubmit': ActionType.SUBMIT,
+    'onKeyDown': ActionType.KEYPRESS,
+    'onKeyUp': ActionType.KEYPRESS
+  };
+  
+  const actionType = reactEventMap[eventData.reactType] || ActionType.CLICK;
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: actionType,
+    timestamp: eventData.timestamp,
+    description: `React ${eventData.reactType.replace('on', '')} on ${elementContext.description || target.tagName}`,
+    target: elementContext,
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp,
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: this.inferIntent(actionType, elementContext)
+  };
+  
+  this.recordAction(action);
+}
+
+/**
+ * Handle native DOM change events
+ */
+private handleNativeDOMChangeEvent(eventData: any): void {
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.DYNAMIC_CONTENT,
+    timestamp: eventData.timestamp,
+    description: `Content updated on ${eventData.title || eventData.url}`,
+    target: {
+      description: 'Dynamic content',
+      selector: '',
+      xpath: '',
+      role: 'region',
+      isVisible: true,
+      isInteractive: false,
+      context: 'dom_change'
+    },
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp,
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: 'view_content'
+  };
+  
+  this.recordAction(action);
+}
+
+/**
+ * Record a generic native action
+ */
+private recordNativeAction(eventData: any): void {
+  if (!eventData.target) return;
+  
+  const target = eventData.target;
+  const elementContext = this.convertNativeElementToElementContext(target);
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.CLICK,
+    timestamp: eventData.timestamp,
+    description: `${eventData.type} on ${elementContext.description || target.tagName}`,
+    target: elementContext,
+    value: eventData.value,
+    coordinates: eventData.coordinates,
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp,
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: 'interact'
+  };
+  
+  this.recordAction(action);
+}
+
+/**
+ * Convert a native element to our ElementContext format
+ */
+private convertNativeElementToElementContext(nativeElement: any): ElementContext {
+  if (!nativeElement) {
+    return {
+      description: 'Unknown element',
+      selector: '',
+      xpath: '',
+      role: 'unknown',
+      boundingRect: { x: 0, y: 0, width: 0, height: 0 },
+      isVisible: true,
+      isInteractive: true,
+      context: 'native_event'
+    };
+  }
+  
+  // Generate a descriptive string based on the element's properties
+  let description = nativeElement.tagName?.toLowerCase() || 'element';
+  
+  if (nativeElement.type) {
+    description = `${nativeElement.type} ${description}`;
+  }
+  
+  if (nativeElement.id) {
+    description += ` #${nativeElement.id}`;
+  } else if (nativeElement.className) {
+    const classes = nativeElement.className.toString().split(' ');
+    if (classes.length > 0 && classes[0]) {
+      description += ` .${classes[0]}`;
+    }
+  }
+  
+  if (nativeElement.text) {
+    description += ` "${nativeElement.text.substring(0, 30)}${nativeElement.text.length > 30 ? '...' : ''}"`;  
+  }
+  
+  // Generate a selector
+  let selector = nativeElement.tagName?.toLowerCase() || '';
+  if (nativeElement.id) {
+    selector = `#${nativeElement.id}`;
+  } else if (nativeElement.attributes && nativeElement.attributes['data-testid']) {
+    selector = `[data-testid="${nativeElement.attributes['data-testid']}"]`;
+  } else if (nativeElement.className) {
+    const classes = nativeElement.className.toString().split(' ');
+    if (classes.length > 0 && classes[0]) {
+      selector = `${selector}.${classes[0]}`;
+    }
+  }
+  
+  return {
+    description,
+    selector,
+    xpath: '',
+    role: nativeElement.attributes?.role || 'generic',
+    boundingRect: nativeElement.boundingRect || { x: 0, y: 0, width: 0, height: 0 },
+    isVisible: true,
+    isInteractive: true,
+    context: 'native_event',
+    elementType: nativeElement.type || nativeElement.tagName?.toLowerCase(),
+    text: nativeElement.text
+  };
 }
 
 private convertWebviewElementToElementContext(webviewElement: any): ElementContext {

@@ -205,7 +205,38 @@ class BrowzerApp {
         });
         window.dispatchEvent(recordingEvent);
       }
-    }); 
+    });
+    
+    // Handle native events from main process
+    const ipcRenderer = (window as any).electronAPI;
+    if (ipcRenderer && ipcRenderer.ipcOn) {
+      console.log('[Renderer] Setting up native event handler');
+      
+      // Forward native events to the recording engine
+      ipcRenderer.ipcOn('native-event', (eventData: any) => {
+        console.log('[Renderer] Received native event:', eventData.type);
+        
+        // Add additional information to help with debugging
+        if (eventData.type === 'navigation' || eventData.type === 'in_page_navigation') {
+          console.log('[Renderer] Navigation event details:', {
+            url: eventData.url,
+            title: eventData.title,
+            webContentsId: eventData.webContentsId
+          });
+        }
+        
+        // Dispatch custom event for the recording system
+        try {
+          const nativeEvent = new CustomEvent('native-recording-event', {
+            detail: eventData
+          });
+          window.dispatchEvent(nativeEvent);
+          console.log('[Renderer] Native event dispatched to recording engine');
+        } catch (error) {
+          console.error('[Renderer] Failed to dispatch native event:', error);
+        }
+      });
+    }
   }
 
   private updateContextVisualIndicators(): void {
