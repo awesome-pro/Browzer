@@ -168,21 +168,13 @@ export class NativeEventMonitor {
   private handleInPageNavigation = (event: any, url: string, isMainFrame: boolean): void => {
     if (!this.isRecording || !isMainFrame) return;
     
-    // Check if event.sender exists before accessing it
-    if (!event || !event.sender) {
-      console.error('[NativeEventMonitor] In-page navigation event has no sender');
-      return;
-    }
+    if (!event || !event.sender) return;
     
     const webContents = event.sender as WebContents;
     const webContentsId = webContents.id;
     
-    // Only process navigation events for registered webContents to avoid duplicates
-    if (!this.monitoredWebContents.has(webContentsId)) {
-      return;
-    }
+    if (!this.monitoredWebContents.has(webContentsId)) return;
     
-    // Send in-page navigation event to renderer process
     this.sendEventToRenderer({
       type: 'in_page_navigation',
       url,
@@ -194,12 +186,8 @@ export class NativeEventMonitor {
   };
 
   private handleConsoleMessage = (event: any, level: number, message: string, line: number, sourceId: string): void => {
-    // Check if event exists before proceeding
-    if (!event) {
-      console.error('[NativeEventMonitor] Console message event is undefined');
-      return;
-    }
-    // Filter for our special event messages
+    if (!event) return;
+
     if (message.startsWith('__NATIVE_EVENT__:')) {
       try {
         const eventData = JSON.parse(message.substring('__NATIVE_EVENT__:'.length));
@@ -214,9 +202,7 @@ export class NativeEventMonitor {
     if (!webContents || webContents.isDestroyed()) return;
 
     try {
-      // Wait for the page to be ready with a simpler approach
       if (webContents.isLoading()) {
-        console.log('[NativeEventMonitor] Waiting for page to load...');
         try {
           await new Promise<void>((resolve) => {
             const loadHandler = () => {
@@ -365,7 +351,6 @@ export class NativeEventMonitor {
           
           // Special handling for Linear.app
           if (window.location.hostname.includes('linear.app')) {
-            // Monitor React synthetic events
             const originalDispatchEvent = EventTarget.prototype.dispatchEvent;
             EventTarget.prototype.dispatchEvent = function(event) {
               const result = originalDispatchEvent.call(this, event);
@@ -388,11 +373,9 @@ export class NativeEventMonitor {
           
           // Special handling for Google apps
           if (window.location.hostname.includes('google.com')) {
-            // Monitor DOM mutations for Google's dynamic content
             const observer = new MutationObserver((mutations) => {
               for (const mutation of mutations) {
                 if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                  // Check if this might be a significant UI change
                   const significantChange = Array.from(mutation.addedNodes).some(node => {
                     return node.nodeType === 1 && // ELEMENT_NODE
                            (node.nodeName === 'DIV' && node.childElementCount > 3);
@@ -423,7 +406,6 @@ export class NativeEventMonitor {
           
           // Special handling for GitHub
           if (window.location.hostname.includes('github.com')) {
-            // Monitor turbo:load events for GitHub's Turbo navigation
             document.addEventListener('turbo:load', () => {
               console.log('__NATIVE_EVENT__:' + JSON.stringify({
                 type: 'turbo_navigation',
