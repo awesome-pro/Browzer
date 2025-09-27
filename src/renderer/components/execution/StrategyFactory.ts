@@ -14,7 +14,7 @@ import { WaitForDynamicContentStrategy, WaitForElementStrategy, WaitTimeStrategy
 export class StrategyFactory {
   private static strategies: Map<ActionType, new () => ActionStrategy> = new Map([
     // Navigation and Basic Input
-    [ActionType.NAVIGATE, NavigationStrategy],
+    [ActionType.NAVIGATION, NavigationStrategy],
     [ActionType.TYPE, TextInputStrategy],
     [ActionType.CLICK, ClickStrategy],
     [ActionType.CLEAR, ClearStrategy],
@@ -45,14 +45,8 @@ export class StrategyFactory {
     [ActionType.CUT, CutStrategy],
     [ActionType.PASTE, PasteStrategy],
     
-    // Verification Actions
-    [ActionType.VERIFY_ELEMENT, VerifyElementStrategy],
-    [ActionType.VERIFY_TEXT, VerifyTextStrategy],
-    [ActionType.VERIFY_URL, VerifyUrlStrategy],
-    
     // Miscellaneous Actions
     [ActionType.SCROLL, ScrollStrategy],
-    [ActionType.EXTRACT, ExtractStrategy],
     [ActionType.CONTEXT_MENU, ContextMenuStrategy]
   ]);
 

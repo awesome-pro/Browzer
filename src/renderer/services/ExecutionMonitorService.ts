@@ -43,11 +43,6 @@ export class ExecutionMonitorService implements IExecutionMonitorService {
 
           successCount++;
           this.uiService.updateStepProgress(i, step, 'completed', stepResult);
-
-          if (step.action === ActionType.EXTRACT) {
-            finalResult = stepResult;
-          }
-
           await this.wait(800);
 
         } catch (error) {
@@ -94,7 +89,7 @@ export class ExecutionMonitorService implements IExecutionMonitorService {
 
   public shouldContinueAfterFailure(step: ExecuteStep, error: Error): boolean {
     const criticalActions = [
-      ActionType.NAVIGATE,
+      ActionType.NAVIGATION,
       ActionType.SUBMIT
     ];
 

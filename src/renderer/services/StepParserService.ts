@@ -134,9 +134,9 @@ export class StepParserService implements IStepParserService {
     
     const normalized = action.toLowerCase().trim();
     const actionMap: Record<string, ActionType> = {
-      'navigate': ActionType.NAVIGATE,
-      'go_to': ActionType.NAVIGATE,
-      'visit': ActionType.NAVIGATE,
+      'navigate': ActionType.NAVIGATION,
+      'go_to': ActionType.NAVIGATION,
+      'visit': ActionType.NAVIGATION,
       'type': ActionType.TYPE,
       'input': ActionType.TYPE,
       'enter': ActionType.TYPE,
@@ -185,11 +185,6 @@ export class StepParserService implements IStepParserService {
       'keypress': ActionType.KEYPRESS,
       'key': ActionType.KEYPRESS,
       'scroll': ActionType.SCROLL,
-      'extract': ActionType.EXTRACT,
-      'get_data': ActionType.EXTRACT,
-      'verify_element': ActionType.VERIFY_ELEMENT,
-      'verify_text': ActionType.VERIFY_TEXT,
-      'verify_url': ActionType.VERIFY_URL
     };
 
     return actionMap[normalized] || ActionType.CLICK;
@@ -199,7 +194,7 @@ export class StepParserService implements IStepParserService {
     const fixedStep = { ...step };
 
     for (const error of errors) {
-      if (error.includes('URL is required') && step.action === ActionType.NAVIGATE) {
+      if (error.includes('URL is required') && step.action === ActionType.NAVIGATION) {
         if (!fixedStep.target && !fixedStep.value) {
           const urlMatch = step.description.match(/(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
           if (urlMatch) {

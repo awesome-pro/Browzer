@@ -14,7 +14,7 @@ export class ActionValidator {
       
       // Action-specific validations
       switch (step.action) {
-        case ActionType.NAVIGATE:
+        case ActionType.NAVIGATION:
           if (!step.target && !step.value) {
             errors.push('URL is required for navigate action');
           }

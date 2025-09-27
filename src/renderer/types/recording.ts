@@ -231,7 +231,7 @@ export interface ActionBuffer {
   // Action Action Type System - Same actions for recording and execution
 export enum ActionType {
     // Navigation Actions
-    NAVIGATE = 'navigate',
+    NAVIGATION = 'navigation',
     
     // Input Actions
     TYPE = 'type',
@@ -285,7 +285,6 @@ export enum ActionType {
     VERIFY_URL = 'verify_url',
 
     FORM_SUBMIT = 'submit',         // User submitted a form
-    NAVIGATION = 'navigation',       // User navigated to new page
     NETWORK_REQUEST = 'network_request',
     NETWORK_ERROR = 'network_error',
   
@@ -426,126 +425,6 @@ export enum ActionType {
           
         default:
           return ActionType.CLICK;
-      }
-    }
-    
-    // Map action to execution method name
-    static getExecutionMethod(action: ActionType): string {
-      const methodMap: Record<ActionType, string> = {
-        [ActionType.NAVIGATE]: 'navigate',
-        [ActionType.TYPE]: 'type',
-        [ActionType.CLEAR]: 'clear',
-        [ActionType.CLICK]: 'click',
-        [ActionType.SELECT]: 'select',
-        [ActionType.TOGGLE]: 'toggle',
-        [ActionType.SUBMIT]: 'submit',
-        
-        // Enhanced Form Actions
-        [ActionType.SELECT_OPTION]: 'selectOption',
-        [ActionType.TOGGLE_CHECKBOX]: 'toggleCheckbox',
-        [ActionType.SELECT_RADIO]: 'selectRadio',
-        [ActionType.SELECT_FILE]: 'selectFile',
-        [ActionType.ADJUST_SLIDER]: 'adjustSlider',
-        
-        // Clipboard Actions
-        [ActionType.COPY]: 'copy',
-        [ActionType.CUT]: 'cut',
-        [ActionType.PASTE]: 'paste',
-        
-        // Context Actions
-        [ActionType.CONTEXT_MENU]: 'contextMenu',
-        
-        [ActionType.WAIT]: 'wait',
-        [ActionType.WAIT_FOR_ELEMENT]: 'waitForElement',
-        [ActionType.WAIT_FOR_DYNAMIC_CONTENT]: 'waitForDynamicContent',
-        [ActionType.FOCUS]: 'focus',
-        [ActionType.BLUR]: 'blur',
-        [ActionType.HOVER]: 'hover',
-        [ActionType.KEYPRESS]: 'keypress',
-        [ActionType.SCROLL]: 'scroll',
-        [ActionType.EXTRACT]: 'extract',
-        [ActionType.VERIFY_ELEMENT]: 'verifyElement',
-        [ActionType.VERIFY_TEXT]: 'verifyText',
-        [ActionType.VERIFY_URL]: 'verifyUrl',
-        [ActionType.NAVIGATION]: 'navigate',
-        [ActionType.NETWORK_REQUEST]: 'networkRequest',
-        [ActionType.NETWORK_ERROR]: 'networkError',
-        [ActionType.PAGE_LOAD]: 'pageLoad',
-        [ActionType.SEARCH_RESULTS]: 'searchResults',
-        [ActionType.DYNAMIC_CONTENT]: 'dynamicContent'
-      };
-      
-      return methodMap[action] || 'click';
-    }
-    
-    // Generate human-readable description
-    static generateDescription(action: ActionType, target?: string, value?: any): string {
-      switch (action) {
-        case ActionType.NAVIGATE:
-          return `Navigate to ${target || value}`;
-        case ActionType.TYPE:
-          return `Type "${value}" in ${target}`;
-        case ActionType.CLEAR:
-          return `Clear ${target}`;
-        case ActionType.CLICK:
-          return `Click ${target}`;
-        case ActionType.SELECT:
-          return `Select "${value}" from ${target}`;
-        case ActionType.TOGGLE:
-          return `Toggle ${target}`;
-        case ActionType.SUBMIT:
-          return `Submit ${target}`;
-          
-        // Enhanced Form Actions
-        case ActionType.SELECT_OPTION:
-          return `Select "${typeof value === 'object' ? value.text || value.value : value}" from dropdown ${target}`;
-        case ActionType.TOGGLE_CHECKBOX:
-          return `${value ? 'Check' : 'Uncheck'} checkbox ${target}`;
-        case ActionType.SELECT_RADIO:
-          return `Select radio button "${typeof value === 'object' ? value.value : value}" in ${target}`;
-        case ActionType.SELECT_FILE:
-          return `Select ${typeof value === 'object' ? value.fileCount : 1} file(s) in ${target}`;
-        case ActionType.ADJUST_SLIDER:
-          return `Adjust slider ${target} to ${value}`;
-          
-        // Clipboard Actions
-        case ActionType.COPY:
-          return `Copy text: "${typeof value === 'string' ? value.substring(0, 50) : 'selected text'}"`;
-        case ActionType.CUT:
-          return `Cut text: "${typeof value === 'string' ? value.substring(0, 50) : 'selected text'}"`;
-        case ActionType.PASTE:
-          return `Paste text into ${target}`;
-          
-        // Context Actions
-        case ActionType.CONTEXT_MENU:
-          return `Right-click on ${target}`;
-          
-        case ActionType.WAIT:
-          return `Wait ${value}ms`;
-        case ActionType.WAIT_FOR_ELEMENT:
-          return `Wait for ${target} to appear`;
-        case ActionType.WAIT_FOR_DYNAMIC_CONTENT:
-          return `Wait for dynamic content to load`;
-        case ActionType.FOCUS:
-          return `Focus on ${target}`;
-        case ActionType.BLUR:
-          return `Remove focus from ${target}`;
-        case ActionType.HOVER:
-          return `Hover over ${target}`;
-        case ActionType.KEYPRESS:
-          return `Press ${value} key`;
-        case ActionType.SCROLL:
-          return `Scroll to ${target}`;
-        case ActionType.EXTRACT:
-          return `Extract data from page`;
-        case ActionType.VERIFY_ELEMENT:
-          return `Verify ${target} exists`;
-        case ActionType.VERIFY_TEXT:
-          return `Verify text "${value}" exists`;
-        case ActionType.VERIFY_URL:
-          return `Verify URL contains "${value}"`;
-        default:
-          return `Perform ${action} action`;
       }
     }
   }
