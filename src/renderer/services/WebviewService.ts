@@ -330,7 +330,7 @@ export class WebviewService implements IWebviewService {
         app.recordingService.setupWebviewRecording(webview);
       } else {
         const recordingEngine = SmartRecordingEngine.getInstance();
-        recordingEngine.setupWebviewRecording(webview);
+        recordingEngine.setupRecording(webview);
       }
     } catch (error) {
       console.error('[WebviewManager] Failed to setup recording:', error);

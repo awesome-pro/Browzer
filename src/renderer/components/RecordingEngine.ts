@@ -1356,7 +1356,7 @@ public initializeWebviewRecording(): void {
   this.initializeWebviewEventHandlers();
 }
 
-public setupWebviewRecording(webview: any): void {
+public setupRecording(webview: any): void {
   
   if (this.isRecording && this.activeSession) {
     try {

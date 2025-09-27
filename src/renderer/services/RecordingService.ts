@@ -144,7 +144,7 @@ export class RecordingService implements IRecordingService {
     }
 
     try {
-      this.recordingEngine.setupWebviewRecording(webview);
+      this.recordingEngine.setupRecording(webview);
     } catch (error) {
       console.error('[RecordingService] Failed to setup recording for webview:', error);
     }
