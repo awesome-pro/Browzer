@@ -5,16 +5,12 @@ import {
   TaskGoal,
   ActionType,
   ElementContext,
-  ScreenshotCapture,
-  NetworkInteraction
 } from '../types/recording';
 
 export class SmartRecordingEngine {
   private static instance: SmartRecordingEngine;
   private activeSession: SmartRecordingSession | null = null;
   private isRecording = false;
-  
-  // Action aggregation and deduplication
   private pendingActions: Map<string, any> = new Map();
   private lastPageContext: PageContext | null = null;
   private currentTaskGoal: TaskGoal | null = null;
@@ -23,21 +19,17 @@ export class SmartRecordingEngine {
   private readonly ACTION_TIMEOUT = 1000; // 1s to aggregate actions
   private readonly TYPING_TIMEOUT = 2800; // 2.5s to aggregate typing actions
   private readonly MIN_ACTION_GAP = 200; // Minimum gap between recorded actions
-  
-  // Semantic aggregation buffers
   private inputBuffer: Map<string, {value: string, element: any, lastUpdate: number}> = new Map();
   private navigationBuffer: {url: string, timestamp: number} | null = null;
   private clickSequence: Array<{target: any, timestamp: number}> = [];
   private readonly SEMANTIC_AGGREGATION_DELAY = 800; // Delay for aggregating semantic actions
-  
-  // Deduplication tracking
   private lastActionHash = '';
   private recentActions: Array<{hash: string, timestamp: number}> = [];
   private readonly DEDUP_WINDOW = 2000; // 2 second window for deduplication
-  
-  // observers
   private observers: Map<string, any> = new Map();
   private eventListeners: Map<string, EventListener> = new Map();
+  private recentFocusEvents: Map<string, {timestamp: number, elementContext: any}> = new Map();
+  private readonly FOCUS_CLICK_CONSOLIDATION_WINDOW = 1500; // 1.5 seconds to consolidate focus+click
 
   private constructor() {
     this.initializeWebviewEventHandlers();
@@ -70,14 +62,6 @@ export class SmartRecordingEngine {
         this.handleWebviewAction(actionData);
       });
       
-      ipcRenderer.ipcOn('webview-recording-context', (contextData: any) => {
-        this.handleWebviewContext(contextData);
-      });
-      
-      ipcRenderer.ipcOn('webview-recording-network', (networkData: any) => {
-        this.handleWebviewNetwork(networkData);
-      });
-      
       ipcRenderer.ipcOn('native-event', (eventData: any) => {
         this.handleNativeEvent(eventData);
       });
@@ -93,14 +77,11 @@ private handleWebviewAction(actionData: any): void {
   }
   
   try {
-    // Ensure value is properly serialized
     let processedValue = actionData.value;
     if (typeof processedValue === 'object' && processedValue !== null) {
-      // If it's an object, convert to a meaningful string
       if (processedValue.toString && processedValue.toString() !== '[object Object]') {
         processedValue = processedValue.toString();
       } else {
-        // Try to extract meaningful properties
         if (processedValue.searchQuery || processedValue.resultsCount || processedValue.loadTime) {
           const parts = [];
           if (processedValue.searchQuery) parts.push(`query: "${processedValue.searchQuery}"`);
@@ -131,10 +112,7 @@ private handleWebviewAction(actionData: any): void {
         processedValue
       )
     };
-    
-    // Check for duplicates and filter out low-quality actions
     if (this.shouldRecordAction(action)) {
-      // Dispatch custom event for real-time UI updates before recording
       window.dispatchEvent(new CustomEvent('webview-recording-action', {
         detail: {
           type: actionType,
@@ -150,36 +128,6 @@ private handleWebviewAction(actionData: any): void {
   }
 }
 
-private handleWebviewContext(contextData: any): void {
-  if (!this.isRecording || !this.activeSession) return;
-  
-  
-  if (contextData.subtype === 'navigation') {
-    const pageContext = this.convertWebviewPageContext(contextData);
-    this.handleWebviewNavigation(pageContext);
-  }
-}
-
-private handleWebviewNetwork(networkData: any): void {
-  if (!this.isRecording || !this.activeSession) return;
-  
-  
-  this.recordNetworkInteraction({
-    id: this.generateId(),
-    timestamp: networkData.timestamp,
-    type: networkData.type,
-    url: networkData.url,
-    method: networkData.method,
-    status: networkData.status,
-    duration: networkData.duration,
-    context: this.convertWebviewPageContext(networkData.pageContext),
-    // source: 'webview'
-  });
-}
-
-/**
- * Handle native events from the main process
- */
 private handleNativeEvent(eventData: any): void {
   if (!this.isRecording || !this.activeSession) {
     return;
@@ -188,14 +136,15 @@ private handleNativeEvent(eventData: any): void {
   if (!eventData) return;
   
   try {
-    // Process different types of native events
     switch (eventData.type) {
       case 'in_page_navigation':
       case 'history_push_state':
       case 'history_replace_state':
+      case 'spa_navigation':
+      case 'turbo_navigation':
+      case 'github_navigation':
         this.handleNativeNavigationEvent(eventData);
         break;
-        
       case 'click':
       case 'mousedown':
       case 'mouseup':
@@ -209,6 +158,9 @@ private handleNativeEvent(eventData: any): void {
         
       case 'input':
       case 'change':
+      case 'select':
+      case 'reset':
+      case 'invalid':
         this.handleInputEvent(eventData);
         break;
         
@@ -219,17 +171,77 @@ private handleNativeEvent(eventData: any): void {
         break;
         
       case 'submit':
+      case 'form_submit':
         this.handleNativeFormSubmitEvent(eventData);
         break;
-        
+      case 'mouseover':
+      case 'mouseenter':
+        this.handleHoverEvent(eventData);
+        break;  
       case 'react_event':
-        this.handleNativeReactEvent(eventData);
+      case 'react_synthetic_event':
+        this.handleReactEvent(eventData);
         break;
-        
+      case 'scroll':
+        this.handleScrollEvent(eventData);
+        break;
+      case 'dragstart':
+        console.log('Drag start:', eventData);
+        break;
+      case 'dragend':
+        console.log('Drag end:', eventData);
+        break;
+      case 'drop':
+        this.handleDropEvent(eventData);
+        break;
+      case 'modal_open':
+      case 'dialog_open':
+        console.log('Modal open:', eventData);
+        break;
+      case 'modal_close':
+      case 'dialog_close':
+      case 'cancel':
+      case 'close':
+        console.log('Modal close:', eventData);
+        break;
       case 'dom_change':
-        this.handleNativeDOMChangeEvent(eventData);
+      case 'dynamic_content_change':
+      case 'dom_significant_change':
+        console.log('DOM change:', eventData);
         break;
-        
+      case 'animation_start':
+      case 'animation_end':
+      case 'transition_end':
+        this.handleAnimationEvent(eventData);
+        break;
+      case 'play':
+        console.log('Media play:', eventData);
+        break;
+      case 'pause':
+        console.log('Media pause:', eventData);
+        break;
+      case 'ended':
+        console.log('Media ended:', eventData);
+        break;
+      case 'touch_start':
+      case 'touch_end':
+      case 'touch_move':
+        console.log('Touch event:', eventData);
+        break;
+      case 'copy':
+      case 'cut':
+      case 'paste':
+        this.handleClipboardEvent(eventData);
+        break;
+      case 'async_request_start':
+        console.log('Async request start:', eventData);
+        break;
+      case 'async_request_complete':
+        console.log('Async request complete:', eventData);
+        break;
+      case 'async_request_error':
+        console.log('Async request error:', eventData);
+        break;
       default:
         this.recordNativeAction(eventData);
     }
@@ -243,24 +255,17 @@ private handleNativeEvent(eventData: any): void {
  */
 private handleNativeFocusEvent(eventData: any): void {
   if (!eventData.target) return;
-  
-  // Convert to element context
   const elementContext = this.convertNativeElementToElementContext(eventData.target);
   const elementKey = this.generateElementKey(elementContext);
-  
-  // Add to recent focus events
   this.recentFocusEvents.set(elementKey, {
     timestamp: Date.now(),
     elementContext: elementContext
   });
-  
-  // For form elements, we might want to record the focus event
   const isFormElement = ['input', 'textarea', 'select'].includes(eventData.target.tagName?.toLowerCase()) ||
                        elementContext.role?.includes('textbox') || 
                        elementContext.role?.includes('combobox');
                        
   if (isFormElement) {
-    // Create a semantic action for this focus
     const action: SemanticAction = {
       id: this.generateId(),
       type: ActionType.FOCUS,
@@ -270,8 +275,6 @@ private handleNativeFocusEvent(eventData: any): void {
       context: this.capturePageContext(),
       intent: 'interact'
     };
-    
-    // Record the focus action for form elements
     this.recordAction(action);
   }
 }
@@ -295,8 +298,6 @@ private handleNativeNavigationEvent(eventData: any): void {
     url: eventData.url,
     timestamp: Date.now()
   };
-  
-  // Schedule processing of this navigation after a delay to avoid duplicates
   setTimeout(() => {
     this.processNavigationBuffer(eventData);
   }, 500); // Short delay to aggregate rapid navigations
@@ -306,12 +307,9 @@ private handleNativeNavigationEvent(eventData: any): void {
  * Process the navigation buffer to create semantic actions
  */
 private processNavigationBuffer(eventData: any): void {
-  // Skip if navigation buffer doesn't match this event (newer navigation occurred)
   if (!this.navigationBuffer || this.navigationBuffer.url !== eventData.url) {
     return;
   }
-  
-  // Create page context
   const pageContext = {
     url: eventData.url,
     title: eventData.title || 'Unknown Page',
@@ -320,11 +318,7 @@ private processNavigationBuffer(eventData: any): void {
     userAgent: navigator.userAgent,
     keyElements: []
   };
-  
-  // Update last page context
   this.lastPageContext = pageContext;
-  
-  // Extract domain for more semantic description
   let domain = '';
   try {
     const urlObj = new URL(eventData.url);
@@ -332,20 +326,14 @@ private processNavigationBuffer(eventData: any): void {
   } catch (e) {
     domain = 'website';
   }
-  
-  // Determine if this is a navigation from search results
   let isFromSearchEngine = false;
   let searchEngineDomain = '';
   let fromDomain = '';
   let navigationDescription = '';
-  
-  // Check if we have a previous page context to determine navigation source
   if (this.lastPageContext && this.lastPageContext.url) {
     try {
       const previousUrl = new URL(this.lastPageContext.url);
       fromDomain = previousUrl.hostname;
-      
-      // Check if coming from a search engine
       if (fromDomain.includes('google.') || 
           fromDomain.includes('bing.') || 
           fromDomain.includes('yahoo.') || 
@@ -355,11 +343,8 @@ private processNavigationBuffer(eventData: any): void {
         searchEngineDomain = fromDomain.replace('www.', '');
       }
     } catch (e) {
-      // Invalid URL, ignore
     }
   }
-  
-  // Create a more semantic navigation description
   if (isFromSearchEngine) {
     navigationDescription = `Navigate from ${searchEngineDomain} search results to ${domain}`;
   } else if (fromDomain && fromDomain !== domain) {
@@ -367,12 +352,8 @@ private processNavigationBuffer(eventData: any): void {
   } else {
     navigationDescription = `Navigate to ${eventData.title || domain}`;
   }
-  
-  // Add URL information for clarity
   const cleanUrl = this.cleanGoogleUrl(eventData.url);
   const displayUrl = cleanUrl.length > 60 ? cleanUrl.substring(0, 57) + '...' : cleanUrl;
-  
-  // Create a semantic action for this navigation
   const action: SemanticAction = {
     id: this.generateId(),
     type: ActionType.NAVIGATION,
@@ -399,8 +380,6 @@ private processNavigationBuffer(eventData: any): void {
   };
   
   this.recordAction(action);
-  
-  // Dispatch an event for the UI to update
   window.dispatchEvent(new CustomEvent('webview-recording-action', {
     detail: {
       type: ActionType.NAVIGATION,
@@ -408,28 +387,15 @@ private processNavigationBuffer(eventData: any): void {
       timestamp: action.timestamp
     }
   }));
-  
-  // Update pages visited
   if (this.activeSession && !this.activeSession.metadata.pagesVisited.includes(eventData.url)) {
     this.activeSession.metadata.pagesVisited.push(eventData.url);
   }
-  
-  // Clear navigation buffer
   this.navigationBuffer = null;
 }
 
-/**
- * Handle native click events with semantic aggregation
- */
-  // Track recent focus events to consolidate with clicks
-  private recentFocusEvents: Map<string, {timestamp: number, elementContext: any}> = new Map();
-  private readonly FOCUS_CLICK_CONSOLIDATION_WINDOW = 1500; // 1.5 seconds to consolidate focus+click
-  
   private handleNativeClickEvent(eventData: any): void {
     if (!eventData.target) return;
     if (eventData.type !== 'click') return; // Only process actual clicks, not mousedown/mouseup
-    
-    // Clean up old focus events
     const now = Date.now();
     for (const [key, focusEvent] of this.recentFocusEvents.entries()) {
       if (now - focusEvent.timestamp > this.FOCUS_CLICK_CONSOLIDATION_WINDOW) {
@@ -438,24 +404,16 @@ private processNavigationBuffer(eventData: any): void {
     }
   
   const target = eventData.target;
-  
-  // Check if this is a meaningful click (on interactive elements)
   const isInteractiveElement = this.isInteractiveElement(target);
-  
-  // If it's not an interactive element and we've had a recent click, skip it
   if (!isInteractiveElement && 
       this.clickSequence.length > 0 && 
       Date.now() - this.clickSequence[this.clickSequence.length - 1].timestamp < 500) {
     return;
   }
-  
-  // Add to click sequence
   this.clickSequence.push({
     target: target,
     timestamp: Date.now()
   });
-  
-  // Schedule processing of click sequence
   setTimeout(() => {
     this.processClickSequence(eventData.url, eventData.title);
   }, this.SEMANTIC_AGGREGATION_DELAY);
@@ -465,40 +423,22 @@ private processNavigationBuffer(eventData: any): void {
  * Process the click sequence to create semantic actions
  */
 private processClickSequence(url: string, pageTitle: string): void {
-  // Skip if no clicks in sequence
   if (this.clickSequence.length === 0) return;
-  
-  // Get the most recent click
   const lastClick = this.clickSequence[this.clickSequence.length - 1];
-  
-  // Check if enough time has passed since the last click
   if (Date.now() - lastClick.timestamp < this.SEMANTIC_AGGREGATION_DELAY - 50) {
-    // Not enough time has passed, more clicks might be coming
     return;
   }
-  
-  // Get the target of the most significant click
   const target = this.findMostSignificantClick();
-  
-  // Convert to element context
   const elementContext = this.convertNativeElementToElementContext(target);
-  
-  // Check if we have a recent focus event on the same element
-  // Create a key based on element properties to match focus and click events
   const elementKey = this.generateElementKey(elementContext);
   const recentFocus = this.recentFocusEvents.get(elementKey);
-  
-  // Determine if this is a form element that might need focus tracking
   const isFormElement = ['input', 'textarea', 'select'].includes(target.tagName?.toLowerCase()) ||
                        elementContext.role?.includes('textbox') || 
                        elementContext.role?.includes('combobox');
-  
-  // Create a semantic action for this click
   const action: SemanticAction = {
     id: this.generateId(),
     type: ActionType.CLICK,
     timestamp: Date.now(),
-    // If we had a recent focus on this element and it's not a form element, skip the "focus on" part
     description: recentFocus && !isFormElement ? 
       `Click ${elementContext.description || target.tagName}` : 
       `Click ${elementContext.description || target.tagName}`,
@@ -513,16 +453,10 @@ private processClickSequence(url: string, pageTitle: string): void {
     },
     intent: this.inferIntent(ActionType.CLICK, elementContext)
   };
-  
-  // If we had a recent focus event on this element, remove it since we're recording the click
   if (recentFocus) {
     this.recentFocusEvents.delete(elementKey);
   }
-  
-  // Record the action
   this.recordAction(action);
-  
-  // Dispatch an event for the UI to update
   window.dispatchEvent(new CustomEvent('webview-recording-action', {
     detail: {
       type: ActionType.CLICK,
@@ -530,8 +464,6 @@ private processClickSequence(url: string, pageTitle: string): void {
       timestamp: action.timestamp
     }
   }));
-  
-  // Clear the click sequence
   this.clickSequence = [];
 }
 
@@ -539,19 +471,14 @@ private processClickSequence(url: string, pageTitle: string): void {
  * Find the most significant click in the sequence
  */
 private findMostSignificantClick(): any {
-  // If only one click, return it
   if (this.clickSequence.length === 1) {
     return this.clickSequence[0].target;
   }
-  
-  // Look for clicks on interactive elements
   for (const click of this.clickSequence) {
     if (this.isInteractiveElement(click.target)) {
       return click.target;
     }
   }
-  
-  // Default to the last click
   return this.clickSequence[this.clickSequence.length - 1].target;
 }
 
@@ -563,20 +490,14 @@ private isInteractiveElement(element: any): boolean {
   
   const interactiveTags = ['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'LABEL'];
   const tagName = element.tagName.toUpperCase();
-  
-  // Check tag name
   if (interactiveTags.includes(tagName)) {
     return true;
   }
-  
-  // Check for role attributes
   const interactiveRoles = ['button', 'link', 'checkbox', 'menuitem', 'tab', 'radio'];
   const role = element.attributes?.role;
   if (role && interactiveRoles.includes(role)) {
     return true;
   }
-  
-  // Check for event handlers or pointer cursor
   if (element.attributes) {
     const attrs = Object.keys(element.attributes);
     if (attrs.some(attr => attr.startsWith('on'))) {
@@ -587,36 +508,22 @@ private isInteractiveElement(element: any): boolean {
   return false;
 }
 
-// This function is defined elsewhere in the file - removed duplicate
-
 /**
  * Process the input buffer to create semantic actions
  */
 private processInputBuffer(inputIdentifier: string, url: string, pageTitle: string): void {
-  // Check if this input is still in the buffer
   const inputData = this.inputBuffer.get(inputIdentifier);
   if (!inputData) return;
-  
-  // Check if enough time has passed since the last update
   const timeSinceLastUpdate = Date.now() - inputData.lastUpdate;
   if (timeSinceLastUpdate < this.SEMANTIC_AGGREGATION_DELAY - 50) {
-    // Not enough time has passed, input might still be in progress
     return;
   }
-  
-  // Get the final value and element
   const { value, element } = inputData;
-  
-  // Skip empty inputs or very short inputs (likely incomplete)
   if (!value || value.length < 2) {
     this.inputBuffer.delete(inputIdentifier);
     return;
   }
-  
-  // Convert element to our context format
   const elementContext = this.convertNativeElementToElementContext(element);
-  
-  // Create a semantic action for this input
   const action: SemanticAction = {
     id: this.generateId(),
     type: ActionType.TYPE,
@@ -634,14 +541,8 @@ private processInputBuffer(inputIdentifier: string, url: string, pageTitle: stri
     },
     intent: this.inferIntent(ActionType.TYPE, elementContext, value)
   };
-  
-  // Record the action
   this.recordAction(action);
-  
-  // Clean up the buffer
   this.inputBuffer.delete(inputIdentifier);
-  
-  // Dispatch an event for the UI to update
   window.dispatchEvent(new CustomEvent('webview-recording-action', {
     detail: {
       type: ActionType.TYPE,
@@ -660,18 +561,12 @@ private handleInputEvent(eventData: any): void {
   
   const target = eventData.target;
   const elementId = target.id || target.name || `${target.tagName}_${target.type || ''}_${Date.now()}`;
-  
-  // Create a unique identifier for this input element
   const inputIdentifier = `${eventData.url}_${elementId}`;
-  
-  // Update the input buffer with the latest value
   this.inputBuffer.set(inputIdentifier, {
     value: eventData.value,
     element: target,
     lastUpdate: Date.now()
   });
-  
-  // Schedule processing of this input after a delay to aggregate multiple keystrokes
   setTimeout(() => {
     this.processInputBuffer(inputIdentifier, eventData.url, eventData.title);
   }, this.SEMANTIC_AGGREGATION_DELAY);
@@ -682,23 +577,15 @@ private handleInputEvent(eventData: any): void {
  */
 private handleNativeKeyEvent(eventData: any): void {
   if (!eventData.target || !eventData.key) return;
-  
-  // Only process keydown events to avoid duplicates
   if (eventData.type !== 'keydown') return;
-  
-  // Only record special keys like Enter, Escape, etc.
   const specialKeys = ['Enter', 'Escape', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
   if (!specialKeys.includes(eventData.key)) return;
-  
-  // For Enter key on form elements, don't record as it will likely trigger a form submission
   if (eventData.key === 'Enter' && this.isFormElement(eventData.target)) {
     return;
   }
   
   const target = eventData.target;
   const elementContext = this.convertNativeElementToElementContext(target);
-  
-  // Create a more descriptive action based on the key and context
   let description = `Press ${eventData.key} key`;
   let intent = 'keyboard_navigation';
   
@@ -732,8 +619,6 @@ private handleNativeKeyEvent(eventData: any): void {
   };
   
   this.recordAction(action);
-  
-  // Dispatch an event for the UI to update
   window.dispatchEvent(new CustomEvent('webview-recording-action', {
     detail: {
       type: ActionType.KEYPRESS,
@@ -763,17 +648,12 @@ private handleNativeFormSubmitEvent(eventData: any): void {
   
   const target = eventData.target;
   const elementContext = this.convertNativeElementToElementContext(target);
-  
-  // Try to find a more descriptive name for the form
   let formDescription = 'form';
-  
-  // Check if the form has an id or name
   if (target.id) {
     formDescription = `form #${target.id}`;
   } else if (target.name) {
     formDescription = `form ${target.name}`;
   } else {
-    // Try to infer form purpose from its inputs
     const inputTypes = this.getFormInputTypes(target);
     
     if (inputTypes.includes('search')) {
@@ -784,11 +664,9 @@ private handleNativeFormSubmitEvent(eventData: any): void {
       formDescription = 'signup or contact form';
     }
   }
-  
-  // Create a semantic action for this form submission
   const action: SemanticAction = {
     id: this.generateId(),
-    type: ActionType.FORM_SUBMIT,
+    type: ActionType.SUBMIT,
     timestamp: eventData.timestamp || Date.now(),
     description: `Submit ${formDescription}`,
     target: elementContext,
@@ -800,15 +678,13 @@ private handleNativeFormSubmitEvent(eventData: any): void {
       userAgent: navigator.userAgent,
       keyElements: []
     },
-    intent: this.inferIntent(ActionType.FORM_SUBMIT, elementContext)
+    intent: this.inferIntent(ActionType.SUBMIT, elementContext)
   };
   
   this.recordAction(action);
-  
-  // Dispatch an event for the UI to update
   window.dispatchEvent(new CustomEvent('webview-recording-action', {
     detail: {
-      type: ActionType.FORM_SUBMIT,
+      type: ActionType.SUBMIT,
       description: action.description,
       timestamp: action.timestamp
     }
@@ -820,18 +696,13 @@ private handleNativeFormSubmitEvent(eventData: any): void {
  */
 private getFormInputTypes(formElement: any): string[] {
   if (!formElement) return [];
-  
-  // If this is already a form element
   if (formElement.tagName && formElement.tagName.toUpperCase() === 'FORM') {
-    // Try to extract input types from the form's attributes
     if (formElement.attributes) {
       const inputTypes: string[] = [];
       
       if (formElement.attributes['data-purpose'] === 'search-form') {
         inputTypes.push('search');
       }
-      
-      // Look for common input types
       if (formElement.elements) {
         for (const element of formElement.elements) {
           if (element.type) {
@@ -847,16 +718,11 @@ private getFormInputTypes(formElement: any): string[] {
   return [];
 }
 
-/**
- * Handle native React synthetic events
- */
-private handleNativeReactEvent(eventData: any): void {
+private handleReactEvent(eventData: any): void {
   if (!eventData.target) return;
   
   const target = eventData.target;
   const elementContext = this.convertNativeElementToElementContext(target);
-  
-  // Map React event names to our action types
   const reactEventMap: Record<string, ActionType> = {
     'onClick': ActionType.CLICK,
     'onChange': ActionType.TYPE,
@@ -887,29 +753,64 @@ private handleNativeReactEvent(eventData: any): void {
   this.recordAction(action);
 }
 
-/**
- * Handle native DOM change events
- */
-private handleNativeDOMChangeEvent(eventData: any): void {
+private handleHoverEvent(eventData: any): void {
+  if (!eventData.target) return;
+  const target = eventData.target;
+  const isInteractive = this.isInteractiveElement(target);
+  if (!isInteractive) return;
+  
+  const elementContext = this.convertNativeElementToElementContext(target);
+  
   const action: SemanticAction = {
     id: this.generateId(),
-    type: ActionType.DYNAMIC_CONTENT,
-    timestamp: eventData.timestamp,
-    description: `Content updated on ${eventData.title || eventData.url}`,
-    target: {
-      description: 'Dynamic content',
-      selector: '',
-      xpath: '',
-      role: 'region',
-      isVisible: true,
-      isInteractive: false,
-      context: 'dom_change'
-    },
+    type: ActionType.HOVER,
+    timestamp: eventData.timestamp || Date.now(),
+    description: `Hover over ${elementContext.description || target.tagName}`,
+    target: elementContext,
+    coordinates: eventData.coordinates,
     context: {
       url: eventData.url,
       title: eventData.title || 'Unknown Page',
-      timestamp: eventData.timestamp,
+      timestamp: eventData.timestamp || Date.now(),
       viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: 'hover'
+  };
+  if (this.shouldRecordAction(action)) {
+    this.recordAction(action);
+  }
+}
+
+private handleScrollEvent(eventData: any): void {
+  if (!eventData.scrollPosition) return;
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.SCROLL,
+    timestamp: eventData.timestamp || Date.now(),
+    description: `Scroll to position ${eventData.scrollPercentage || 0}% of page`,
+    target: {
+      description: 'page scroll',
+      selector: 'window',
+      xpath: '',
+      role: 'scrollable',
+      isVisible: true,
+      isInteractive: true,
+      context: 'scroll'
+    },
+    value: eventData.scrollPosition,
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp || Date.now(),
+      viewport: { 
+        width: eventData.viewportWidth || window.innerWidth, 
+        height: eventData.viewportHeight || window.innerHeight, 
+        scrollX: eventData.scrollPosition.x, 
+        scrollY: eventData.scrollPosition.y 
+      },
       userAgent: navigator.userAgent,
       keyElements: []
     },
@@ -919,9 +820,114 @@ private handleNativeDOMChangeEvent(eventData: any): void {
   this.recordAction(action);
 }
 
-/**
- * Record a generic native action
- */
+
+private handleDropEvent(eventData: any): void {
+  if (!eventData.target) return;
+  
+  const target = eventData.target;
+  const elementContext = this.convertNativeElementToElementContext(target);
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.DROP,
+    timestamp: eventData.timestamp || Date.now(),
+    description: `Dropped onto ${elementContext.description || target.tagName}`,
+    target: elementContext,
+    coordinates: eventData.coordinates,
+    value: eventData.dataTransfer ? JSON.stringify(eventData.dataTransfer) : undefined,
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp || Date.now(),
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: 'drop_item'
+  };
+  
+  this.recordAction(action);
+}
+
+private handleAnimationEvent(eventData: any): void {
+  if (!eventData.target) return;
+  
+  const target = eventData.target;
+  const elementContext = this.convertNativeElementToElementContext(target);
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.DYNAMIC_CONTENT,
+    timestamp: eventData.timestamp || Date.now(),
+    description: `Animation ${eventData.type === 'animationend' ? 'completed' : 'started'} on ${elementContext.description || target.tagName}`,
+    target: elementContext,
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp || Date.now(),
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: 'view_animation'
+  };
+  if (this.shouldRecordAction(action)) {
+    this.recordAction(action);
+  }
+}
+
+private handleClipboardEvent(eventData: any): void {
+  if (!eventData.target) return;
+  
+  const target = eventData.target;
+  const elementContext = this.convertNativeElementToElementContext(target);
+  
+  let actionType: ActionType;
+  let description: string;
+  let intent: string;
+  
+  switch (eventData.type) {
+    case 'copy':
+      actionType = ActionType.COPY;
+      description = `Copied text from ${elementContext.description || target.tagName}`;
+      intent = 'copy_text';
+      break;
+    case 'cut':
+      actionType = ActionType.CUT;
+      description = `Cut text from ${elementContext.description || target.tagName}`;
+      intent = 'cut_text';
+      break;
+    case 'paste':
+      actionType = ActionType.PASTE;
+      description = `Pasted text into ${elementContext.description || target.tagName}`;
+      intent = 'paste_text';
+      break;
+    default:
+      actionType = ActionType.COPY;
+      description = `Clipboard operation on ${elementContext.description || target.tagName}`;
+      intent = 'clipboard_operation';
+  }
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: actionType,
+    timestamp: eventData.timestamp || Date.now(),
+    description,
+    target: elementContext,
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp || Date.now(),
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent
+  };
+  
+  this.recordAction(action);
+}
+
 private recordNativeAction(eventData: any): void {
   if (!eventData.target) return;
   
@@ -930,7 +936,7 @@ private recordNativeAction(eventData: any): void {
   
   const action: SemanticAction = {
     id: this.generateId(),
-    type: ActionType.CLICK,
+    type: ActionType.UNKNOWN,
     timestamp: eventData.timestamp,
     description: `${eventData.type} on ${elementContext.description || target.tagName}`,
     target: elementContext,
@@ -939,7 +945,7 @@ private recordNativeAction(eventData: any): void {
     context: {
       url: eventData.url,
       title: eventData.title || 'Unknown Page',
-      timestamp: eventData.timestamp,
+      timestamp: eventData.timestamp || Date.now(),
       viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
       userAgent: navigator.userAgent,
       keyElements: []
@@ -966,8 +972,6 @@ private convertNativeElementToElementContext(nativeElement: any): ElementContext
       context: 'native_event'
     };
   }
-  
-  // Generate a descriptive string based on the element's properties
   let description = nativeElement.tagName?.toLowerCase() || 'element';
   
   if (nativeElement.type) {
@@ -986,8 +990,6 @@ private convertNativeElementToElementContext(nativeElement: any): ElementContext
   if (nativeElement.text) {
     description += ` "${nativeElement.text.substring(0, 30)}${nativeElement.text.length > 30 ? '...' : ''}"`;  
   }
-  
-  // Generate a selector
   let selector = nativeElement.tagName?.toLowerCase() || '';
   if (nativeElement.id) {
     selector = `#${nativeElement.id}`;
@@ -1024,12 +1026,10 @@ private convertWebviewElementToElementContext(webviewElement: any): ElementConte
     isVisible: webviewElement.isVisible !== false,
     isInteractive: true,
     context: webviewElement.context || 'in webview',
-    // Enhanced properties for better automation
     elementType: webviewElement.elementType,
     purpose: webviewElement.purpose,
     href: webviewElement.href,
     text: webviewElement.text,
-    // New enhanced targeting properties
     targetUrl: webviewElement.targetUrl,
     uniqueIdentifiers: webviewElement.uniqueIdentifiers || [],
     semanticRole: webviewElement.semanticRole,
@@ -1046,8 +1046,6 @@ private generateEnhancedElementDescription(element: any): string {
   const targetUrl = element.targetUrl;
   const uniqueIdentifiers = element.uniqueIdentifiers || [];
   const interactionContext = element.interactionContext || '';
-  
-  // Create more descriptive element descriptions with targeting info
   if (elementType === 'link') {
     let description = 'Link';
     
@@ -1064,8 +1062,6 @@ private generateEnhancedElementDescription(element: any): string {
     if (text) {
       description += ` ("${text.substring(0, 30)}")`;
     }
-    
-    // Add the most reliable selector for AI targeting
     const bestSelector = this.getBestSelector(uniqueIdentifiers, text, elementType);
     if (bestSelector) {
       description += ` [${bestSelector}]`;
@@ -1089,8 +1085,6 @@ private generateEnhancedElementDescription(element: any): string {
     if (text) {
       description += ` ("${text.substring(0, 30)}")`;
     }
-    
-    // Add the most reliable selector for AI targeting
     const bestSelector = this.getBestSelector(uniqueIdentifiers, text, elementType);
     if (bestSelector) {
       description += ` [${bestSelector}]`;
@@ -1113,8 +1107,6 @@ private generateEnhancedElementDescription(element: any): string {
     if (text) {
       description += ` [${text.substring(0, 30)}]`;
     }
-    
-    // Add the most reliable selector for AI targeting
     const bestSelector = this.getBestSelector(uniqueIdentifiers, text, elementType);
     if (bestSelector) {
       description += ` {${bestSelector}}`;
@@ -1126,12 +1118,8 @@ private generateEnhancedElementDescription(element: any): string {
     
     return description;
   }
-  
-  // Default description with context and targeting info
   let description = elementType;
   if (text) description += ` ("${text.substring(0, 60)}")`;
-  
-  // Add the most reliable selector for AI targeting
   const bestSelector = this.getBestSelector(uniqueIdentifiers, text, elementType);
   if (bestSelector) {
     description += ` [${bestSelector}]`;
@@ -1148,8 +1136,6 @@ private generateEnhancedElementDescription(element: any): string {
 
 private getBestSelector(uniqueIdentifiers: string[], text: string, elementType: string): string {
   if (!uniqueIdentifiers || uniqueIdentifiers.length === 0) return '';
-  
-  // Priority order for selectors (most reliable first)
   const priorities = [
     (selector: string) => selector.startsWith('#'), // ID selectors
     (selector: string) => selector.includes('data-testid'), // Test ID selectors
@@ -1163,8 +1149,6 @@ private getBestSelector(uniqueIdentifiers: string[], text: string, elementType: 
     const selector = uniqueIdentifiers.find(priorityCheck);
     if (selector) return selector;
   }
-  
-  // Return the first available selector as fallback
   return uniqueIdentifiers[0] || '';
 }
 
@@ -1175,25 +1159,17 @@ private cleanGoogleUrl(url: string): string {
   
   try {
     const urlObj = new URL(url);
-    
-    // Handle Google redirect URLs
     if (urlObj.hostname.includes('google.com') && urlObj.pathname === '/url') {
-      // Extract the actual destination URL from the 'url' parameter
       const destinationUrl = urlObj.searchParams.get('url') || urlObj.searchParams.get('q');
       if (destinationUrl) {
         try {
-          // Validate that it's a proper URL
           new URL(destinationUrl);
           return destinationUrl;
         } catch (e) {
-          // If parsing fails, fall through to normal Google URL cleaning
         }
       }
     }
-    
-    // If it's a regular Google search URL, clean it up
     if (url.includes('google.com')) {
-      // Only keep essential Google search parameters
       const essentialParams = ['q', 'tbm', 'safe', 'lr', 'hl'];
       const cleanParams = new URLSearchParams();
       
@@ -1215,7 +1191,6 @@ private cleanGoogleUrl(url: string): string {
 }
 
 private cleanGoogleUrlInDescription(description: string): string {
-  // Use regex to find and clean Google URLs in descriptions
   const googleUrlRegex = /(https:\/\/www\.google\.com\/search\?[^\s)]+)/g;
   
   return description.replace(googleUrlRegex, (match) => {
@@ -1238,10 +1213,7 @@ private generateWebviewActionDescription(actionData: any): string {
   const element = actionData.target;
   const type = actionData.type;
   const value = actionData.value;
-  
-  // Handle special action types first
   if (type === 'page_load_complete') {
-    // Value is already a string from webview, but clean up Google URLs
     if (typeof value === 'string') {
       return this.cleanGoogleUrlInDescription(value);
     }
@@ -1249,17 +1221,13 @@ private generateWebviewActionDescription(actionData: any): string {
   }
   
   if (type === 'search_results_loaded') {
-    // Value is already a formatted string from webview
     return typeof value === 'string' ? value : `Search results loaded`;
   }
   
   if (type === 'dynamic_content_loaded') {
-    // Value is already a formatted string from webview
     if (typeof value === 'string') {
       return value;
     }
-    
-    // Fallback with more context
     const pageTitle = element.text || '';
     const context = element.context || 'page';
     
@@ -1269,8 +1237,6 @@ private generateWebviewActionDescription(actionData: any): string {
     
     return `Content loaded on ${context}`;
   }
-  
-  // Generate more meaningful descriptions based on element type and purpose
   const elementType = element.elementType || element.tagName;
   const purpose = element.purpose || 'interactive_element';
   const text = element.text || '';
@@ -1317,17 +1283,7 @@ private generateWebviewActionDescription(actionData: any): string {
       }
       
     case 'type':
-      if (purpose === 'search_input') {
-        return `Search for "${value}"`;
-      } else if (purpose === 'email_input') {
-        return `Enter email "${value}"`;
-      } else if (purpose === 'password_input') {
-        return `Enter password`;
-      } else if (purpose === 'name_input') {
-        return `Enter name "${value}"`;
-      } else {
-        return `Type "${value}" in ${elementType}`;
-      }
+      return `Enter "${value}" in ${elementType}`;
       
     case 'keypress':
       if (value === 'Enter') {
@@ -1342,11 +1298,9 @@ private generateWebviewActionDescription(actionData: any): string {
       if (value && typeof value === 'object') {
         const navType = value.navigationType;
         const url = value.url || value.toUrl;
-        // const linkText = value.linkText;
         
         if (navType === 'google_search_result') {
           try {
-            // Check if this is a Google redirect URL or the actual destination
             const isRedirect = value.isRedirect;
             const actualUrl = isRedirect ? value.url : url;
             const urlObj = new URL(actualUrl);
@@ -1383,7 +1337,6 @@ private generateWebviewActionDescription(actionData: any): string {
       
     case 'submit':
     case 'form_submit':
-      // Handle both old submit events and new form_submit events
       if (typeof value === 'object' && value !== null) {
         if (value.buttonText) {
           return `Click "${value.buttonText}" button to submit form`;
@@ -1397,37 +1350,6 @@ private generateWebviewActionDescription(actionData: any): string {
     default:
       return `${type} on ${elementType}${text ? ` ("${text.substring(0, 30)}")` : ''}`;
   }
-}
-
-
-private handleWebviewNavigation(pageContext: PageContext): void {
-  if (!this.activeSession) return;
-  
-  
-  if (!this.activeSession.metadata.pagesVisited.includes(pageContext.url)) {
-    this.activeSession.metadata.pagesVisited.push(pageContext.url);
-  }
-  
-  const action: SemanticAction = {
-    id: this.generateId(),
-    type: ActionType.NAVIGATION,
-    timestamp: Date.now(),
-    description: `Navigate to ${pageContext.title || pageContext.url} (webview)`,
-    target: {
-      description: `Webview Page: ${pageContext.title}`,
-      selector: '',
-      xpath: '',
-      role: 'page',
-      isVisible: true,
-      isInteractive: false,
-      context: 'webview navigation'
-    },
-    context: pageContext,
-    intent: 'navigate_to_page'
-  };
-  
-  this.recordAction(action);
-  this.lastPageContext = pageContext;
 }
 
 public initializeWebviewRecording(): void {
@@ -1446,8 +1368,6 @@ public setupWebviewRecording(webview: any): void {
 }
 
 private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
-  
-  // Dispatch custom event that index.ts can listen for
   if (commandType === 'start') {
     window.dispatchEvent(new CustomEvent('recording:start', {
       detail: { sessionId: this.activeSession?.id }
@@ -1456,8 +1376,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     window.dispatchEvent(new CustomEvent('recording:stop'));
   }
 }
-
-  // Session Management
   startRecording(taskGoal: string, description?: string): SmartRecordingSession {
     if (this.isRecording) {
       throw new Error('Recording already in progress');
@@ -1471,8 +1389,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       isActive: true,
       initialContext: this.capturePageContext(),
       actions: [],
-      screenshots: [],
-      networkInteractions: [],
       metadata: {
         totalActions: 0,
         duration: 0,
@@ -1488,9 +1404,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     this.currentTaskGoal = { goal: taskGoal, steps: [], completed: false };
     
     this.initializeRecording();
-    // this.captureInitialScreenshot();
     this.notifyWebviewsRecordingState('start');
-
     return session;
   }
 
@@ -1498,18 +1412,12 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     if (!this.isRecording || !this.activeSession) {
       throw new Error('No active recording session');
     }
-
-    // Process any pending actions
     this.processPendingActions();
     
     this.activeSession.endTime = Date.now();
     this.activeSession.isActive = false;
     this.activeSession.metadata.duration = this.activeSession.endTime - this.activeSession.startTime;
     this.activeSession.metadata.totalActions = this.activeSession.actions.length;
-    this.activeSession.metadata.complexity = this.calculateComplexity();
-    
-    // Capture final screenshot
-    // this.captureScreenshot('final_state');
     this.notifyWebviewsRecordingState('stop');
     this.cleanupRecording();
     
@@ -1520,8 +1428,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     this.saveSession(session);
     return session;
   }
-
-  // Core Recording Logic
   private initializeRecording(): void {
     this.setupSmartEventListeners();
     this.setupNetworkMonitoring();
@@ -1529,7 +1435,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
   }
 
   private setupSmartEventListeners(): void {
-    // Focus on high-level user intentions only
     const meaningfulEvents = [  
       'click', 'submit', 'change', 'input', 'keydown'
     ];
@@ -1539,8 +1444,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       document.addEventListener(eventType, listener, true);
       this.eventListeners.set(eventType, listener);
     });
-
-    // Page navigation and visibility
     window.addEventListener('beforeunload', () => this.processPendingActions());
     window.addEventListener('pagehide', () => this.processPendingActions());
     document.addEventListener('visibilitychange', () => {
@@ -1570,28 +1473,19 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
         break;
     }
   }
-  
-
-  // Smart Event Handlers
   private handleTextInput(event: Event): void {
     const target = event.target as HTMLInputElement;
     if (!target || !this.isInteractiveElement(target)) return;
 
     const elementContext = this.captureElementContext(target);
-    
-    // Handle keydown events
     if (event.type === 'keydown') {
       const keyEvent = event as KeyboardEvent;
       if (keyEvent.key === 'Enter') {
-        // Flush any pending text input and record Enter as separate action
         this.finalizeTextInput(elementContext, target.value);
         return;
       }
-      // Skip other keydown events - we'll handle via input events
       return;
     }
-
-    // Handle input events with debouncing - use longer timeout for typing
     const targetKey = `type_${elementContext.selector}`;
     this.debounceAction(targetKey, () => {
       this.finalizeTextInput(elementContext, target.value);
@@ -1599,27 +1493,17 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
   }
 
   private finalizeTextInput(elementContext: ElementContext, finalValue: string): void {
-    // Skip empty or very short inputs
     if (!finalValue?.trim() || finalValue.length < 2) return;
-    
-    // Check if this is a duplicate of a recent input to the same field
     const lastInput = this.recentActions.find(a => 
       a.hash.includes(elementContext.selector) && 
       a.hash.includes('TYPE')
     );
-    
-    // If we have a recent input to the same field, check if it's similar
-    // Skip recording if it's just a minor change (e.g., "gith" -> "github")
     if (lastInput) {
       const lastInputValue = JSON.parse(lastInput.hash).value || '';
-      
-      // If the new value is just a small addition to the previous value, skip it
       if (finalValue.startsWith(lastInputValue) && 
           finalValue.length - lastInputValue.length < 3) {
         return;
       }
-      
-      // If the new value is just a small edit of the previous value, skip it
       if (lastInputValue.length > 0 && 
           Math.abs(finalValue.length - lastInputValue.length) < 3) {
         return;
@@ -1660,8 +1544,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       context: this.capturePageContext(),
       intent: this.inferIntent(ActionType.CLICK, elementContext)
     };
-
-    // Apply quality filtering
     if (this.shouldRecordAction(action)) {
       this.recordAction(action);
     }
@@ -1680,16 +1562,14 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
 
     const action: SemanticAction = {
       id: this.generateId(),
-      type: ActionType.FORM_SUBMIT,
+      type: ActionType.SUBMIT,
       timestamp: Date.now(),
       description: `Submit form with ${Object.keys(formFields).length} fields`,
       target: this.captureElementContext(form),
       value: formFields,
       context: this.capturePageContext(),
-      intent: this.inferIntent(ActionType.FORM_SUBMIT, this.captureElementContext(form))
+      intent: this.inferIntent(ActionType.SUBMIT, this.captureElementContext(form))
     };
-
-    // Form submissions are always high-quality actions
     this.recordAction(action);
   }
 
@@ -1725,15 +1605,12 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       context: this.capturePageContext(),
       intent: this.inferIntent(actionType, elementContext)
     };
-
-    // Value changes are generally high-quality actions
     if (this.shouldRecordAction(action)) {
       this.recordAction(action);
     }
   }
 
   private handlePageFocus(): void {
-    // Check if we're on a new page
     const currentContext = this.capturePageContext();
     if (!this.lastPageContext || currentContext.url !== this.lastPageContext.url) {
       this.handlePageNavigation(currentContext);
@@ -1766,8 +1643,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     this.captureScreenshot('page_navigation');
     this.lastPageContext = newContext;
   }
-
-  // Network Monitoring
   private setupNetworkMonitoring(): void {
     const originalFetch = window.fetch;
     window.fetch = async (...args) => {
@@ -1791,8 +1666,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
 
   private isSignificantRequest(url: string | Request | URL): boolean {
     const urlString = typeof url === 'string' ? url : url.toString();
-    
-    // Filter out internal/dev requests
     const ignoredPatterns = [
       'chrome-extension://',
       'localhost:5173',
@@ -1807,24 +1680,11 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     return !ignoredPatterns.some(pattern => urlString.includes(pattern));
   }
 
-  private recordNetworkInteraction(interaction: Partial<NetworkInteraction>): void {
+  private recordNetworkInteraction(interaction: any): void {
     if (!this.activeSession) return;
 
-    const networkInteraction: NetworkInteraction = {
-      id: this.generateId(),
-      timestamp: interaction.timestamp || Date.now(),
-      type: interaction.type || 'fetch',
-      url: interaction.url || '',
-      method: interaction.method || 'GET',
-      status: interaction.status,
-      duration: interaction.duration,
-      context: this.capturePageContext()
-    };
-
-    this.activeSession.networkInteractions.push(networkInteraction);
+    console.log('Recording network interaction:', interaction);
   }
-
-  // Context Capture
   private capturePageContext(): PageContext {
     return {
       url: window.location.href,
@@ -1837,15 +1697,12 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
         scrollY: window.scrollY
       },
       userAgent: navigator.userAgent,
-      // Only capture essential page elements
       keyElements: this.captureKeyPageElements()
     };
   }
 
   private captureKeyPageElements(): Array<{ role: string; text: string; selector: string }> {
     const keyElements: Array<{ role: string; text: string; selector: string }> = [];
-    
-    // Capture main headings
     document.querySelectorAll('h1, h2').forEach((el, index) => {
       if (index < 3) { // Limit to first 3 headings
         keyElements.push({
@@ -1855,8 +1712,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
         });
       }
     });
-    
-    // Capture main navigation elements
     document.querySelectorAll('nav a, .nav a, [role="navigation"] a').forEach((el, index) => {
       if (index < 5) { // Limit to first 5 nav items
         keyElements.push({
@@ -1890,30 +1745,11 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       context: this.getElementContext(element)
     };
   }
-
-  // Screenshot Management
   private async captureScreenshot(type: 'initial' | 'action' | 'page_navigation' | 'final_state' | 'error' = 'action'): Promise<void> {
     if (!this.activeSession) return;
 
-    try {
-      // In Electron, you would use screen capture APIs
-      // For now, using a placeholder implementation
-      const screenshot: ScreenshotCapture = {
-        id: this.generateId(),
-        timestamp: Date.now(),
-        type,
-        base64Data: '', // Would capture actual screen data
-        context: this.capturePageContext()
-      };
-
-      this.activeSession.screenshots.push(screenshot);
-    } catch (error) {
-      console.warn('Failed to capture screenshot:', error);
-    }
+    console.log('Capturing screenshot of type:', type);
   }
-
-
-  // Intent Inference
   private inferIntent(actionType: ActionType, elementContext: ElementContext, value?: string): string {
     const role = elementContext.role;
     const description = elementContext.description.toLowerCase();
@@ -1942,14 +1778,13 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
         return 'interact';
 
       case ActionType.NAVIGATION:
-        // This is for keypress events like Enter
         if (value === 'Enter') {
           if (description.includes('search')) return 'search';
           return 'submit_form';
         }
         return 'navigate_to_page';
 
-      case ActionType.FORM_SUBMIT:
+      case ActionType.SUBMIT:
         return 'submit_form';
 
       case ActionType.SELECT:
@@ -1957,8 +1792,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
 
       case ActionType.TOGGLE:
         return 'toggle_checkbox';
-
-      // Enhanced Form Actions
       case ActionType.SELECT_OPTION:
         return 'choose_dropdown_option';
       
@@ -1973,8 +1806,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
         
       case ActionType.ADJUST_SLIDER:
         return 'adjust_value';
-        
-      // Clipboard Actions
       case ActionType.COPY:
         return 'copy_text';
         
@@ -1983,8 +1814,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
         
       case ActionType.PASTE:
         return 'paste_text';
-        
-      // Context Actions
       case ActionType.CONTEXT_MENU:
         return 'open_context_menu';
 
@@ -2005,14 +1834,10 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     
     return 'same_domain_navigation';
   }
-
-  // Utility Methods
   private debounceAction(key: string, action: () => void, customTimeout?: number): void {
     if (this.pendingActions.has(key)) {
       clearTimeout(this.pendingActions.get(key));
     }
-    
-    // Use custom timeout if provided, otherwise use default ACTION_TIMEOUT
     const timeoutDuration = customTimeout || this.ACTION_TIMEOUT;
     
     const timeout = setTimeout(() => {
@@ -2032,16 +1857,10 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
 
   private shouldRecordAction(action: SemanticAction): boolean {
     const now = Date.now();
-    
-    // Clean up old actions from recent actions list
     this.recentActions = this.recentActions.filter(
       recentAction => now - recentAction.timestamp < this.DEDUP_WINDOW
     );
-    
-    // Create a hash for the action to detect duplicates
     const actionHash = this.generateActionHash(action);
-    
-    // Check if we've seen this exact action recently
     const isDuplicate = this.recentActions.some(
       recentAction => recentAction.hash === actionHash
     );
@@ -2049,21 +1868,14 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     if (isDuplicate) {
       return false;
     }
-
-    // Check if action is too soon after last significant action
     if (now - this.lastSignificantAction < this.MIN_ACTION_GAP) {
-      // Allow text input and navigation actions even if close together
       if (![ActionType.TYPE, ActionType.NAVIGATION].includes(action.type)) {
         return false;
       }
     }
-    
-    // Filter out low-quality actions
     if (this.isLowQualityAction(action)) {
       return false;
     }
-    
-    // Add to recent actions
     this.recentActions.push({ hash: actionHash, timestamp: now });
     
     return true;
@@ -2073,7 +1885,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
    * Generate a unique key for an element to match focus and click events
    */
   private generateElementKey(elementContext: any): string {
-    // Create a key based on element properties
     const keyParts = [];
     
     if (elementContext.selector) keyParts.push(elementContext.selector);
@@ -2084,11 +1895,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
   }
   
   private isLowQualityAction(action: SemanticAction): boolean {
-    // Filter out actions that don't provide meaningful workflow information
-    
-    // Be more lenient with focus/blur events - only skip if clearly not useful
     if ([ActionType.FOCUS, ActionType.BLUR].includes(action.type)) {
-      // Skip focus/blur on non-form elements only if they're not part of navigation
       const isFormElement = ['input', 'textarea', 'select', 'textbox'].includes(
         action.target.role?.toLowerCase() || ''
       );
@@ -2097,50 +1904,26 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       );
       return !isFormElement && !isNavigationElement;
     }
-    
-    // Keep scroll events - they can be important for context
     if (action.type === ActionType.SCROLL) {
       return false;
     }
-    
-    // Be more inclusive with clicks - only skip if clearly not interactive
     if (action.type === ActionType.CLICK) {
-      // Allow clicks even if not marked as interactive, as long as they have some identifying features
       const hasIdentifier = action.target.selector && 
         (action.target.selector.includes('#') || 
          action.target.selector.includes('.') || 
          action.target.selector.includes('['));
       return !hasIdentifier && !action.target.isInteractive;
     }
-    
-    // Skip only completely empty text inputs
     if (action.type === ActionType.TYPE) {
       const value = action.value as string;
       return !value || value.trim().length === 0;
     }
-    
-    // Keep navigation actions (like Enter key presses)
     if (action.type === ActionType.NAVIGATION) {
       return false;
     }
-    
-    // Form submissions are always significant
-    if (action.type === ActionType.FORM_SUBMIT) {
+    if (action.type === ActionType.SUBMIT) {
       return false; // Return false because we want to keep form submissions (not low quality)
     }
-    
-    const significantActions = [
-      ActionType.CLICK, ActionType.TOGGLE_CHECKBOX, ActionType.SELECT_RADIO, ActionType.SELECT_FILE,
-      ActionType.COPY, ActionType.CUT, ActionType.PASTE
-    ];
-    
-    if (significantActions.includes(action.type)) {
-      this.captureScreenshot('action');
-      return false; // Return false because these are significant actions (not low quality)
-    }
-
-    // Dispatch custom event for real-time UI updates
-    // Note: For webview actions, the event is already dispatched in handleWebviewAction
     if (!action.id.includes('webview_')) {
       window.dispatchEvent(new CustomEvent('webview-recording-action', {
         detail: {
@@ -2150,8 +1933,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
         }
       }));
     }
-    
-    // Default to considering actions as low quality unless explicitly marked as high quality above
     return true;
   }
 
@@ -2164,11 +1945,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     const type = element.getAttribute('type');
     const name = element.getAttribute('name');
     const href = element.getAttribute('href');
-    
-    // Build a more semantic description
     let description = '';
-    
-    // Start with the element type in a more readable format
     if (tagName === 'a') {
       description = 'link';
     } else if (tagName === 'button' || type === 'button' || role === 'button') {
@@ -2190,39 +1967,29 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     } else {
       description = tagName;
     }
-    
-    // Add identifier information
     if (id) {
       description += ` #${id}`;
     } else if (name) {
       description += ` [name="${name}"]`;
     } else if (className && typeof className === 'string' && className.trim()) {
-      // Use a more meaningful class if possible
       const classes = className.split(' ').filter(c => c.trim());
       if (classes.length > 0) {
-        // Try to find a semantic class name (avoid cryptic ones like zReHs)
         const semanticClass = classes.find(c => c.length > 2 && !/^[a-z][A-Z0-9]/.test(c));
         if (semanticClass) {
           description += ` .${semanticClass}`;
         }
       }
     }
-    
-    // Add text content if available
     if (text && text.length > 0) {
       description += ` "${text}"`;
     }
-    
-    // For links, add href information if available
     if (tagName === 'a' && href && !href.startsWith('javascript:')) {
       try {
         const url = new URL(href, window.location.href);
-        // Only include domain for external links
         if (url.hostname !== window.location.hostname) {
           description += ` to ${url.hostname.replace('www.', '')}`;
         }
       } catch (e) {
-        // Invalid URL, ignore
       }
     }
     
@@ -2266,22 +2033,15 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
   }
 
   private generateRobustSelector(element: Element): string {
-    // Generate a robust selector that AI can understand and use
     if (element.id) {
       return `#${element.id}`;
     }
-    
-    // Use data attributes if available
     const testId = element.getAttribute('data-testid') || element.getAttribute('data-test');
     if (testId) {
       return `[data-testid="${testId}"]`;
     }
-    
-    // Generate semantic selector
     const tagName = element.tagName.toLowerCase();
     let selector = tagName;
-    
-    // Add meaningful attributes
     const type = element.getAttribute('type');
     const role = element.getAttribute('role');
     const name = element.getAttribute('name');
@@ -2289,8 +2049,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     if (type) selector += `[type="${type}"]`;
     if (role) selector += `[role="${role}"]`;
     if (name) selector += `[name="${name}"]`;
-    
-    // Add text content for unique identification
     const text = element.textContent?.trim().substring(0, 20);
     if (text && text.length > 2 && !['input', 'select', 'textarea'].includes(tagName)) {
       selector += `:contains("${text}")`;
@@ -2336,7 +2094,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
   }
 
   private getElementContext(element: Element): string {
-    // Get meaningful context about where this element is located
     const section = element.closest('section, article, main, nav, header, footer');
     if (section) {
       const sectionRole = section.tagName.toLowerCase();
@@ -2357,18 +2114,12 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
 
   private maskSensitiveValue(value: string): string {
     if (!value || typeof value !== 'string') return '';
-    
-    // Mask passwords
     if (value.length > 0 && /^[•*]+$/.test(value)) {
       return '[PASSWORD]';
     }
-    
-    // Mask credit card numbers
     if (/^\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}$/.test(value)) {
       return '[CREDIT_CARD]';
     }
-    
-    // Mask emails in some contexts
     if (/@/.test(value) && value.includes('.')) {
       const [local, domain] = value.split('@');
       return `${local.substring(0, 2)}***@${domain}`;
@@ -2377,22 +2128,9 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     return value;
   }
 
-  private calculateComplexity(): 'simple' | 'medium' | 'complex' {
-    if (!this.activeSession) return 'simple';
-    
-    const actionCount = this.activeSession.actions.length;
-    const pageCount = this.activeSession.metadata.pagesVisited.length;
-    const networkCount = this.activeSession.networkInteractions.length;
-    
-    if (actionCount > 15 || pageCount > 3 || networkCount > 10) return 'complex';
-    if (actionCount > 8 || pageCount > 1 || networkCount > 5) return 'medium';
-    return 'simple';
-  }
 
   private cleanupRecording(): void {
     this.processPendingActions();
-    
-    // Clear deduplication tracking
     this.recentActions = [];
     this.lastActionHash = '';
     
@@ -2410,7 +2148,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
   }
 
   private setupPageChangeDetection(): void {
-    // Detect URL changes (for SPAs)
     let lastUrl = location.href;
     new MutationObserver(() => {
       const url = location.href;
@@ -2426,37 +2163,21 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
    */
   private recordAction(action: SemanticAction): void {
     if (!this.activeSession) return;
-    
-    // Skip if we're recording too many actions too quickly
     const now = Date.now();
     if (now - this.lastSignificantAction < this.MIN_ACTION_GAP) return;
-    
-    // Generate a hash for deduplication
     const actionHash = this.generateActionHash(action);
-    
-    // Check for duplicate actions within the deduplication window
     const isDuplicate = this.recentActions.some(recent => 
       recent.hash === actionHash && 
       now - recent.timestamp < this.DEDUP_WINDOW
     );
     
     if (isDuplicate) return;
-    
-    // Apply semantic filtering based on action type
     if (!this.isSemanticallySigificant(action)) return;
-    
-    // Record the action
     this.activeSession.actions.push(action);
-    
-    // Update tracking variables
     this.lastSignificantAction = now;
     this.lastActionHash = actionHash;
     this.recentActions.push({ hash: actionHash, timestamp: now });
-    
-    // Prune old actions from the recent actions list
     this.recentActions = this.recentActions.filter(recent => now - recent.timestamp < this.DEDUP_WINDOW);
-    
-    // Save the session
     this.saveSession(this.activeSession);
   }
   
@@ -2464,7 +2185,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
    * Generate a hash for an action to use for deduplication
    */
   private generateActionHash(action: SemanticAction): string {
-    // Create a simplified representation of the action for hashing
     const hashObj = {
       type: action.type,
       description: action.description,
@@ -2479,39 +2199,25 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
    * Check if an action is semantically significant
    */
   private isSemanticallySigificant(action: SemanticAction): boolean {
-    // Navigation events are always significant
     if (action.type === ActionType.NAVIGATION) {
       return true;
     }
-    
-    // Form submissions are always significant
-    if (action.type === ActionType.FORM_SUBMIT) {
+    if (action.type === ActionType.SUBMIT) {
       return true;
     }
-    
-    // Clicks on interactive elements are significant
     if (action.type === ActionType.CLICK && action.target?.isInteractive) {
       return true;
     }
-    
-    // Text inputs with meaningful content are significant
     if (action.type === ActionType.TYPE && action.value && typeof action.value === 'string' && action.value.length > 2) {
       return true;
     }
-    
-    // Special key presses are significant
     if (action.type === ActionType.KEYPRESS && action.value && typeof action.value === 'string' && 
         ['Enter', 'Escape', 'Tab'].includes(action.value)) {
       return true;
     }
-    
-    // Dynamic content changes might be significant
     if (action.type === ActionType.DYNAMIC_CONTENT) {
-      // Only record significant content changes
       return action.description.includes('loaded') || action.description.includes('updated');
     }
-    
-    // By default, consider actions not significant unless explicitly allowed above
     return false;
   }
   
@@ -2523,8 +2229,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
   private generateId(): string {
     return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
-
-  // Export to AI-friendly format
   exportForAI(sessionId: string): any {
     const session = this.getSession(sessionId);
     if (!session) return null;
@@ -2535,8 +2239,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       success: session.metadata.success,
       complexity: session.metadata.complexity,
       duration: session.metadata.duration,
-      
-      // High-level action sequence
       steps: session.actions.map((action: SemanticAction, index: number) => ({
         step: index + 1,
         action: action.type,
@@ -2546,24 +2248,12 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
         intent: action.intent,
         timestamp: action.timestamp
       })),
-      
-      // Context information
       environment: {
         initialUrl: session.initialContext.url,
         pagesVisited: session.metadata.pagesVisited,
         userAgent: session.initialContext.userAgent,
         viewport: session.initialContext.viewport
       },
-      
-      // Key screenshots for visual context
-      screenshots: session.screenshots.filter((s: ScreenshotCapture) => 
-        ['initial', 'final_state', 'page_navigation'].includes(s.type)
-      ),
-      
-      // Significant network interactions
-      networkActivity: session.networkInteractions.filter((ni: NetworkInteraction) => 
-        ni.status && ni.status < 400 // Only successful requests
-      )
     };
   }
 
@@ -2586,8 +2276,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     }
     return sessions;
   }
-
-  // Public API
   getActiveSession(): SmartRecordingSession | null {
     return this.activeSession;
   }
@@ -2601,36 +2289,47 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       case 'click': return ActionType.CLICK;
       case 'input': return ActionType.TYPE;
       case 'type': return ActionType.TYPE; // Handle aggregated text input from webview
-      case 'keypress': return ActionType.NAVIGATION; // Map keypress (like Enter) to navigation
+      case 'keypress': return ActionType.KEYPRESS; // Map keypress (like Enter) to navigation
       case 'change': return ActionType.SELECT;
-      case 'submit': return ActionType.FORM_SUBMIT;
+      case 'submit': return ActionType.SUBMIT;
       case 'focus': return ActionType.FOCUS;
       case 'blur': return ActionType.BLUR;
       case 'scroll': return ActionType.SCROLL;
       case 'navigation': return ActionType.NAVIGATION;
-      
-      // Enhanced loading and dynamic content actions
+      case 'in_page_navigation': return ActionType.NAVIGATION;
+      case 'history_push_state': return ActionType.NAVIGATION;
+      case 'history_replace_state': return ActionType.NAVIGATION;
+      case 'spa_navigation': return ActionType.SPA_NAVIGATION;
+      case 'turbo_navigation': return ActionType.SPA_NAVIGATION;
+      case 'github_navigation': return ActionType.SPA_NAVIGATION;
       case 'page_load_complete': return ActionType.PAGE_LOAD;
-      case 'search_results_loaded': return ActionType.SEARCH_RESULTS;
-      case 'dynamic_content_loaded': return ActionType.DYNAMIC_CONTENT;
-      
-      // Enhanced Form Actions
+      case 'search_results': return ActionType.SEARCH_RESULTS;
+      case 'dynamic_content': return ActionType.DYNAMIC_CONTENT;
+      case 'select': return ActionType.SELECT;
+      case 'reset': return ActionType.SUBMIT;
+      case 'invalid': return ActionType.SUBMIT;
       case 'select_option': return ActionType.SELECT_OPTION;
       case 'toggle_checkbox': return ActionType.TOGGLE_CHECKBOX;
       case 'select_radio': return ActionType.SELECT_RADIO;
       case 'select_file': return ActionType.SELECT_FILE;
       case 'adjust_slider': return ActionType.ADJUST_SLIDER;
-      case 'form_submit': return ActionType.FORM_SUBMIT;
-      
-      // Clipboard Actions
+      case 'form_submit': return ActionType.SUBMIT;
       case 'copy': return ActionType.COPY;
       case 'cut': return ActionType.CUT;
       case 'paste': return ActionType.PASTE;
-      
-      // Context Actions
       case 'context_menu': return ActionType.CONTEXT_MENU;
+      case 'contextmenu': return ActionType.CONTEXT_MENU;
+      case 'mouseover': 
+      case 'mouseenter': 
+        return ActionType.HOVER;
+      case 'dragstart': return ActionType.DRAG_START;
+      case 'drag': return ActionType.DRAG;
+      case 'dragend': return ActionType.DRAG_END;
+      case 'drop': return ActionType.DROP;
       
-      default: return ActionType.CLICK;
+      case 'react_synthetic_event': return ActionType.REACT_EVENT;
+      
+      default: return ActionType.UNKNOWN;
     }
   }
 

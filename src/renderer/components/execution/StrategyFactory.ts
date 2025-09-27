@@ -28,8 +28,7 @@ export class StrategyFactory {
     
     // Wait Actions
     [ActionType.WAIT, WaitTimeStrategy],
-    [ActionType.WAIT_FOR_ELEMENT, WaitForElementStrategy],
-    [ActionType.WAIT_FOR_DYNAMIC_CONTENT, WaitForDynamicContentStrategy],
+    [ActionType.DYNAMIC_CONTENT, WaitForDynamicContentStrategy],
     
     // Form Element Actions
     [ActionType.SELECT, SelectOptionStrategy],

@@ -38,8 +38,8 @@ export class ActionValidator {
           }
           break;
           
-        case ActionType.WAIT_FOR_ELEMENT:
-          if (!step.target) errors.push('Target selector required for wait_for_element action');
+        case ActionType.DYNAMIC_CONTENT:
+          if (!step.target) errors.push('Target selector required for dynamic_content action');
           break;
           
         case ActionType.KEYPRESS:

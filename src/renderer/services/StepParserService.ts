@@ -175,10 +175,7 @@ export class StepParserService implements IStepParserService {
       'contextmenu': ActionType.CONTEXT_MENU,
       
       'wait': ActionType.WAIT,
-      'wait_for_element': ActionType.WAIT_FOR_ELEMENT,
-      'wait_element': ActionType.WAIT_FOR_ELEMENT,
-      'wait_for_dynamic_content': ActionType.WAIT_FOR_DYNAMIC_CONTENT,
-      'wait_dynamic': ActionType.WAIT_FOR_DYNAMIC_CONTENT,
+      'dynamic_content': ActionType.DYNAMIC_CONTENT,
       'focus': ActionType.FOCUS,
       'blur': ActionType.BLUR,
       'hover': ActionType.HOVER,

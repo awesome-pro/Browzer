@@ -6,15 +6,8 @@ export interface SmartRecordingSession {
   startTime: number;
   endTime?: number;
   isActive: boolean;
-  
-  // Context
   initialContext: PageContext;
-  
-  // High-level actions only
   actions: SemanticAction[];
-  screenshots: ScreenshotCapture[];
-  networkInteractions: NetworkInteraction[];
-  
   metadata: SmartSessionMetadata;
 }
 
@@ -92,24 +85,6 @@ export interface PageContext {
   }>;
 }
 
-export interface ScreenshotCapture {
-  id: string;
-  timestamp: number;
-  type: 'initial' | 'action' | 'page_navigation' | 'final_state' | 'error';
-  base64Data: string;            // Base64 encoded screenshot
-  context: PageContext;
-}
-
-export interface NetworkInteraction {
-  id: string;
-  timestamp: number;
-  type: 'fetch' | 'xhr' | 'form_submit';
-  url: string;
-  method: string;
-  status?: number;
-  duration?: number;
-  context: PageContext;
-}
 
 export interface TaskGoal {
   goal: string;                   // High-level task description
@@ -147,6 +122,7 @@ export interface AIReadyContext {
     };
   };
   
+
   // Page structure context
   pageStructure: Array<{
     url: string;
@@ -159,98 +135,30 @@ export interface AIReadyContext {
   }>;
 }
 
-// Configuration for smart recording
-export interface SmartRecordingConfig {
-  // Screenshot settings
-  captureScreenshots: boolean;
-  screenshotQuality: 'low' | 'medium' | 'high';
-  maxScreenshots: number;
-  
-  // Action aggregation
-  actionTimeout: number;          // How long to wait before finalizing an action
-  minActionGap: number;           // Minimum time between significant actions
-  
-  // Context capture
-  capturePageStructure: boolean;
-  maxKeyElements: number;         // Max elements to capture per page
-  
-  // Network monitoring
-  recordNetworkRequests: boolean;
-  ignoreStaticResources: boolean;
-  
-  // Privacy
-  maskSensitiveData: boolean;
-  sensitiveFields: string[];      // Field names/types to mask
-  
-  // Performance
-  maxActionsPerSession: number;
-  maxSessionDuration: number;     // in minutes
-}
-
-export const DEFAULT_SMART_CONFIG: SmartRecordingConfig = {
-  captureScreenshots: true,
-  screenshotQuality: 'medium',
-  maxScreenshots: 10,
-  
-  actionTimeout: 1500,
-  minActionGap: 500,
-  
-  capturePageStructure: true,
-  maxKeyElements: 10,
-  
-  recordNetworkRequests: true,
-  ignoreStaticResources: true,
-  
-  maskSensitiveData: true,
-  sensitiveFields: ['password', 'credit-card', 'ssn'],
-  
-  maxActionsPerSession: 50,       // Much lower than before
-  maxSessionDuration: 30
-};
-
-export interface ActionCandidate {
-  type: ActionType;
-  timestamp: number;
-  element: ElementContext;
-  value?: any;
-  coordinates?: { x: number; y: number };
-  rawEvent: string;
-  intent: string;
-}
-
-export interface ActionBuffer {
-  type: ActionType;
-  element: ElementContext;
-  aggregatedValue?: string;
-  startTimestamp: number;
-  lastTimestamp: number;
-  timeout: NodeJS.Timeout | null;
-  intent: string;
-}
-
-  // Action Action Type System - Same actions for recording and execution
 export enum ActionType {
     // Navigation Actions
     NAVIGATION = 'navigation',
+    SPA_NAVIGATION = 'spa_navigation',
     
-    // Input Actions
+    // Basic Interaction Actions
+    CLICK = 'click',
     TYPE = 'type',
     CLEAR = 'clear',
-    
-    // Click Actions
-    CLICK = 'click',
-    
-    // Form Actions
     SELECT = 'select',
     TOGGLE = 'toggle',
     SUBMIT = 'submit',
+    KEYPRESS = 'keypress',
+    FOCUS = 'focus',
+    BLUR = 'blur',
+    HOVER = 'hover',
+    SCROLL = 'scroll',
     
     // Enhanced Form Actions
-    SELECT_OPTION = 'select_option',        // Dropdown selection
-    TOGGLE_CHECKBOX = 'toggle_checkbox',    // Checkbox toggle
-    SELECT_RADIO = 'select_radio',          // Radio button selection
-    SELECT_FILE = 'select_file',            // File input selection
-    ADJUST_SLIDER = 'adjust_slider',        // Range input adjustment
+    SELECT_OPTION = 'select_option',
+    TOGGLE_CHECKBOX = 'toggle_checkbox',
+    SELECT_RADIO = 'select_radio',
+    SELECT_FILE = 'select_file',
+    ADJUST_SLIDER = 'adjust_slider',
     
     // Clipboard Actions
     COPY = 'copy',
@@ -258,40 +166,23 @@ export enum ActionType {
     PASTE = 'paste',
     
     // Context Actions
-    CONTEXT_MENU = 'context_menu',          // Right-click context menu
+    CONTEXT_MENU = 'context_menu',
+    DRAG_START = 'drag_start',
+    DRAG = 'drag',
+    DRAG_END = 'drag_end',
+    DROP = 'drop',
     
-    // Wait Actions
     WAIT = 'wait',
-    WAIT_FOR_ELEMENT = 'wait_for_element',
-    WAIT_FOR_DYNAMIC_CONTENT = 'wait_for_dynamic_content',
-    
-    // Focus Actions
-    FOCUS = 'focus',
-    BLUR = 'blur',
-    HOVER = 'hover',
-    
-    // Key Actions
-    KEYPRESS = 'keypress',
-    
-    // Scroll Actions
-    SCROLL = 'scroll',
-    
-    // Data Actions
-    EXTRACT = 'extract',
-    
-    // Verification Actions
-    VERIFY_ELEMENT = 'verify_element',
-    VERIFY_TEXT = 'verify_text',
-    VERIFY_URL = 'verify_url',
-
-    FORM_SUBMIT = 'submit',         // User submitted a form
     NETWORK_REQUEST = 'network_request',
+    NETWORK_RESPONSE = 'network_response',
     NETWORK_ERROR = 'network_error',
-  
-  // Enhanced loading and dynamic content actions
     PAGE_LOAD = 'page_load',        // Page finished loading
-    SEARCH_RESULTS = 'search_results', // Search results appeared
+    SEARCH_RESULTS = 'search_results', // Search results loaded
     DYNAMIC_CONTENT = 'dynamic_content', // Dynamic content loaded
+    
+    REACT_EVENT = 'react_event',
+
+    UNKNOWN = 'unknown',
   }
   
   // Execution step interface aligned with recording
@@ -316,120 +207,6 @@ export enum ActionType {
     maxRetries?: number;
   }
   
-  // Enhanced semantic action for recording (aligned with execution)
-  export interface ActionSemanticAction {
-    id: string;
-    type: ActionType;
-    timestamp: number;
-    description: string;
-    target: ElementContext;
-    value?: any;
-    coordinates?: { x: number; y: number };
-    context: PageContext;
-    intent: ActionIntent;
-    
-    // Execution metadata
-    duration?: number;
-    success?: boolean;
-    retryAttempts?: number;
-  }
-  
-  // Standardized action intents
-  export enum ActionIntent {
-    // Navigation intents
-    NAVIGATE_TO_PAGE = 'navigate_to_page',
-    GO_BACK = 'go_back',
-    GO_FORWARD = 'go_forward',
-    REFRESH_PAGE = 'refresh_page',
-    
-    // Form filling intents
-    ENTER_TEXT = 'enter_text',
-    ENTER_EMAIL = 'enter_email',
-    ENTER_PASSWORD = 'enter_password',
-    ENTER_NAME = 'enter_name',
-    ENTER_SEARCH_QUERY = 'enter_search_query',
-    
-    // Selection intents
-    CHOOSE_OPTION = 'choose_option',
-    TOGGLE_CHECKBOX = 'toggle_checkbox',
-    SELECT_RADIO = 'select_radio',
-    
-    // Action intents
-    SUBMIT_FORM = 'submit_form',
-    SEARCH = 'search',
-    LOGIN = 'login',
-    LOGOUT = 'logout',
-    SAVE = 'save',
-    DELETE = 'delete',
-    EDIT = 'edit',
-    CREATE = 'create',
-    
-    // Content intents
-    READ_CONTENT = 'read_content',
-    EXTRACT_DATA = 'extract_data',
-    VERIFY_INFORMATION = 'verify_information',
-    
-    // UI intents
-    OPEN_MENU = 'open_menu',
-    CLOSE_MODAL = 'close_modal',
-    SCROLL_TO_VIEW = 'scroll_to_view',
-    FOCUS_ELEMENT = 'focus_element',
-    
-    // General
-    INTERACT = 'interact',
-    WAIT_FOR_LOAD = 'wait_for_load',
-    HANDLE_ERROR = 'handle_error'
-  }
-  
-  // Action mapping utilities
-  export class ActionTypeMapper {
-    // Map raw DOM events to unified actions
-    static mapDOMEventToAction(eventType: string, element: HTMLElement): ActionType {
-      const tagName = element.tagName.toLowerCase();
-      const inputType = element.getAttribute('type')?.toLowerCase();
-      
-      switch (eventType) {
-        case 'click':
-          if (tagName === 'input' && inputType === 'checkbox') return ActionType.TOGGLE;
-          if (tagName === 'input' && inputType === 'radio') return ActionType.TOGGLE;
-          if (tagName === 'select') return ActionType.SELECT;
-          return ActionType.CLICK;
-          
-        case 'input':
-        case 'keyup':
-          return ActionType.TYPE;
-          
-        case 'change':
-          if (tagName === 'select') return ActionType.SELECT;
-          if (inputType === 'checkbox' || inputType === 'radio') return ActionType.TOGGLE;
-          return ActionType.TYPE;
-          
-        case 'submit':
-          return ActionType.SUBMIT;
-          
-        case 'focus':
-          return ActionType.FOCUS;
-          
-        case 'blur':
-          return ActionType.BLUR;
-          
-        case 'scroll':
-          return ActionType.SCROLL;
-          
-        case 'keydown':
-          const key = (event as KeyboardEvent).key;
-          if (['Enter', 'Tab', 'Escape', 'ArrowUp', 'ArrowDown'].includes(key)) {
-            return ActionType.KEYPRESS;
-          }
-          return ActionType.TYPE;
-          
-        default:
-          return ActionType.CLICK;
-      }
-    }
-  }
-  
-
   export interface ExecuteTask {
     id: string;
     instruction: string;
