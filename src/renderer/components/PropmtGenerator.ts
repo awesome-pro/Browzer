@@ -5,13 +5,13 @@ export class AnthropicPromptGenerator {
   
   static generateClaudeSystemPrompt(session: SmartRecordingSession): string {
     // First, filter out low-quality actions to create a more semantic recording
-    session = this.filterToSemanticActions(session);
+    // session = this.filterToSemanticActions(session);
     
     const context = this.convertToClaudeContext(session);
     
     // Preprocess the steps to improve descriptions
-    this.improveNavigationDescriptions(context.steps);
-    this.enhanceActionDescriptions(context.steps);
+    // this.improveNavigationDescriptions(context.steps);
+    // this.enhanceActionDescriptions(context.steps);
     
     return `You are a precision browser automation expert that generates executable step sequences based on recorded user workflows.
 
@@ -19,7 +19,6 @@ export class AnthropicPromptGenerator {
 You have access to a PROVEN, SUCCESSFUL workflow recording. Your job is to replicate this exact pattern for new tasks by adapting the specific selectors, values, and targets while maintaining the identical workflow structure.
 
 ## RECORDED WORKFLOW ANALYSIS
-**Complexity:** ${context.complexity}
 **Duration:** ${Math.round(context.duration / 1000)} seconds
 **Total Steps:** ${context.steps.length}
 
@@ -248,140 +247,11 @@ ${this.extractProvenSelectors(session)}
     return selectorList.slice(0, 10).map(selector => `• \`${selector}\``).join('\n');
   }
 
-  // Generate workflow mapping
-  private static generateWorkflowMapping(session: SmartRecordingSession, newTask: string): string {
-    const mapping = [];
-    
-    // Analyze the original task pattern
-    const originalTask = session.taskGoal.toLowerCase();
-    const newTaskLower = newTask.toLowerCase();
-    
-    // Map search terms
-    const originalSearchTerms = this.extractSearchTerms(originalTask);
-    const newSearchTerms = this.extractSearchTerms(newTaskLower);
-    
-    if (originalSearchTerms.length > 0 && newSearchTerms.length > 0) {
-      mapping.push(`🔍 **Search Term Mapping**: "${originalSearchTerms[0]}" → "${newSearchTerms[0]}"`);
-    }
-    
-    // Map domains/sites
-    const originalDomains = this.extractDomains(originalTask);
-    const newDomains = this.extractDomains(newTaskLower);
-    
-    if (originalDomains.length > 0 && newDomains.length > 0) {
-      mapping.push(`🌐 **Domain Mapping**: ${originalDomains[0]} → ${newDomains[0]}`);
-    }
-    
-    // Map action types
-    const actionPattern = this.identifyActionPattern(session);
-    mapping.push(`⚡ **Action Pattern**: ${actionPattern}`);
-    
-    return mapping.join('\n');
-  }
 
-  // Generate specific adaptations needed
-  private static generateSpecificAdaptations(session: SmartRecordingSession, newTask: string): string {
-    const adaptations = [];
-    
-    // URL adaptations
-    const urlsInSession = session.metadata.pagesVisited;
-    if (urlsInSession.length > 1) {
-      adaptations.push(`• **URLs**: Adapt from recorded URLs to match new task context`);
-    }
-    
-    // Form field adaptations
-    const textInputs = session.actions.filter(action => action.type === 'type');
-    if (textInputs.length > 0) {
-      const exampleValue = textInputs[0].value;
-      adaptations.push(`• **Form Values**: Change "${exampleValue}" to match new task requirements`);
-    }
-    
-    // Button/link adaptations
-    const clickActions = session.actions.filter(action => 
-      action.type === 'click' && action.description.includes('Click')
-    );
-    if (clickActions.length > 0) {
-      adaptations.push(`• **Interactive Elements**: Adapt button/link targets for new task`);
-    }
-    
-    return adaptations.join('\n');
-  }
 
-  // Generate expected pattern
-  private static generateExpectedPattern(session: SmartRecordingSession): string {
-    return session.actions.slice(0, 5).map((action, index) => 
-      `${index + 1}. ${action.type.toLowerCase()} → ${action.description.substring(0, 60)}...`
-    ).join('\n');
-  }
 
-  // Helper methods for term extraction
-  private static extractSearchTerms(text: string): string[] {
-    const terms = [];
-    
-    // Extract quoted terms
-    const quotedTerms = text.match(/"([^"]+)"/g);
-    if (quotedTerms) {
-      terms.push(...quotedTerms.map(term => term.replace(/"/g, '')));
-    }
-    
-    // Extract key words (simple approach)
-    const words = text.split(' ').filter(word => 
-      word.length > 3 && 
-      !['search', 'find', 'create', 'task', 'workflow'].includes(word.toLowerCase())
-    );
-    
-    if (words.length > 0 && terms.length === 0) {
-      terms.push(words[0]);
-    }
-    
-    return terms;
-  }
 
-  private static extractDomains(text: string): string[] {
-    const domains: string[] = [];
-    const domainPatterns = [
-      /([a-zA-Z0-9-]+\.com)/g,
-      /([a-zA-Z0-9-]+\.org)/g,
-      /([a-zA-Z0-9-]+\.net)/g,
-      /(google|amazon|github|linkedin)/gi
-    ];
-    
-    domainPatterns.forEach(pattern => {
-      const matches = text.match(pattern);
-      if (matches) {
-        domains.push(...matches);
-      }
-    });
-    
-    return [...new Set(domains)];
-  }
 
-  private static identifyActionPattern(session: SmartRecordingSession): string {
-    const actionTypes = session.actions.map(action => action.type);
-    const uniqueTypes = [...new Set(actionTypes)];
-    
-    // Enhanced form interactions
-    const formActions = [ActionType.SELECT_OPTION, ActionType.TOGGLE_CHECKBOX, ActionType.SELECT_RADIO, ActionType.SELECT_FILE];
-    const hasFormActions = formActions.some(action => uniqueTypes.includes(action));
-    
-    // Clipboard interactions
-    const clipboardActions = [ActionType.COPY, ActionType.CUT, ActionType.PASTE];
-    const hasClipboardActions = clipboardActions.some(action => uniqueTypes.includes(action));
-    
-    if (uniqueTypes.includes(ActionType.TYPE) && uniqueTypes.includes(ActionType.NAVIGATION)) {
-      return "Search & Navigate";
-    } else if (hasFormActions && uniqueTypes.includes(ActionType.FORM_SUBMIT)) {
-      return "Advanced Form Interaction";
-    } else if (hasClipboardActions) {
-      return "Content Manipulation";
-    } else if (uniqueTypes.includes(ActionType.CLICK) && uniqueTypes.includes(ActionType.TYPE)) {
-      return "Form Interaction";
-    } else if (uniqueTypes.includes(ActionType.NAVIGATION)) {
-      return "Multi-page Navigation";
-    } else {
-      return "Interactive Workflow";
-    }
-  }
 
   /**
    * Convert recording session to Claude-optimized context
@@ -390,8 +260,6 @@ ${this.extractProvenSelectors(session)}
     return {
       task: session.taskGoal,
       description: session.description,
-      success: session.metadata.success,
-      complexity: session.metadata.complexity,
       duration: session.metadata.duration,
       
       steps: session.actions.map((action, index) => ({
@@ -414,21 +282,6 @@ ${this.extractProvenSelectors(session)}
         }
       },
       
-      screenshots: session.screenshots.filter(s => 
-        ['initial', 'final_state', 'page_navigation'].includes(s.type)
-      ).map(s => ({
-        type: s.type,
-        timestamp: s.timestamp,
-        base64Data: s.base64Data
-      })),
-      
-      networkActivity: session.networkInteractions.slice(0, 10).map(ni => ({
-        url: ni.url,
-        method: ni.method,
-        status: ni.status || 0,
-        timestamp: ni.timestamp
-      })),
-      
       pageStructure: this.extractRelevantPageStructures(session)
     };
   }
@@ -439,7 +292,7 @@ ${this.extractProvenSelectors(session)}
       'click': ActionType.CLICK,
       'select': ActionType.SELECT,
       'toggle': ActionType.TOGGLE,
-      'submit': ActionType.FORM_SUBMIT,
+      'submit': ActionType.SUBMIT,
       'navigation': ActionType.NAVIGATION,
       'scroll': ActionType.SCROLL,
       'focus': ActionType.FOCUS,
@@ -481,211 +334,7 @@ ${this.extractProvenSelectors(session)}
 
 
 
-  /**
-   * Filter the session to only include semantically meaningful actions
-   * This creates a more concise and useful recording for AI models
-   */
-  private static filterToSemanticActions(session: SmartRecordingSession): SmartRecordingSession {
-    // Create a deep copy of the session to avoid modifying the original
-    const filteredSession = JSON.parse(JSON.stringify(session)) as SmartRecordingSession;
-    
-    // Define which action types are semantically meaningful
-    const meaningfulActionTypes = [
-      'navigation', 'click', 'type', 'keypress', 'form_submit',
-      'select_option', 'toggle_checkbox', 'select_radio', 'select_file',
-      'copy', 'cut', 'paste', 'dynamic_content'
-    ];
-    
-    // Filter actions based on semantic significance
-    filteredSession.actions = session.actions.filter((action, index, allActions) => {
-      // Always keep navigation actions
-      if (action.type === ActionType.NAVIGATION) return true;
-      
-      // Always keep form submissions
-      if (action.type === ActionType.FORM_SUBMIT) return true;
-      
-      // Keep meaningful action types with proper targets
-      const actionTypeStr = String(action.type).toLowerCase();
-      if (meaningfulActionTypes.includes(actionTypeStr) && action.target) {
-        // For input actions, ensure they have a value
-        if (action.type === ActionType.TYPE && (!action.value || action.value === '')) {
-          return false;
-        }
-        
-        // For click actions, ensure they're on interactive elements
-        if (action.type === ActionType.CLICK && action.target && !action.target.isInteractive) {
-          // Check if this click led to a navigation or form submission
-          const nextAction = allActions[index + 1];
-          if (nextAction && (nextAction.type === ActionType.NAVIGATION || nextAction.type === ActionType.FORM_SUBMIT)) {
-            return true;
-          }
-          return false;
-        }
-        
-        return true;
-      }
-      
-      // Filter out non-meaningful actions
-      return false;
-    });
-    
-    // Deduplicate consecutive navigation events
-    filteredSession.actions = this.deduplicateConsecutiveNavigations(filteredSession.actions);
-    
-    return filteredSession;
-  }
   
-  /**
-   * Deduplicate consecutive navigation events
-   */
-  private static deduplicateConsecutiveNavigations(actions: any[]): any[] {
-    const result: any[] = [];
-    
-    for (let i = 0; i < actions.length; i++) {
-      const currentAction = actions[i];
-      
-      // Skip if this is a navigation and the next action is also a navigation
-      if (currentAction.type === ActionType.NAVIGATION && 
-          i < actions.length - 1 && 
-          actions[i + 1].type === ActionType.NAVIGATION) {
-        continue;
-      }
-      
-      result.push(currentAction);
-    }
-    
-    return result;
-  }
   
-  /**
-   * Enhance action descriptions to be more semantic and useful for AI models
-   */
-  private static enhanceActionDescriptions(steps: any[]): void {
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i];
-      
-      // Enhance type actions with more context
-      if (step.action === 'type' && step.value) {
-        // Check if this is a search input
-        if (step.target && (step.target.includes('search') || step.target.includes('query'))) {
-          step.description = `Search for "${step.value}"`;
-        } else if (step.target && step.target.includes('email')) {
-          step.description = `Enter email "${step.value}"`;
-        } else if (step.target && step.target.includes('password')) {
-          step.description = `Enter password in ${step.target}`;
-        } else {
-          // Make the description more concise and clear
-          step.description = `Enter "${step.value}" in ${step.target}`;
-        }
-      }
-      
-      // Enhance click actions
-      if (step.action === 'click') {
-        // Make button clicks more descriptive
-        if (step.target && step.target.includes('button')) {
-          const buttonTextMatch = step.target.match(/"([^"]+)"/); 
-          if (buttonTextMatch) {
-            step.description = `Click "${buttonTextMatch[1]}" button`;
-          }
-        }
-        
-        // Make link clicks more descriptive
-        if (step.target && step.target.includes('link')) {
-          const linkTextMatch = step.target.match(/"([^"]+)"/); 
-          if (linkTextMatch) {
-            step.description = `Click link "${linkTextMatch[1]}"`;
-          }
-        }
-      }
-      
-      // Enhance form submission
-      if (step.action === 'form_submit') {
-        if (step.target && step.target.includes('search')) {
-          step.description = `Submit search form`;
-        } else if (step.target && step.target.includes('login')) {
-          step.description = `Submit login form`;
-        } else if (step.target && step.target.includes('signup')) {
-          step.description = `Submit signup form`;
-        }
-      }
-    }
-  }
   
-  /**
-   * Improves navigation descriptions for better clarity in the prompt
-   * Especially handles Google search result navigation
-   */
-  private static improveNavigationDescriptions(steps: any[]): void {
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i];
-      
-      // Fix Google search result navigation descriptions
-      if (step.action === 'navigation' && step.description) {
-        // Check for Google URL redirects
-        if (step.description.includes('google.com/url') || 
-            step.description.includes('Navigate to google.com')) {
-          
-          // Look ahead for the actual destination
-          const nextStep = steps[i + 1];
-          if (nextStep && nextStep.action === 'click' && 
-              nextStep.description.includes('Page loaded')) {
-            
-            // Extract the actual destination from the next step
-            const urlMatch = nextStep.description.match(/https?:\/\/([^\/\s]+)/);
-            if (urlMatch) {
-              const domain = urlMatch[1].replace('www.', '');
-              
-              // Replace with a clearer description
-              step.description = `Navigate from search results to ${domain}`;
-              
-              // If we have link text, include it
-              const linkTextMatch = step.description.match(/\("([^"]+)"\)/);
-              if (linkTextMatch) {
-                step.description = `Navigate from search results to ${domain} ("${linkTextMatch[1]}")`;
-              }
-            }
-          }
-        }
-        
-        // Extract domain from URLs for clearer descriptions
-        const urlMatch = step.description.match(/Navigate to (https?:\/\/[^\s]+)/);
-        if (urlMatch) {
-          try {
-            const url = new URL(urlMatch[1]);
-            const domain = url.hostname.replace('www.', '');
-            step.description = `Navigate to ${domain}`;
-          } catch (e) {
-            // Keep original if URL parsing fails
-          }
-        }
-      }
-      
-      // Improve dynamic content descriptions
-      if ((step.action === 'click' || step.action === 'dynamic_content') && 
-          step.description && step.description.includes('Dynamic content loaded')) {
-        
-        // Make dynamic content descriptions more informative
-        if (step.description.includes('unknown')) {
-          // Replace "unknown" with better context
-          if (step.target && step.target.includes('page:')) {
-            // Extract page title if available
-            const titleMatch = step.target.match(/page: ([^"]+)/);
-            if (titleMatch) {
-              step.description = `Content loaded on page: "${titleMatch[1]}"`;
-            } else {
-              step.description = 'Content loaded on page';
-            }
-          } else if (i > 0 && steps[i-1].action === 'navigation') {
-            // If preceded by navigation, reference the page we navigated to
-            step.description = 'Content loaded after navigation';
-          } else {
-            step.description = 'Dynamic content loaded on page';
-          }
-        }
-        
-        // Clean up redundant "loaded" mentions
-        step.description = step.description.replace('loaded loaded', 'loaded');
-      }
-    }
-  }
 }

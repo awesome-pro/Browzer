@@ -1,4 +1,3 @@
-// src/main/native-event-monitor.ts
 import { BrowserWindow, WebContents, ipcMain, webContents } from 'electron';
 
 /**
@@ -23,7 +22,6 @@ export class NativeEventMonitor {
   }
 
   private setupIpcHandlers(): void {
-    // Handle recording start/stop commands
     ipcMain.on('start-native-recording', (event, sessionId: string) => {
       this.startRecording(sessionId);
     });
@@ -31,13 +29,9 @@ export class NativeEventMonitor {
     ipcMain.on('stop-native-recording', () => {
       this.stopRecording();
     });
-
-    // Handle webview registration
     ipcMain.on('register-webview-for-monitoring', (event, webContentsId: number) => {
       this.registerWebContents(webContentsId);
     });
-
-    // Handle webview unregistration
     ipcMain.on('unregister-webview-for-monitoring', (event, webContentsId: number) => {
       this.unregisterWebContents(webContentsId);
     });
@@ -47,8 +41,6 @@ export class NativeEventMonitor {
     console.log(`[NativeEventMonitor] Starting recording with session ID: ${sessionId}`);
     this.isRecording = true;
     this.currentSessionId = sessionId;
-    
-    // Attach event listeners to all registered webviews
     this.monitoredWebContents.forEach((webContents, id) => {
       this.attachEventListeners(webContents);
     });
@@ -58,8 +50,6 @@ export class NativeEventMonitor {
     console.log('[NativeEventMonitor] Stopping recording');
     this.isRecording = false;
     this.currentSessionId = null;
-    
-    // Detach event listeners from all registered webviews
     this.monitoredWebContents.forEach((webContents, id) => {
       this.detachEventListeners(webContents);
     });
@@ -88,7 +78,6 @@ export class NativeEventMonitor {
 
   private getWebContentsById(webContentsId: number): WebContents | null {
     try {
-      // Use the correct way to get WebContents by ID
       const allWebContents = webContents.getAllWebContents();
       return allWebContents.find((wc: WebContents) => wc.id === webContentsId) || null;
     } catch (error: any) {
@@ -101,14 +90,9 @@ export class NativeEventMonitor {
     if (!webContents || webContents.isDestroyed()) return;
 
     try {
-      // Inject our event monitoring script
       this.injectEventMonitoringScript(webContents);
-
-      // Listen for navigation events using the correct event names
       webContents.addListener('did-navigate', this.handleNavigation);
       webContents.addListener('did-navigate-in-page', this.handleInPageNavigation);
-      
-      // Listen for console messages (for debugging)
       webContents.addListener('console-message', this.handleConsoleMessage);
     } catch (error) {
       console.error('[NativeEventMonitor] Error attaching event listeners:', error);
@@ -119,14 +103,9 @@ export class NativeEventMonitor {
     if (!webContents || webContents.isDestroyed()) return;
 
     try {
-      // Remove navigation event listeners using the correct methods
       webContents.removeListener('did-navigate', this.handleNavigation);
       webContents.removeListener('did-navigate-in-page', this.handleInPageNavigation);
-      
-      // Remove console message listener
       webContents.removeListener('console-message', this.handleConsoleMessage);
-      
-      // Inject script to clean up our event listeners
       this.injectCleanupScript(webContents);
     } catch (error) {
       console.error('[NativeEventMonitor] Error detaching event listeners:', error);
@@ -143,13 +122,9 @@ export class NativeEventMonitor {
     
     const webContents = event.sender as WebContents;
     const webContentsId = webContents.id;
-    
-    // Only process navigation events for registered webContents to avoid duplicates
     if (!this.monitoredWebContents.has(webContentsId)) {
       return;
     }
-    
-    // Send navigation event to renderer process
     this.sendEventToRenderer({
       type: 'navigation',
       url,
@@ -158,8 +133,6 @@ export class NativeEventMonitor {
       webContentsId,
       title: webContents.getTitle() || ''
     });
-    
-    // Re-inject our event monitoring script after navigation
     setTimeout(() => {
       this.injectEventMonitoringScript(webContents);
     }, 500);
@@ -210,52 +183,125 @@ export class NativeEventMonitor {
               resolve();
             };
             webContents.on('did-finish-load', loadHandler);
-            // Set a reasonable timeout
             setTimeout(resolve, 3000);
           });
         } catch (error) {
-          // Continue anyway
         }
       }
-
-      // Inject a simpler, more robust event monitoring script
       await webContents.executeJavaScript(`
         (function() {
-          // Skip if already injected
           if (window.__nativeEventMonitorInjected) return;
           window.__nativeEventMonitorInjected = true;
           
           console.log('[NativeEventMonitor] Injecting event monitoring script');
-          
-          // Store original methods to avoid infinite loops
           const originalAddEventListener = EventTarget.prototype.addEventListener;
           const originalRemoveEventListener = EventTarget.prototype.removeEventListener;
           const originalPushState = history.pushState;
           const originalReplaceState = history.replaceState;
           
-          // List of events to monitor
           const eventsToMonitor = [
-            'click', 'mousedown', 'mouseup', 'input', 'change', 'submit',
-            'keydown', 'keyup', 'keypress', 'focus', 'blur', 'contextmenu'
+            'click', 'input', 'change', 'submit',
+            'keydown', 'keyup', 'keypress', 'focus', 'contextmenu',
+            
+            'select', 'reset', 'invalid',
+            
+            'copy', 'cut', 'paste',
+            
+            'dragstart', 'dragend', 'dragenter', 'dragleave', 'dragover', 'drop',
+            
+            'scroll',
+            
+            'cancel', 'close',
+            'play', 'pause', 'ended', 'volumechange',
+            
+            'touchstart', 'touchend', 'touchmove', 'touchcancel'
           ];
-          
-          // Create a map to store our event listeners
           window.__nativeEventListeners = new Map();
           
-          // Function to capture element details safely
           function captureElement(element) {
             if (!element || !element.tagName) return null;
             
             try {
               const rect = element.getBoundingClientRect();
+              
+              const computedStyle = window.getComputedStyle(element);
+              
+              const isVisible = !(computedStyle.display === 'none' || 
+                               computedStyle.visibility === 'hidden' || 
+                               computedStyle.opacity === '0' ||
+                               rect.width === 0 || 
+                               rect.height === 0);
+              
+              let role = element.getAttribute('role');
+              if (!role) {
+                const tagName = element.tagName.toLowerCase();
+                if (tagName === 'a') role = 'link';
+                else if (tagName === 'button') role = 'button';
+                else if (tagName === 'input') {
+                  if (element.type === 'checkbox') role = 'checkbox';
+                  else if (element.type === 'radio') role = 'radio';
+                  else if (element.type === 'submit' || element.type === 'button') role = 'button';
+                  else role = 'textbox';
+                }
+                else if (tagName === 'select') role = 'combobox';
+                else if (tagName === 'textarea') role = 'textbox';
+                else if (tagName === 'img') role = 'img';
+                else if (tagName === 'h1' || tagName === 'h2' || tagName === 'h3' || 
+                         tagName === 'h4' || tagName === 'h5' || tagName === 'h6') role = 'heading';
+              }
+              
+              let parentContext = null;
+              try {
+                const parentElement = element.parentElement;
+                if (parentElement && parentElement.tagName) {
+                  parentContext = {
+                    tagName: parentElement.tagName.toLowerCase(),
+                    id: parentElement.id || null,
+                    className: parentElement.className?.toString() || null,
+                    role: parentElement.getAttribute('role') || null
+                  };
+                }
+              } catch (e) { /* Ignore parent context errors */ }
+              
+              let formContext = null;
+              try {
+                const form = element.form || element.closest('form');
+                if (form) {
+                  formContext = {
+                    id: form.id || null,
+                    name: form.name || null,
+                    action: form.action || null,
+                    method: form.method || null
+                  };
+                }
+              } catch (e) { /* Ignore form context errors */ }
+              
               return {
                 tagName: element.tagName.toLowerCase(),
                 id: element.id || null,
                 className: element.className?.toString() || null,
                 type: element.type || null,
+                name: element.name || null,
                 value: element.value || null,
                 href: element.href || null,
+                src: element.src || null,
+                alt: element.alt || null,
+                placeholder: element.placeholder || null,
+                checked: element.checked !== undefined ? element.checked : null,
+                selected: element.selected !== undefined ? element.selected : null,
+                disabled: element.disabled !== undefined ? element.disabled : null,
+                readOnly: element.readOnly !== undefined ? element.readOnly : null,
+                required: element.required !== undefined ? element.required : null,
                 text: element.textContent?.trim().substring(0, 100) || null,
+                innerText: element.innerText?.trim().substring(0, 100) || null,
+                title: element.title || null,
+                ariaLabel: element.getAttribute('aria-label') || null,
+                role: role || null,
+                isVisible: isVisible,
+                isInteractive: ['a', 'button', 'input', 'select', 'textarea', 'details', 'summary'].includes(element.tagName.toLowerCase()) || 
+                              !!element.getAttribute('role') || 
+                              !!element.onclick || 
+                              computedStyle.cursor === 'pointer',
                 attributes: Array.from(element.attributes || []).reduce((obj, attr) => {
                   obj[attr.name] = attr.value;
                   return obj;
@@ -264,23 +310,47 @@ export class NativeEventMonitor {
                   x: rect.x,
                   y: rect.y,
                   width: rect.width,
-                  height: rect.height
-                }
+                  height: rect.height,
+                  top: rect.top,
+                  bottom: rect.bottom,
+                  left: rect.left,
+                  right: rect.right
+                },
+                styles: {
+                  display: computedStyle.display,
+                  visibility: computedStyle.visibility,
+                  position: computedStyle.position,
+                  zIndex: computedStyle.zIndex,
+                  opacity: computedStyle.opacity,
+                  cursor: computedStyle.cursor
+                },
+                parentContext: parentContext,
+                formContext: formContext
               };
             } catch (e) {
               return { tagName: element.tagName.toLowerCase() };
             }
           }
-          
-          // Function to handle events
           function handleNativeEvent(event) {
-            // Skip events that are not user-initiated
-            if (!event.isTrusted) return;
+            const asyncEvents = ['play', 'pause', 'ended'];
+            if (!event.isTrusted && !asyncEvents.includes(event.type)) return;
             
             const target = event.target;
-            if (!target || !target.tagName) return;
+            if (!target) return;
+            if (event.type === 'scroll') {
+              if (!window.__lastScrollPosition) {
+                window.__lastScrollPosition = { x: window.scrollX, y: window.scrollY };
+                return;
+              }
+              
+              const scrollDiffY = Math.abs(window.scrollY - window.__lastScrollPosition.y);
+              const scrollDiffX = Math.abs(window.scrollX - window.__lastScrollPosition.x);
+              
+              if (scrollDiffY < 100 && scrollDiffX < 100) return;
+              
+              window.__lastScrollPosition = { x: window.scrollX, y: window.scrollY };
+            }
             
-            // Prepare event data
             const eventData = {
               type: event.type,
               timestamp: Date.now(),
@@ -293,21 +363,35 @@ export class NativeEventMonitor {
               url: window.location.href,
               title: document.title
             };
+            if (event.type === 'scroll') {
+              eventData.scrollPosition = { x: window.scrollX, y: window.scrollY };
+              eventData.viewportHeight = window.innerHeight;
+              eventData.documentHeight = document.documentElement.scrollHeight;
+              eventData.scrollPercentage = Math.round((window.scrollY / (document.documentElement.scrollHeight - window.innerHeight)) * 100);
+            } else if (['dragstart', 'dragend', 'drop'].includes(event.type)) {
+              eventData.dataTransfer = event.dataTransfer ? {
+                types: Array.from(event.dataTransfer.types || []),
+                effectAllowed: event.dataTransfer.effectAllowed
+              } : null;
+            } else if (['play', 'pause', 'ended'].includes(event.type)) {
+              const mediaElement = target;
+              eventData.mediaInfo = {
+                currentTime: mediaElement.currentTime,
+                duration: mediaElement.duration,
+                paused: mediaElement.paused,
+                muted: mediaElement.muted,
+                volume: mediaElement.volume
+              };
+            }
             
-            // Log the event data with a special prefix that our native monitor will look for
             console.log('__NATIVE_EVENT__:' + JSON.stringify(eventData));
           }
           
-          // Add event listeners for all events we want to monitor
           eventsToMonitor.forEach(eventType => {
             const listener = (event) => handleNativeEvent(event);
             window.__nativeEventListeners.set(eventType, listener);
-            
-            // Use the original addEventListener to avoid infinite loops
             originalAddEventListener.call(document, eventType, listener, { capture: true, passive: true });
           });
-          
-          // Monitor navigation events
           history.pushState = function() {
             const result = originalPushState.apply(this, arguments);
             console.log('__NATIVE_EVENT__:' + JSON.stringify({
@@ -329,8 +413,6 @@ export class NativeEventMonitor {
             }));
             return result;
           };
-          
-          // Add cleanup method
           window.__cleanupNativeEventMonitor = function() {
             if (!window.__nativeEventListeners) return;
             
@@ -343,19 +425,345 @@ export class NativeEventMonitor {
             
             window.__nativeEventListeners.clear();
             window.__nativeEventMonitorInjected = false;
-            
-            // Restore original history methods
             history.pushState = originalPushState;
             history.replaceState = originalReplaceState;
+            if (originalXHROpen && originalXHRSend) {
+              XMLHttpRequest.prototype.open = originalXHROpen;
+              XMLHttpRequest.prototype.send = originalXHRSend;
+            }
+            
+            if (originalFetch) {
+              window.fetch = originalFetch;
+            }
+            if (window.__dynamicContentObserver) {
+              window.__dynamicContentObserver.disconnect();
+              window.__dynamicContentObserver = null;
+            }
+            
+            if (window.__reactRouterObserver) {
+              window.__reactRouterObserver.disconnect();
+              window.__reactRouterObserver = null;
+            }
+            
+            if (window.__vueRouterObserver) {
+              window.__vueRouterObserver.disconnect();
+              window.__vueRouterObserver = null;
+            }
+            if (window.__monitorIntervals) {
+              window.__monitorIntervals.forEach(clearInterval);
+              window.__monitorIntervals = [];
+            }
+          };
+          const setupDynamicContentObserver = () => {
+            let domChangeTimeout = null;
+            let pendingMutations = [];
+            
+            const reportSignificantDOMChange = (mutations, isDebounced = false) => {
+              if (!isDebounced && domChangeTimeout) {
+                pendingMutations = pendingMutations.concat(mutations);
+                return;
+              }
+              const allMutations = isDebounced ? pendingMutations : mutations;
+              pendingMutations = [];
+              let addedElements = 0;
+              let removedElements = 0;
+              let changedAttributes = 0;
+              let textChanges = 0;
+              const affectedElements = new Set();
+              const addedNodes = [];
+              
+              allMutations.forEach(mutation => {
+                if (mutation.type === 'childList') {
+                  mutation.addedNodes.forEach(node => {
+                    if (node.nodeType === 1) { // ELEMENT_NODE
+                      addedElements++;
+                      affectedElements.add(node);
+                      if (node.tagName && [
+                        'DIV', 'SECTION', 'ARTICLE', 'MAIN', 'ASIDE',
+                        'UL', 'OL', 'TABLE', 'FORM'
+                      ].includes(node.tagName.toUpperCase()) && node.childElementCount > 0) {
+                        addedNodes.push(captureElement(node));
+                      }
+                    }
+                  });
+                  mutation.removedNodes.forEach(node => {
+                    if (node.nodeType === 1) { // ELEMENT_NODE
+                      removedElements++;
+                    }
+                  });
+                } else if (mutation.type === 'attributes') {
+                  changedAttributes++;
+                  affectedElements.add(mutation.target);
+                } else if (mutation.type === 'characterData') {
+                  textChanges++;
+                  affectedElements.add(mutation.target.parentElement);
+                }
+              });
+              const isSignificant = (
+                addedElements > 3 || 
+                removedElements > 3 ||
+                (addedElements > 0 && addedNodes.length > 0) ||
+                affectedElements.size > 5 ||
+                (changedAttributes > 5 && affectedElements.size > 2)
+              );
+              
+              if (isSignificant) {
+                console.log('__NATIVE_EVENT__:' + JSON.stringify({
+                  type: 'dynamic_content_change',
+                  timestamp: Date.now(),
+                  url: window.location.href,
+                  title: document.title,
+                  details: {
+                    addedElements,
+                    removedElements,
+                    changedAttributes,
+                    textChanges,
+                    affectedElementsCount: affectedElements.size,
+                    significantAddedNodes: addedNodes.slice(0, 3) // Limit to 3 nodes for size
+                  }
+                }));
+              }
+            };
+            const observer = new MutationObserver((mutations) => {
+              if (mutations.length > 10) {
+                reportSignificantDOMChange(mutations);
+                return;
+              }
+              pendingMutations = pendingMutations.concat(mutations);
+              
+              if (domChangeTimeout) {
+                clearTimeout(domChangeTimeout);
+              }
+              
+              domChangeTimeout = setTimeout(() => {
+                domChangeTimeout = null;
+                reportSignificantDOMChange([], true); // Process accumulated mutations
+              }, 500); // 500ms debounce
+            });
+            if (document.body) {
+              observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'disabled'],
+                characterData: false // Skip text changes to reduce noise
+              });
+              window.__dynamicContentObserver = observer;
+            } else {
+              const bodyCheckInterval = setInterval(() => {
+                if (document.body) {
+                  clearInterval(bodyCheckInterval);
+                  setupDynamicContentObserver();
+                }
+              }, 100);
+            }
+          };
+          setupDynamicContentObserver();
+          const originalXHROpen = XMLHttpRequest.prototype.open;
+          const originalXHRSend = XMLHttpRequest.prototype.send;
+          const originalFetch = window.fetch;
+          window.__activeRequests = new Map();
+          window.__requestCounter = 0;
+          XMLHttpRequest.prototype.open = function(method, url) {
+            this.__requestId = ++window.__requestCounter;
+            this.__requestMethod = method;
+            this.__requestUrl = url;
+            this.__requestStartTime = Date.now();
+            return originalXHROpen.apply(this, arguments);
           };
           
-          // Special handling for Linear.app
-          if (window.location.hostname.includes('linear.app')) {
+          XMLHttpRequest.prototype.send = function() {
+            const requestId = this.__requestId;
+            const method = this.__requestMethod;
+            const url = this.__requestUrl;
+            const startTime = this.__requestStartTime;
+            window.__activeRequests.set(requestId, {
+              type: 'xhr',
+              method,
+              url,
+              startTime
+            });
+            console.log('__NATIVE_EVENT__:' + JSON.stringify({
+              type: 'async_request_start',
+              timestamp: startTime,
+              url: window.location.href,
+              title: document.title,
+              request: {
+                id: requestId,
+                type: 'xhr',
+                method,
+                url
+              }
+            }));
+            this.addEventListener('load', function() {
+              const endTime = Date.now();
+              const duration = endTime - startTime;
+              console.log('__NATIVE_EVENT__:' + JSON.stringify({
+                type: 'async_request_complete',
+                timestamp: endTime,
+                url: window.location.href,
+                title: document.title,
+                request: {
+                  id: requestId,
+                  type: 'xhr',
+                  method,
+                  url,
+                  status: this.status,
+                  duration
+                }
+              }));
+              window.__activeRequests.delete(requestId);
+            });
+            
+            this.addEventListener('error', function() {
+              const endTime = Date.now();
+              const duration = endTime - startTime;
+              console.log('__NATIVE_EVENT__:' + JSON.stringify({
+                type: 'async_request_error',
+                timestamp: endTime,
+                url: window.location.href,
+                title: document.title,
+                request: {
+                  id: requestId,
+                  type: 'xhr',
+                  method,
+                  url,
+                  duration
+                }
+              }));
+              window.__activeRequests.delete(requestId);
+            });
+            
+            return originalXHRSend.apply(this, arguments);
+          };
+          window.fetch = async function(input, init) {
+            const requestId = ++window.__requestCounter;
+            const startTime = Date.now();
+            let url = typeof input === 'string' ? input : input.url;
+            let method = init?.method || (input instanceof Request ? input.method : 'GET');
+            window.__activeRequests.set(requestId, {
+              type: 'fetch',
+              method,
+              url,
+              startTime
+            });
+            console.log('__NATIVE_EVENT__:' + JSON.stringify({
+              type: 'async_request_start',
+              timestamp: startTime,
+              url: window.location.href,
+              title: document.title,
+              request: {
+                id: requestId,
+                type: 'fetch',
+                method,
+                url
+              }
+            }));
+            
+            try {
+              const response = await originalFetch.apply(this, arguments);
+              const endTime = Date.now();
+              const duration = endTime - startTime;
+              console.log('__NATIVE_EVENT__:' + JSON.stringify({
+                type: 'async_request_complete',
+                timestamp: endTime,
+                url: window.location.href,
+                title: document.title,
+                request: {
+                  id: requestId,
+                  type: 'fetch',
+                  method,
+                  url,
+                  status: response.status,
+                  duration
+                }
+              }));
+              window.__activeRequests.delete(requestId);
+              
+              return response;
+            } catch (error) {
+              const endTime = Date.now();
+              const duration = endTime - startTime;
+              console.log('__NATIVE_EVENT__:' + JSON.stringify({
+                type: 'async_request_error',
+                timestamp: endTime,
+                url: window.location.href,
+                title: document.title,
+                request: {
+                  id: requestId,
+                  type: 'fetch',
+                  method,
+                  url,
+                  duration
+                }
+              }));
+              window.__activeRequests.delete(requestId);
+              
+              throw error;
+            }
+          };
+          const monitorModalsAndDialogs = () => {
+            document.querySelectorAll('dialog').forEach(dialog => {
+              if (dialog.__monitored) return;
+              dialog.__monitored = true;
+              
+              const showEvent = () => {
+                console.log('__NATIVE_EVENT__:' + JSON.stringify({
+                  type: 'modal_open',
+                  timestamp: Date.now(),
+                  url: window.location.href,
+                  title: document.title,
+                  target: captureElement(dialog)
+                }));
+              };
+              
+              const hideEvent = () => {
+                console.log('__NATIVE_EVENT__:' + JSON.stringify({
+                  type: 'modal_close',
+                  timestamp: Date.now(),
+                  url: window.location.href,
+                  title: document.title,
+                  target: captureElement(dialog)
+                }));
+              };
+              
+              dialog.addEventListener('close', hideEvent);
+              dialog.addEventListener('cancel', hideEvent);
+              if (dialog.open || dialog.hasAttribute('open') || 
+                  window.getComputedStyle(dialog).display !== 'none') {
+                showEvent();
+              }
+            });
+            const modalSelectors = [
+              '[role="dialog"]',
+              '[aria-modal="true"]',
+              '.modal:not(.modal-hidden):not(.hidden)',
+              '.dialog:not(.dialog-hidden):not(.hidden)',
+              '.overlay:not(.overlay-hidden):not(.hidden)'
+            ];
+            
+            modalSelectors.forEach(selector => {
+              document.querySelectorAll(selector).forEach(modal => {
+                if (modal.__monitored) return;
+                modal.__monitored = true;
+                if (window.getComputedStyle(modal).display !== 'none') {
+                  console.log('__NATIVE_EVENT__:' + JSON.stringify({
+                    type: 'modal_open',
+                    timestamp: Date.now(),
+                    url: window.location.href,
+                    title: document.title,
+                    target: captureElement(modal)
+                  }));
+                }
+              });
+            });
+          };
+          monitorModalsAndDialogs();
+          setInterval(monitorModalsAndDialogs, 2000);
+          if (typeof React !== 'undefined' || window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
             const originalDispatchEvent = EventTarget.prototype.dispatchEvent;
             EventTarget.prototype.dispatchEvent = function(event) {
               const result = originalDispatchEvent.call(this, event);
-              
-              // Only capture React synthetic events
               if (event && event._reactName && this.tagName) {
                 console.log('__NATIVE_EVENT__:' + JSON.stringify({
                   type: 'react_synthetic_event',
@@ -370,62 +778,66 @@ export class NativeEventMonitor {
               return result;
             };
           }
-          
-          // Special handling for Google apps
-          if (window.location.hostname.includes('google.com')) {
-            const observer = new MutationObserver((mutations) => {
-              for (const mutation of mutations) {
-                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                  const significantChange = Array.from(mutation.addedNodes).some(node => {
-                    return node.nodeType === 1 && // ELEMENT_NODE
-                           (node.nodeName === 'DIV' && node.childElementCount > 3);
-                  });
-                  
-                  if (significantChange) {
-                    console.log('__NATIVE_EVENT__:' + JSON.stringify({
-                      type: 'dom_significant_change',
-                      timestamp: Date.now(),
-                      url: window.location.href,
-                      title: document.title
-                    }));
-                  }
-                }
-              }
+          const setupSPARouteMonitoring = () => {
+            window.addEventListener('popstate', () => {
+              console.log('__NATIVE_EVENT__:' + JSON.stringify({
+                type: 'spa_navigation',
+                navigationType: 'popstate',
+                timestamp: Date.now(),
+                url: window.location.href,
+                title: document.title
+              }));
             });
-            
-            if (document.body) {
-              observer.observe(document.body, {
-                childList: true,
-                subtree: true
+            if (window.angular || document.querySelector('[ng-app]')) {
+              document.addEventListener('$routeChangeStart', () => {
+                console.log('__NATIVE_EVENT__:' + JSON.stringify({
+                  type: 'spa_navigation',
+                  navigationType: 'angular_route_change',
+                  timestamp: Date.now(),
+                  url: window.location.href,
+                  title: document.title
+                }));
               });
-              
-              // Store the observer for cleanup
-              window.__googleMutationObserver = observer;
             }
-          }
-          
-          // Special handling for GitHub
-          if (window.location.hostname.includes('github.com')) {
-            document.addEventListener('turbo:load', () => {
-              console.log('__NATIVE_EVENT__:' + JSON.stringify({
-                type: 'turbo_navigation',
-                timestamp: Date.now(),
-                url: window.location.href,
-                title: document.title
-              }));
-            });
-            
-            // Also monitor navigation events for GitHub
-            document.addEventListener('navigation:loaded', () => {
-              console.log('__NATIVE_EVENT__:' + JSON.stringify({
-                type: 'github_navigation',
-                timestamp: Date.now(),
-                url: window.location.href,
-                title: document.title
-              }));
-            });
-          }
-          
+            if (document.querySelector('#root') || document.querySelector('[data-reactroot]')) {
+              const reactRouterObserver = new MutationObserver((mutations) => {
+                if (window.__lastReactUrl !== window.location.href) {
+                  window.__lastReactUrl = window.location.href;
+                  console.log('__NATIVE_EVENT__:' + JSON.stringify({
+                    type: 'spa_navigation',
+                    navigationType: 'react_router',
+                    timestamp: Date.now(),
+                    url: window.location.href,
+                    title: document.title
+                  }));
+                }
+              });
+              const reactRoot = document.querySelector('#root') || document.querySelector('[data-reactroot]');
+              if (reactRoot) {
+                reactRouterObserver.observe(reactRoot, { childList: true, subtree: true });
+                window.__reactRouterObserver = reactRouterObserver;
+              }
+            }
+            if (window.Vue || document.querySelector('[data-v-app]')) {
+              const vueRouterObserver = new MutationObserver((mutations) => {
+                if (window.__lastVueUrl !== window.location.href) {
+                  window.__lastVueUrl = window.location.href;
+                  console.log('__NATIVE_EVENT__:' + JSON.stringify({
+                    type: 'spa_navigation',
+                    navigationType: 'vue_router',
+                    timestamp: Date.now(),
+                    url: window.location.href,
+                    title: document.title
+                  }));
+                }
+              });
+              const vueRoot = document.querySelector('[data-v-app]') || document.body;
+              vueRouterObserver.observe(vueRoot, { childList: true, subtree: true });
+              window.__vueRouterObserver = vueRouterObserver;
+            }
+          };
+          setupSPARouteMonitoring();
+        
           console.log('[NativeEventMonitor] Event monitoring script injected successfully');
         })();
       `, true);
@@ -444,10 +856,19 @@ export class NativeEventMonitor {
             window.__cleanupNativeEventMonitor();
             console.log('[NativeEventMonitor] Cleanup function executed');
           }
+          if (window.__dynamicContentObserver) {
+            window.__dynamicContentObserver.disconnect();
+            window.__dynamicContentObserver = null;
+          }
           
-          if (window.__googleMutationObserver) {
-            window.__googleMutationObserver.disconnect();
-            window.__googleMutationObserver = null;
+          if (window.__reactRouterObserver) {
+            window.__reactRouterObserver.disconnect();
+            window.__reactRouterObserver = null;
+          }
+          
+          if (window.__vueRouterObserver) {
+            window.__vueRouterObserver.disconnect();
+            window.__vueRouterObserver = null;
           }
           
           return true;
@@ -463,8 +884,6 @@ export class NativeEventMonitor {
       console.warn('[NativeEventMonitor] Attempted to send undefined/null event data');
       return;
     }
-    
-    // Send the event to all renderer processes
     const windows = BrowserWindow.getAllWindows();
     if (windows.length === 0) {
       console.warn('[NativeEventMonitor] No browser windows found to send event to');
@@ -478,8 +897,6 @@ export class NativeEventMonitor {
     });
   }
 }
-
-// Initialize the native event monitor
 export function initializeNativeEventMonitor(): NativeEventMonitor {
   return NativeEventMonitor.getInstance();
 }

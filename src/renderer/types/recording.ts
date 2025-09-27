@@ -122,8 +122,6 @@ export interface AIReadyContext {
   // Task information
   task: string;
   description?: string;
-  success: boolean;
-  complexity: 'simple' | 'medium' | 'complex';
   duration: number;
   
   // Action sequence (the most important part)
@@ -148,21 +146,6 @@ export interface AIReadyContext {
       height: number;
     };
   };
-  
-  // Visual context (key screenshots only)
-  screenshots: Array<{
-    type: string;
-    timestamp: number;
-    base64Data: string;
-  }>;
-  
-  // Network activity (significant requests only)
-  networkActivity: Array<{
-    url: string;
-    method: string;
-    status: number;
-    timestamp: number;
-  }>;
   
   // Page structure context
   pageStructure: Array<{
