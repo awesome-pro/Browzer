@@ -32,13 +32,9 @@ export class RecordingService implements IRecordingService {
       };
       
       this.recordingEngine.initializeWebviewRecording();
-      
       this.setupRecordingEventListeners();
-      
       this.addSessionManagerButton();
-      
       this.setupSessionManagerEventListeners();
-      
       this.isInitialized = true;  
     } catch (error) {
       console.error('[RecordingService] Failed to initialize recording system:', error);
@@ -51,28 +47,19 @@ export class RecordingService implements IRecordingService {
       const sessionId = (e as CustomEvent).detail?.sessionId || 
         this.recordingEngine.getActiveSession()?.id || 'unknown';
       
-      // Show the actions overlay when recording starts
       if (this.recordingActionsOverlay) {
         this.recordingActionsOverlay.show();
       }
-      
-      // Start native event monitoring
       this.startNativeEventMonitoring(sessionId);
-      
-      // Start webview recording
       this.notifyAllWebviews('start-recording', sessionId);
     });
     
     window.addEventListener('recording:stop', () => {
-      // Hide the actions overlay when recording stops
       if (this.recordingActionsOverlay) {
         this.recordingActionsOverlay.hide();
       }
       
-      // Stop native event monitoring
       this.stopNativeEventMonitoring();
-      
-      // Stop webview recording
       this.notifyAllWebviews('stop-recording');
     });
     
@@ -269,7 +256,6 @@ export class RecordingService implements IRecordingService {
           <div class="session-item-stats">
             <span>${this.formatDuration(session.metadata?.duration || 0)}</span>
             <span>${session.metadata?.totalActions || session.actions?.length || 0} actions</span>
-            <span>${session.metadata?.complexity || 'unknown'} complexity</span>
           </div>
         </div>
       `).join('');

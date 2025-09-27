@@ -206,24 +206,6 @@ class BrowzerApp {
         window.dispatchEvent(recordingEvent);
       }
     });
-    
-    // Handle native events from main process
-    const ipcRenderer = (window as any).electronAPI;
-    if (ipcRenderer && ipcRenderer.ipcOn) {
-      
-      // Forward native events to the recording engine
-      ipcRenderer.ipcOn('native-event', (eventData: any) => {
-        // Dispatch custom event for the recording system
-        try {
-          const nativeEvent = new CustomEvent('native-recording-event', {
-            detail: eventData
-          });
-          window.dispatchEvent(nativeEvent);
-        } catch (error) {
-          console.error('[Renderer] Failed to dispatch native event:', error);
-        }
-      });
-    }
   }
 
   private updateContextVisualIndicators(): void {

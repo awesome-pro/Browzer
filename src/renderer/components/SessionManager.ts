@@ -94,7 +94,6 @@ export class SessionManager {
                 <div class="session-item-stats">
                     <span>${this.formatDuration(session.metadata.duration)}</span>
                     <span>${session.metadata.totalActions} actions</span>
-                    <span>${session.metadata.complexity} complexity</span>
                 </div>
             </div>
         `).join('');
@@ -150,9 +149,6 @@ export class SessionManager {
                     <div class="session-metadata-label">Actions</div>
                     <div class="session-metadata-value">${session.metadata.totalActions}</div>
                 </div>
-                <div class="session-metadata-item">
-                    <div class="session-metadata-label">Complexity</div>
-                    <div class="session-metadata-value">${session.metadata.complexity}</div>
                 </div>
                 <div class="session-metadata-item">
                     <div class="session-metadata-label">Pages</div>

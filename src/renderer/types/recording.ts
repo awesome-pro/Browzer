@@ -15,8 +15,6 @@ export interface SmartSessionMetadata {
   totalActions: number;
   duration: number;
   pagesVisited: string[];
-  complexity: 'simple' | 'medium' | 'complex';
-  success: boolean; // Whether the task was completed successfully
 }
 
 export interface SemanticAction {

@@ -1,5 +1,10 @@
+import RecordingUtil from "./RecordingUtil";
 
-export function markdownToHtml(text: string): string {
+export {
+  RecordingUtil,
+}
+  
+  export function markdownToHtml(text: string): string {
     let html = text;
     
     // Escape HTML entities in content first, but preserve already-escaped entities
