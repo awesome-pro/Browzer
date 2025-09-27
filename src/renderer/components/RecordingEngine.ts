@@ -21,7 +21,7 @@ export class SmartRecordingEngine {
   
   private lastSignificantAction = 0;
   private readonly ACTION_TIMEOUT = 1000; // 1s to aggregate actions
-  private readonly TYPING_TIMEOUT = 2000; // 2.5s to aggregate typing actions
+  private readonly TYPING_TIMEOUT = 2800; // 2.5s to aggregate typing actions
   private readonly MIN_ACTION_GAP = 200; // Minimum gap between recorded actions
   
   // Semantic aggregation buffers
@@ -179,79 +179,100 @@ private handleWebviewNetwork(networkData: any): void {
 
 /**
  * Handle native events from the main process
- * These events bypass Content Security Policy restrictions
- * and work on sites like Linear.app, Google apps, GitHub, etc.
  */
 private handleNativeEvent(eventData: any): void {
   if (!this.isRecording || !this.activeSession) {
-    console.log('[RecordingEngine] Skipping event - not recording or no active session');
     return;
   }
   
-  if (!eventData) {
-    console.error('[RecordingEngine] Received undefined/null event data');
-    return;
-  }
-  
-  console.log('[RecordingEngine] Processing native event:', eventData.type, {
-    url: eventData.url,
-    title: eventData.title,
-    timestamp: eventData.timestamp
-  });
+  if (!eventData) return;
   
   try {
     // Process different types of native events
     switch (eventData.type) {
-      case 'navigation':
       case 'in_page_navigation':
       case 'history_push_state':
       case 'history_replace_state':
-        console.log('[RecordingEngine] Handling navigation event:', eventData.url);
         this.handleNativeNavigationEvent(eventData);
         break;
         
       case 'click':
       case 'mousedown':
       case 'mouseup':
-        console.log('[RecordingEngine] Handling click event');
         this.handleNativeClickEvent(eventData);
+        break;
+        
+      case 'focus':
+      case 'focusin':
+        this.handleNativeFocusEvent(eventData);
         break;
         
       case 'input':
       case 'change':
-        console.log('[RecordingEngine] Handling input event');
         this.handleInputEvent(eventData);
         break;
         
       case 'keydown':
       case 'keyup':
       case 'keypress':
-        console.log('[RecordingEngine] Handling key event');
         this.handleNativeKeyEvent(eventData);
         break;
         
       case 'submit':
-        console.log('[RecordingEngine] Handling form submit event');
         this.handleNativeFormSubmitEvent(eventData);
         break;
         
-      case 'react_synthetic_event':
-        console.log('[RecordingEngine] Handling React synthetic event');
+      case 'react_event':
         this.handleNativeReactEvent(eventData);
         break;
         
-      case 'dom_significant_change':
-        console.log('[RecordingEngine] Handling DOM change event');
+      case 'dom_change':
         this.handleNativeDOMChangeEvent(eventData);
         break;
         
       default:
-        console.log('[RecordingEngine] Handling generic event:', eventData.type);
-        // For other event types, create a generic action
         this.recordNativeAction(eventData);
     }
   } catch (error) {
-    console.error('[RecordingEngine] Error processing native event:', error);
+    console.error('[RecordingEngine] Error handling native event:', error);
+  }
+}
+
+/**
+ * Handle native focus events and track them for consolidation
+ */
+private handleNativeFocusEvent(eventData: any): void {
+  if (!eventData.target) return;
+  
+  // Convert to element context
+  const elementContext = this.convertNativeElementToElementContext(eventData.target);
+  const elementKey = this.generateElementKey(elementContext);
+  
+  // Add to recent focus events
+  this.recentFocusEvents.set(elementKey, {
+    timestamp: Date.now(),
+    elementContext: elementContext
+  });
+  
+  // For form elements, we might want to record the focus event
+  const isFormElement = ['input', 'textarea', 'select'].includes(eventData.target.tagName?.toLowerCase()) ||
+                       elementContext.role?.includes('textbox') || 
+                       elementContext.role?.includes('combobox');
+                       
+  if (isFormElement) {
+    // Create a semantic action for this focus
+    const action: SemanticAction = {
+      id: this.generateId(),
+      type: ActionType.FOCUS,
+      timestamp: Date.now(),
+      description: `Focus on ${elementContext.description}`,
+      target: elementContext,
+      context: this.capturePageContext(),
+      intent: 'interact'
+    };
+    
+    // Record the focus action for form elements
+    this.recordAction(action);
   }
 }
 
@@ -264,17 +285,12 @@ private handleNativeNavigationEvent(eventData: any): void {
     return;
   }
 
-  console.log('[RecordingEngine] Processing navigation to:', eventData.url);
-  
-  // Check if this is a duplicate or very recent navigation
   if (this.navigationBuffer && 
       (this.navigationBuffer.url === eventData.url || 
        Date.now() - this.navigationBuffer.timestamp < 500)) {
-    console.log('[RecordingEngine] Skipping duplicate or rapid navigation');
     return;
   }
   
-  // Update navigation buffer
   this.navigationBuffer = {
     url: eventData.url,
     timestamp: Date.now()
@@ -317,14 +333,53 @@ private processNavigationBuffer(eventData: any): void {
     domain = 'website';
   }
   
+  // Determine if this is a navigation from search results
+  let isFromSearchEngine = false;
+  let searchEngineDomain = '';
+  let fromDomain = '';
+  let navigationDescription = '';
+  
+  // Check if we have a previous page context to determine navigation source
+  if (this.lastPageContext && this.lastPageContext.url) {
+    try {
+      const previousUrl = new URL(this.lastPageContext.url);
+      fromDomain = previousUrl.hostname;
+      
+      // Check if coming from a search engine
+      if (fromDomain.includes('google.') || 
+          fromDomain.includes('bing.') || 
+          fromDomain.includes('yahoo.') || 
+          fromDomain.includes('duckduckgo.') || 
+          fromDomain.includes('baidu.')) {
+        isFromSearchEngine = true;
+        searchEngineDomain = fromDomain.replace('www.', '');
+      }
+    } catch (e) {
+      // Invalid URL, ignore
+    }
+  }
+  
+  // Create a more semantic navigation description
+  if (isFromSearchEngine) {
+    navigationDescription = `Navigate from ${searchEngineDomain} search results to ${domain}`;
+  } else if (fromDomain && fromDomain !== domain) {
+    navigationDescription = `Navigate from ${fromDomain.replace('www.', '')} to ${domain}`;
+  } else {
+    navigationDescription = `Navigate to ${eventData.title || domain}`;
+  }
+  
+  // Add URL information for clarity
+  const cleanUrl = this.cleanGoogleUrl(eventData.url);
+  const displayUrl = cleanUrl.length > 60 ? cleanUrl.substring(0, 57) + '...' : cleanUrl;
+  
   // Create a semantic action for this navigation
   const action: SemanticAction = {
     id: this.generateId(),
     type: ActionType.NAVIGATION,
     timestamp: eventData.timestamp || Date.now(),
-    description: `Navigate to ${eventData.title || domain}`,
+    description: navigationDescription,
     target: {
-      description: `Page: ${eventData.title || domain}`,
+      description: `navigation ("${eventData.title || domain}") in ${isFromSearchEngine ? 'search-result' : 'browser'}`,
       selector: '',
       xpath: '',
       role: 'page',
@@ -332,11 +387,17 @@ private processNavigationBuffer(eventData: any): void {
       isInteractive: false,
       context: 'navigation'
     },
+    value: JSON.stringify({
+      url: displayUrl,
+      title: eventData.title || '',
+      fromDomain: fromDomain || '',
+      toDomain: domain,
+      navigationType: isFromSearchEngine ? 'search_result' : 'direct_navigation'
+    }),
     context: pageContext,
     intent: 'navigate_to_page'
   };
   
-  console.log('[RecordingEngine] Recording navigation action:', action.description);
   this.recordAction(action);
   
   // Dispatch an event for the UI to update
@@ -351,7 +412,6 @@ private processNavigationBuffer(eventData: any): void {
   // Update pages visited
   if (this.activeSession && !this.activeSession.metadata.pagesVisited.includes(eventData.url)) {
     this.activeSession.metadata.pagesVisited.push(eventData.url);
-    console.log('[RecordingEngine] Updated visited pages list');
   }
   
   // Clear navigation buffer
@@ -361,9 +421,21 @@ private processNavigationBuffer(eventData: any): void {
 /**
  * Handle native click events with semantic aggregation
  */
-private handleNativeClickEvent(eventData: any): void {
-  if (!eventData.target) return;
-  if (eventData.type !== 'click') return; // Only process actual clicks, not mousedown/mouseup
+  // Track recent focus events to consolidate with clicks
+  private recentFocusEvents: Map<string, {timestamp: number, elementContext: any}> = new Map();
+  private readonly FOCUS_CLICK_CONSOLIDATION_WINDOW = 1500; // 1.5 seconds to consolidate focus+click
+  
+  private handleNativeClickEvent(eventData: any): void {
+    if (!eventData.target) return;
+    if (eventData.type !== 'click') return; // Only process actual clicks, not mousedown/mouseup
+    
+    // Clean up old focus events
+    const now = Date.now();
+    for (const [key, focusEvent] of this.recentFocusEvents.entries()) {
+      if (now - focusEvent.timestamp > this.FOCUS_CLICK_CONSOLIDATION_WINDOW) {
+        this.recentFocusEvents.delete(key);
+      }
+    }
   
   const target = eventData.target;
   
@@ -411,12 +483,25 @@ private processClickSequence(url: string, pageTitle: string): void {
   // Convert to element context
   const elementContext = this.convertNativeElementToElementContext(target);
   
+  // Check if we have a recent focus event on the same element
+  // Create a key based on element properties to match focus and click events
+  const elementKey = this.generateElementKey(elementContext);
+  const recentFocus = this.recentFocusEvents.get(elementKey);
+  
+  // Determine if this is a form element that might need focus tracking
+  const isFormElement = ['input', 'textarea', 'select'].includes(target.tagName?.toLowerCase()) ||
+                       elementContext.role?.includes('textbox') || 
+                       elementContext.role?.includes('combobox');
+  
   // Create a semantic action for this click
   const action: SemanticAction = {
     id: this.generateId(),
     type: ActionType.CLICK,
     timestamp: Date.now(),
-    description: `Click ${elementContext.description || target.tagName}`,
+    // If we had a recent focus on this element and it's not a form element, skip the "focus on" part
+    description: recentFocus && !isFormElement ? 
+      `Click ${elementContext.description || target.tagName}` : 
+      `Click ${elementContext.description || target.tagName}`,
     target: elementContext,
     context: {
       url: url,
@@ -428,6 +513,11 @@ private processClickSequence(url: string, pageTitle: string): void {
     },
     intent: this.inferIntent(ActionType.CLICK, elementContext)
   };
+  
+  // If we had a recent focus event on this element, remove it since we're recording the click
+  if (recentFocus) {
+    this.recentFocusEvents.delete(elementKey);
+  }
   
   // Record the action
   this.recordAction(action);
@@ -1114,11 +1204,7 @@ private cleanGoogleUrl(url: string): string {
         }
       }
       
-      // Reconstruct URL with only essential parameters
-      const cleanUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}${cleanParams.toString() ? '?' + cleanParams.toString() : ''}`;
-      
-      console.log(`🔧[RecordingEngine] Cleaned Google URL: ${url.substring(0, 100)}... → ${cleanUrl}`);
-      return cleanUrl;
+      return `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}${cleanParams.toString() ? '?' + cleanParams.toString() : ''}`;
     }
     
     return url;
@@ -1517,7 +1603,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     if (!finalValue?.trim() || finalValue.length < 2) return;
     
     // Check if this is a duplicate of a recent input to the same field
-    const inputKey = `input_${elementContext.selector}`;
     const lastInput = this.recentActions.find(a => 
       a.hash.includes(elementContext.selector) && 
       a.hash.includes('TYPE')
@@ -1954,7 +2039,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     );
     
     // Create a hash for the action to detect duplicates
-    const actionHash = this.createActionHash(action);
+    const actionHash = this.generateActionHash(action);
     
     // Check if we've seen this exact action recently
     const isDuplicate = this.recentActions.some(
@@ -1984,17 +2069,20 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     return true;
   }
 
-  private createActionHash(action: SemanticAction): string {
-    // Create a hash based on action type, target selector, and value
-    const hashData = {
-      type: action.type,
-      selector: action.target.selector,
-      value: action.value,
-      description: action.description
-    };
-    return JSON.stringify(hashData);
+  /**
+   * Generate a unique key for an element to match focus and click events
+   */
+  private generateElementKey(elementContext: any): string {
+    // Create a key based on element properties
+    const keyParts = [];
+    
+    if (elementContext.selector) keyParts.push(elementContext.selector);
+    if (elementContext.xpath) keyParts.push(elementContext.xpath);
+    if (elementContext.description) keyParts.push(elementContext.description);
+    
+    return keyParts.join('|');
   }
-
+  
   private isLowQualityAction(action: SemanticAction): boolean {
     // Filter out actions that don't provide meaningful workflow information
     
@@ -2072,15 +2160,73 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     const text = element.textContent?.trim().substring(0, 50) || '';
     const id = element.id;
     const className = element.className;
+    const role = element.getAttribute('role');
+    const type = element.getAttribute('type');
+    const name = element.getAttribute('name');
+    const href = element.getAttribute('href');
     
-    if (id) return `${tagName}#${id}${text ? ` (${text})` : ''}`;
-    if (text && text.length > 3) return `${tagName} "${text}"`;
-    if (className && typeof className === 'string') {
-      const mainClass = className.split(' ')[0];
-      return `${tagName}.${mainClass}`;
+    // Build a more semantic description
+    let description = '';
+    
+    // Start with the element type in a more readable format
+    if (tagName === 'a') {
+      description = 'link';
+    } else if (tagName === 'button' || type === 'button' || role === 'button') {
+      description = 'button';
+    } else if (tagName === 'input') {
+      if (type === 'text') description = 'text input';
+      else if (type === 'password') description = 'password input';
+      else if (type === 'email') description = 'email input';
+      else if (type === 'checkbox') description = 'checkbox';
+      else if (type === 'radio') description = 'radio button';
+      else if (type === 'submit') description = 'submit button';
+      else description = `${type || ''} input`;
+    } else if (tagName === 'textarea') {
+      description = 'textarea';
+    } else if (tagName === 'select') {
+      description = 'dropdown';
+    } else if (role) {
+      description = role;
+    } else {
+      description = tagName;
     }
     
-    return tagName;
+    // Add identifier information
+    if (id) {
+      description += ` #${id}`;
+    } else if (name) {
+      description += ` [name="${name}"]`;
+    } else if (className && typeof className === 'string' && className.trim()) {
+      // Use a more meaningful class if possible
+      const classes = className.split(' ').filter(c => c.trim());
+      if (classes.length > 0) {
+        // Try to find a semantic class name (avoid cryptic ones like zReHs)
+        const semanticClass = classes.find(c => c.length > 2 && !/^[a-z][A-Z0-9]/.test(c));
+        if (semanticClass) {
+          description += ` .${semanticClass}`;
+        }
+      }
+    }
+    
+    // Add text content if available
+    if (text && text.length > 0) {
+      description += ` "${text}"`;
+    }
+    
+    // For links, add href information if available
+    if (tagName === 'a' && href && !href.startsWith('javascript:')) {
+      try {
+        const url = new URL(href, window.location.href);
+        // Only include domain for external links
+        if (url.hostname !== window.location.hostname) {
+          description += ` to ${url.hostname.replace('www.', '')}`;
+        }
+      } catch (e) {
+        // Invalid URL, ignore
+      }
+    }
+    
+    return description;
   }
 
   private determineElementRole(element: Element): string {
@@ -2283,10 +2429,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     
     // Skip if we're recording too many actions too quickly
     const now = Date.now();
-    if (now - this.lastSignificantAction < this.MIN_ACTION_GAP) {
-      console.log('[RecordingEngine] Skipping action due to rate limiting:', action.description);
-      return;
-    }
+    if (now - this.lastSignificantAction < this.MIN_ACTION_GAP) return;
     
     // Generate a hash for deduplication
     const actionHash = this.generateActionHash(action);
@@ -2297,19 +2440,12 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       now - recent.timestamp < this.DEDUP_WINDOW
     );
     
-    if (isDuplicate) {
-      console.log('[RecordingEngine] Skipping duplicate action:', action.description);
-      return;
-    }
+    if (isDuplicate) return;
     
     // Apply semantic filtering based on action type
-    if (!this.isSemanticallySigificant(action)) {
-      console.log('[RecordingEngine] Skipping non-semantically significant action:', action.description);
-      return;
-    }
+    if (!this.isSemanticallySigificant(action)) return;
     
     // Record the action
-    console.log('[RecordingEngine] Recording semantic action:', action.description);
     this.activeSession.actions.push(action);
     
     // Update tracking variables
