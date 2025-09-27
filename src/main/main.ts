@@ -494,93 +494,10 @@ class BrowzerApp {
         return { success: false, message: 'Failed to clear imported data' };
       }
     });
-
-  // Webview Recording IPC Handlers
-    ipcMain.on('recording-action', (event, actionData) => {      
-      // Forward to all renderer processes (main windows)
-      BrowserWindow.getAllWindows().forEach(window => {
-        try {
-          window.webContents.send('webview-recording-action', actionData);
-        } catch (error) {
-          console.warn('[Main] Failed to forward recording action to window:', error);
-        }
-      });
-    });
     
-    // Initialize native event monitor
+
     const { initializeNativeEventMonitor } = require('./native-event-monitor');
     initializeNativeEventMonitor();
-
-      ipcMain.on('recording-context', (event, contextData) => {
-        
-        // Forward to all renderer processes
-        BrowserWindow.getAllWindows().forEach(window => {
-          try {
-            window.webContents.send('webview-recording-context', contextData);
-          } catch (error) {
-            console.warn('[Main] Failed to forward recording context to window:', error);
-          }
-        });
-      });
-
-      ipcMain.on('recording-network', (event, networkData) => {
-        
-        BrowserWindow.getAllWindows().forEach(window => {
-          try {
-            window.webContents.send('webview-recording-network', networkData);
-          } catch (error) {
-            console.warn('[Main] Failed to forward recording network event to window:', error);
-          }
-        });
-      });
-
-      ipcMain.handle('get-webview-preload-path', () => {
-        let preloadPath: string;
-        
-        if (app.isPackaged) {
-          // For packaged apps - FIXED PATH
-          preloadPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'preload', 'webview-preload.js');
-        } else {
-          // For development - use process.cwd() to get the project root
-          preloadPath = path.join(process.cwd(), 'dist', 'preload', 'webview-preload.js');
-        }    
-    // Check if file exists and provide detailed logging
-    const fs = require('fs');
-    if (fs.existsSync(preloadPath)) {
-
-    } else {
-      
-      // Try alternative paths with detailed logging
-      const alternativePaths = [
-        path.join(process.cwd(), 'dist', 'preload', 'webview-preload.js'),
-        path.join(__dirname, 'webview-preload.js'),
-        path.join(__dirname, '..', '..', 'dist', 'preload', 'webview-preload.js'),
-        path.resolve('./dist/preload/webview-preload.js')
-      ];
-      for (const altPath of alternativePaths) {
-        if (fs.existsSync(altPath)) {
-          return altPath;
-        }
-      }
-    
-      
-      // List contents of dist directory for debugging
-      try {
-        const distPath = path.join(process.cwd(), 'dist');
-        if (fs.existsSync(distPath)) {
-          const distContents = fs.readdirSync(distPath);
-          distContents.forEach((item: string) => {
-            const itemPath = path.join(distPath, item);
-            if (fs.statSync(itemPath).isDirectory()) {
-            }
-          });
-        }
-      } catch (e) {
-      }
-    }
-    
-    return preloadPath;
-  });
   }
 }
 

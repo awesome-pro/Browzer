@@ -59,10 +59,9 @@ export class WebviewService implements IWebviewService {
 
   public async configureWebview(webview: any, url: string): Promise<void> {
     try {
-      // CRITICAL FIX: Use contextIsolation=false and nodeIntegration=true for webview preload
       const webPreferencesArray = [
-        'contextIsolation=false',  // MUST be false for webview preload to work
-        'nodeIntegration=true',    // MUST be true for ipcRenderer access
+        'contextIsolation=false',
+        'nodeIntegration=true',
         'webSecurity=true',
         'sandbox=false',
         'javascript=true',
@@ -77,34 +76,18 @@ export class WebviewService implements IWebviewService {
       webview.setAttribute('nodeintegration', 'true');
       webview.setAttribute('disablewebsecurity', 'false');
       
-      const preloadPath = await this.ipcRenderer.invoke('get-webview-preload-path');
-      webview.setAttribute('preload', preloadPath);
-
       let finalUrl = url;
-      
       if (url === CONSTANTS.NEW_TAB_URL) {
         finalUrl = this.homepageUrl;
-
-      } else {
-        console.log('[WebviewManager] Setting regular URL:', finalUrl);
       }
       
       webview.setAttribute('src', finalUrl);
-      console.log('[WebviewManager] Configuration complete for URL:', finalUrl);
-      
     } catch (error) {
-      console.error('[WebviewManager] Failed to get preload path:', error);
-      if (url !== CONSTANTS.NEW_TAB_URL && !url.startsWith('file://browzer-settings')) {
-        webview.setAttribute('src', url);
-      } else {
-        webview.setAttribute('src', this.homepageUrl);
-      }
+      console.error('🔴 [WebviewService] Error configuring webview:', error);
     }
   }
 
   public setupWebviewEvents(webview: any): void {
-    console.log('[WebviewManager] Setting up webview events for:', webview.id);
-
     // Loading events
     webview.addEventListener('did-start-loading', () => {
       this.handleLoadingStart(webview);
@@ -121,7 +104,7 @@ export class WebviewService implements IWebviewService {
             this.handleTitleUpdate(webview, title);
           }
         } catch (error) {
-          console.log('[WebviewService] Could not get title via JS execution:', error);
+          console.error('🔴 [WebviewService] Could not get title via JS execution:', error);
         }
       }, 1000);
 
@@ -327,24 +310,6 @@ export class WebviewService implements IWebviewService {
   }
 
   private handleDomReady(webview: any): void {
-    
-    setTimeout(async () => {
-      try {
-        const testResult = await webview.executeJavaScript(`
-          (function() {
-            if (typeof window.__webviewRecorder !== 'undefined') {
-              return { success: true, message: 'Preload script loaded' };
-            } else {
-              return { success: false, message: 'Preload script missing' };
-            }
-          })();
-        `);
-      } catch (error) {
-        console.error('[WebviewManager] Failed to test preload script:', error);
-      }
-    }, 1000);
-    
-    // Register webview with native event monitor
     try {
       const webContentsId = webview.getWebContentsId();
       if (webContentsId) {

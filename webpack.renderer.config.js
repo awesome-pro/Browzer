@@ -75,41 +75,6 @@ module.exports = (env, argv) => {
         __dirname: false,
         __filename: false,
       },
-    },
-
-    {
-      target: 'electron-preload',
-      entry: './src/preload/webview-preload.ts',
-      mode: isProduction ? 'production' : 'development',
-      module: {
-        rules: [
-          {
-            test: /\.tsx?$/,
-            use: 'ts-loader',
-            exclude: /node_modules/,
-          },
-        ],
-      },
-      resolve: {
-        extensions: ['.tsx', '.ts', '.js'],
-        alias: {
-          '@': path.resolve(__dirname, 'src'),
-          '@shared': path.resolve(__dirname, 'src/shared'),
-        },
-      },
-      output: {
-        filename: 'webview-preload.js',
-        path: path.resolve(__dirname, 'dist/preload'),
-        // Remove library config for webview preload - it should be a standalone script
-        globalObject: 'this'
-      },
-      node: {
-        __dirname: false,
-        __filename: false,
-      },
-      externals: {
-        'electron': 'commonjs electron'
-      }
     }
   ];
 };
