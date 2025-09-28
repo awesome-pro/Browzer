@@ -288,7 +288,7 @@ ${this.extractProvenSelectors(session)}
 
   private static mapToUnifiedAction(legacyActionType: string): ActionType {
     const actionMap: Record<string, ActionType> = {
-        'type': ActionType.TYPE,
+      'type': ActionType.TYPE,
       'click': ActionType.CLICK,
       'select': ActionType.SELECT,
       'toggle': ActionType.TOGGLE,
@@ -297,7 +297,8 @@ ${this.extractProvenSelectors(session)}
       'scroll': ActionType.SCROLL,
       'focus': ActionType.FOCUS,
       'blur': ActionType.BLUR,
-      'wait': ActionType.WAIT
+      'wait': ActionType.WAIT,
+      'keypress': ActionType.KEYPRESS
     };
     
     return actionMap[legacyActionType] || ActionType.CLICK;
@@ -318,7 +319,7 @@ ${this.extractProvenSelectors(session)}
     
     // Add contexts from significant actions only
     session.actions
-      .filter(action => ['click', 'type', 'select', 'submit', 'navigate'].includes(this.mapToUnifiedAction(action.type)))
+      .filter(action => ['click', 'type', 'select', 'submit', 'navigate', 'keypress'].includes(this.mapToUnifiedAction(action.type)))
       .forEach(action => {
         if (action.context && !structures.has(action.context.url)) {
           structures.set(action.context.url, {

@@ -995,27 +995,90 @@ private convertElementContext(nativeElement: any): ElementContext {
     };
   }
   
+  const isSvg = nativeElement.isSvg || nativeElement.tagName?.toLowerCase() === 'svg';
+  
   let description = 'element: ' + nativeElement.tagName?.toLowerCase() + '| ';
   
-  if (nativeElement.type && nativeElement.type !== description) {
-    description = `${nativeElement.type} ${description}`;
+  if (isSvg && nativeElement.parentInteractiveElement) {
+    const parent = nativeElement.parentInteractiveElement;
+    
+    if (parent.id) {
+      description += `parent-id: #${parent.id}| `;
+    }
+    
+    if (parent.className) {
+      description += `parent-class: ${parent.className}| `;
+    }
+    
+    if (parent.role) {
+      description += `parent-role: ${parent.role}| `;
+    }
+    
+    // Add text content from parent or nearest text
+    if (parent.text) {
+      description += `text: "${parent.text.substring(0, 30)}${parent.text.length > 30 ? '...' : ''}"| `;
+    } else if (nativeElement.nearestTextContent) {
+      description += `text: "${nativeElement.nearestTextContent.substring(0, 30)}${nativeElement.nearestTextContent.length > 30 ? '...' : ''}"| `;
+    }
+    
+    if (parent.ariaLabel) {
+      description += `aria-label: ${parent.ariaLabel}| `;
+    }
+  } else {
+    if (nativeElement.type && nativeElement.type !== description) {
+      description = `${nativeElement.type} ${description}`;
+    }
+    
+    if (nativeElement.id) {
+      description += `id: #${nativeElement.id}| `;
+    } else if (nativeElement.className) {
+      description += `class: ${nativeElement.className}| `;
+    } 
+    
+    if (nativeElement.name) {
+      description += `name: ${nativeElement.name}| `;
+    }
+    
+    if (nativeElement.text) {
+      description += `text: "${nativeElement.text.substring(0, 30)}${nativeElement.text.length > 30 ? '...' : ''}"| `;
+    }
+    
+    if (nativeElement.attributes && nativeElement.attributes['aria-label']) {
+      description += `aria-label: ${nativeElement.attributes['aria-label']}| `;
+    }
   }
-  if (nativeElement.id) {
-    description += `id: #${nativeElement.id}| `;
-  } else if (nativeElement.className) {
-    description += `class: ${nativeElement.className.toString()}| `;
-  } 
-  if (nativeElement.name) {
-    description += `name: ${nativeElement.name}| `;
+  
+  // Add SVG-specific data to the description if available
+  if (isSvg && nativeElement.svgData) {
+    if (nativeElement.svgData.id) {
+      description += `svg-id: ${nativeElement.svgData.id}| `;
+    }
+    
+    if (nativeElement.dataAttributes) {
+      const testIds = Object.entries(nativeElement.dataAttributes)
+        .filter(([key]) => key.includes('test') || key.includes('id') || key.includes('qa'))
+        .map(([key, value]) => `${key}="${value}"`)
+        .join(', ');
+      
+      if (testIds) {
+        description += `data: ${testIds}| `;
+      }
+    }
   }
-  if (nativeElement.text) {
-    description += `text: "${nativeElement.text.substring(0, 30)}${nativeElement.text.length > 30 ? '...' : ''}"| `;
-  }
-  if (nativeElement.attributes && nativeElement.attributes['aria-label']) {
-    description += `aria-label: ${nativeElement.attributes['aria-label']}| `;
-  }
+  
   let selector = this.generateCompleteSelector(nativeElement);
-  let role = nativeElement.attributes?.role || 'generic';
+  let role = nativeElement.role || nativeElement.attributes?.role || 'generic';
+  
+  // For SVG elements, enhance the selector with parent information if available
+  if (isSvg && nativeElement.parentInteractiveElement) {
+    const parent = nativeElement.parentInteractiveElement;
+    if (parent.id) {
+      selector = `#${parent.id} ${selector}`;
+    } else if (parent.className) {
+      const mainClass = parent.className.split(' ')[0];
+      selector = `.${mainClass} ${selector}`;
+    }
+  }
   
   return {
     description,
@@ -1023,11 +1086,18 @@ private convertElementContext(nativeElement: any): ElementContext {
     xpath: '',
     role: role,
     boundingRect: nativeElement.boundingRect || { x: 0, y: 0, width: 0, height: 0 },
-    isVisible: true,
-    isInteractive: true,
+    isVisible: nativeElement.isVisible !== false,
+    isInteractive: nativeElement.isInteractive !== false,
     context: 'native_event',
     elementType: nativeElement.type || nativeElement.tagName?.toLowerCase(),
-    text: nativeElement.text
+    text: nativeElement.text || nativeElement.nearestTextContent,
+    parentElement: nativeElement.parentInteractiveElement ? {
+      tagName: nativeElement.parentInteractiveElement.tagName,
+      id: nativeElement.parentInteractiveElement.id,
+      className: nativeElement.parentInteractiveElement.className,
+      text: nativeElement.parentInteractiveElement.text
+    } : undefined,
+    svgData: nativeElement.svgData
   };
 }
 
@@ -1411,9 +1481,10 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     if (action.type === ActionType.TYPE && action.value && typeof action.value === 'string' && action.value.length > 2) {
       return true;
     }
-    if (action.type === ActionType.KEYPRESS && action.value && typeof action.value === 'string' && 
-        ['Enter', 'Escape', 'Tab'].includes(action.value)) {
-      return true;
+    if (action.type === ActionType.KEYPRESS && action.value && typeof action.value === 'string') {
+      // Include all special keys that are detected in handleKeyEvent
+      const specialKeys = ['Enter', 'Escape', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Delete', 'Ctrl', 'Alt', 'Shift'];
+      return specialKeys.includes(action.value);
     }
     if (action.type === ActionType.DYNAMIC_CONTENT) {
       return action.description.includes('loaded') || action.description.includes('updated');

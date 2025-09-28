@@ -64,6 +64,22 @@ export interface ElementContext {
     text?: string;
     href?: string;
   };
+  
+  // SVG-specific properties
+  svgData?: {
+    id?: string;
+    viewBox?: string;
+    path?: string;
+    use?: string;
+  };
+  
+  // Parent interactive element for SVG icons
+  parentElement?: {
+    tagName: string;
+    id?: string;
+    className?: string;
+    text?: string;
+  };
 }
 
 export interface PageContext {

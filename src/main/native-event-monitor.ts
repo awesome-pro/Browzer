@@ -228,6 +228,46 @@ export class NativeEventMonitor {
                                rect.width === 0 || 
                                rect.height === 0);
               
+              const isSvg = element.tagName.toLowerCase() === 'svg' || element.ownerSVGElement != null;
+              
+              let parentInteractiveElement = null;
+              if (isSvg) {
+                let currentEl = element;
+                let depth = 0;
+                while (currentEl && depth < 3) {
+                  const parent = currentEl.parentElement;
+                  if (parent && (parent.tagName.toLowerCase() === 'button' || 
+                                parent.tagName.toLowerCase() === 'a' || 
+                                parent.getAttribute('role') === 'button' || 
+                                parent.getAttribute('role') === 'link' ||
+                                parent.onclick)) {
+                    parentInteractiveElement = parent;
+                    break;
+                  }
+                  currentEl = parent;
+                  depth++;
+                }
+              }
+              
+              let classNameStr = null;
+              if (element.className) {
+                if (typeof element.className === 'string') {
+                  classNameStr = element.className;
+                } else if (isSvg && element.className.baseVal !== undefined) {
+                  classNameStr = element.className.baseVal;
+                }
+              }
+              
+              let svgData = null;
+              if (isSvg) {
+                svgData = {
+                  id: element.id || null,
+                  viewBox: element.getAttribute('viewBox') || null,
+                  path: element.querySelector('path')?.getAttribute('d') || null,
+                  use: element.querySelector('use')?.getAttribute('href') || null
+                };
+              }
+              
               let role = element.getAttribute('role');
               if (!role) {
                 const tagName = element.tagName.toLowerCase();
@@ -242,20 +282,40 @@ export class NativeEventMonitor {
                 else if (tagName === 'select') role = 'combobox';
                 else if (tagName === 'textarea') role = 'textbox';
                 else if (tagName === 'img') role = 'img';
+                else if (tagName === 'svg') role = 'image';
                 else if (tagName === 'h1' || tagName === 'h2' || tagName === 'h3' || 
                          tagName === 'h4' || tagName === 'h5' || tagName === 'h6') role = 'heading';
               }
+              
+              const dataAttributes = {};
+              Array.from(element.attributes || []).forEach(attr => {
+                if (attr.name.startsWith('data-')) {
+                  dataAttributes[attr.name] = attr.value;
+                }
+              });
               
               let parentContext = null;
               try {
                 const parentElement = element.parentElement;
                 if (parentElement && parentElement.tagName) {
+                  let parentClassNameStr = null;
+                  if (parentElement.className) {
+                    if (typeof parentElement.className === 'string') {
+                      parentClassNameStr = parentElement.className;
+                    } else if (parentElement.className.baseVal !== undefined) {
+                      parentClassNameStr = parentElement.className.baseVal;
+                    }
+                  }
+                  
                   parentContext = {
                     tagName: parentElement.tagName.toLowerCase(),
                     id: parentElement.id || null,
-                    className: parentElement.className?.toString() || null,
+                    className: parentClassNameStr,
                     role: parentElement.getAttribute('role') || null,
                     href: parentElement.getAttribute('href') || null,
+                    onclick: !!parentElement.onclick,
+                    ariaLabel: parentElement.getAttribute('aria-label') || null,
+                    title: parentElement.title || null
                   };
                 }
               } catch (e) { /* Ignore parent context errors */ }
@@ -273,10 +333,30 @@ export class NativeEventMonitor {
                 }
               } catch (e) { /* Ignore form context errors */ }
               
+              // Find nearest element with text for SVG icons
+              let nearestTextContent = null;
+              if (isSvg && !element.textContent?.trim()) {
+                // Look for sibling elements with text
+                if (parentInteractiveElement) {
+                  const siblings = Array.from(parentInteractiveElement.childNodes);
+                  for (const sibling of siblings) {
+                    if (sibling !== element && sibling.textContent?.trim()) {
+                      nearestTextContent = sibling.textContent.trim().substring(0, 100);
+                      break;
+                    }
+                  }
+                  
+                  // If no sibling has text, use parent's text
+                  if (!nearestTextContent && parentInteractiveElement.textContent?.trim()) {
+                    nearestTextContent = parentInteractiveElement.textContent.trim().substring(0, 100);
+                  }
+                }
+              }
+              
               return {
                 tagName: element.tagName.toLowerCase(),
                 id: element.id || null,
-                className: element.className?.toString() || null,
+                className: classNameStr,
                 type: element.type || null,
                 name: element.name || null,
                 value: element.value || null,
@@ -303,6 +383,21 @@ export class NativeEventMonitor {
                   obj[attr.name] = attr.value;
                   return obj;
                 }, {}),
+                dataAttributes: Object.keys(dataAttributes).length > 0 ? dataAttributes : null,
+                svgData: svgData,
+                isSvg: isSvg,
+                nearestTextContent: nearestTextContent,
+                parentInteractiveElement: parentInteractiveElement ? {
+                  tagName: parentInteractiveElement.tagName.toLowerCase(),
+                  id: parentInteractiveElement.id || null,
+                  className: typeof parentInteractiveElement.className === 'string' ? 
+                             parentInteractiveElement.className : 
+                             (parentInteractiveElement.className?.baseVal || null),
+                  role: parentInteractiveElement.getAttribute('role') || null,
+                  text: parentInteractiveElement.textContent?.trim().substring(0, 100) || null,
+                  ariaLabel: parentInteractiveElement.getAttribute('aria-label') || null,
+                  title: parentInteractiveElement.title || null
+                } : null,
                 boundingRect: {
                   x: rect.x,
                   y: rect.y,
@@ -325,6 +420,7 @@ export class NativeEventMonitor {
                 formContext: formContext
               };
             } catch (e) {
+              console.error('Error in captureElement:', e);
               return { tagName: element.tagName.toLowerCase() };
             }
           }
