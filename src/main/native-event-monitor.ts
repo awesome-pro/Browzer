@@ -115,16 +115,12 @@ export class NativeEventMonitor {
   private handleNavigation = (event: any, url: string): void => {
     if (!this.isRecording) return;
   
-    if (!event || !event.sender) {
-      console.error('[NativeEventMonitor] Navigation event has no sender');
-      return;
-    }
+    if (!event || !event.sender) return;
     
     const webContents = event.sender as WebContents;
     const webContentsId = webContents.id;
-    if (!this.monitoredWebContents.has(webContentsId)) {
-      return;
-    }
+    if (!this.monitoredWebContents.has(webContentsId)) return;
+    
     this.sendEventToRenderer({
       type: 'navigation',
       url,
@@ -258,7 +254,8 @@ export class NativeEventMonitor {
                     tagName: parentElement.tagName.toLowerCase(),
                     id: parentElement.id || null,
                     className: parentElement.className?.toString() || null,
-                    role: parentElement.getAttribute('role') || null
+                    role: parentElement.getAttribute('role') || null,
+                    href: parentElement.getAttribute('href') || null,
                   };
                 }
               } catch (e) { /* Ignore parent context errors */ }
@@ -350,7 +347,7 @@ export class NativeEventMonitor {
               
               window.__lastScrollPosition = { x: window.scrollX, y: window.scrollY };
             }
-            
+              
             const eventData = {
               type: event.type,
               timestamp: Date.now(),
@@ -383,7 +380,7 @@ export class NativeEventMonitor {
                 volume: mediaElement.volume
               };
             }
-            
+
             console.log('__NATIVE_EVENT__:' + JSON.stringify(eventData));
           }
           

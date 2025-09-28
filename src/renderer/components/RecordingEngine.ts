@@ -41,7 +41,7 @@ export class SmartRecordingEngine {
   private initializeWebviewEventHandlers(): void {
     const ipcRenderer = (window as any).electronAPI;
     if (ipcRenderer && ipcRenderer.ipcOn) {
-      ipcRenderer.ipcOn('webview-recording-action', (actionData: any) => {
+      ipcRenderer.ipcOn('recording-action', (actionData: any) => {
         this.handleWebviewAction(actionData);
       });
       
@@ -50,7 +50,7 @@ export class SmartRecordingEngine {
       });
       
     } else {
-      console.warn('[RecordingEngine] IPC renderer not available for webview events');
+      console.warn('❌[RecordingEngine] IPC renderer not available for webview events');
     }
   }
 
@@ -95,7 +95,7 @@ private handleWebviewAction(actionData: any): void {
       )
     };
     if (this.shouldRecordAction(action)) {
-      window.dispatchEvent(new CustomEvent('webview-recording-action', {
+      window.dispatchEvent(new CustomEvent('recording-action', {
         detail: {
           type: actionType,
           description: description,
@@ -177,54 +177,54 @@ private handleEvent(eventData: any): void {
         this.handleDropEvent(eventData);
         break;
       case 'modal_open':
-      case 'dialog_open':
-        console.log('Modal open:', eventData);
-        break;
-      case 'modal_close':
-      case 'dialog_close':
-      case 'cancel':
-      case 'close':
-        console.log('Modal close:', eventData);
-        break;
+        case 'dialog_open':
+          // console.log('Modal open:', eventData);
+          break;
+        case 'modal_close':
+        case 'dialog_close':
+        case 'cancel':
+        case 'close':
+          // console.log('Modal close:', eventData);
+          break;
       case 'dom_change':
       case 'dynamic_content_change':
-      case 'dom_significant_change':
-        console.log('DOM change:', eventData);
-        break;
-      case 'animation_start':
-      case 'animation_end':
-      case 'transition_end':
-        this.handleAnimationEvent(eventData);
-        break;
-      case 'play':
-        console.log('Media play:', eventData);
-        break;
-      case 'pause':
-        console.log('Media pause:', eventData);
-        break;
-      case 'ended':
-        console.log('Media ended:', eventData);
-        break;
-      case 'touch_start':
-      case 'touch_end':
-      case 'touch_move':
-        console.log('Touch event:', eventData);
-        break;
-      case 'copy':
-      case 'cut':
-      case 'paste':
-        this.handleClipboardEvent(eventData);
-        break;
-      case 'async_request_start':
-        console.log('Async request start:', eventData);
-        break;
-      case 'async_request_complete':
-        console.log('Async request complete:', eventData);
-        break;
-      case 'async_request_error':
-        console.log('Async request error:', eventData);
-        break;
-      default:
+        case 'dom_significant_change':
+          // console.log('DOM change:', eventData);
+          break;
+        case 'animation_start':
+        case 'animation_end':
+        case 'transition_end':
+          this.handleAnimationEvent(eventData);
+          break;
+        case 'play':
+          // console.log('Media play:', eventData);
+          break;
+        case 'pause':
+          // console.log('Media pause:', eventData);
+          break;
+        case 'ended':
+          // console.log('Media ended:', eventData);
+          break;
+        case 'touch_start':
+        case 'touch_end':
+        case 'touch_move':
+          // console.log('Touch event:', eventData);
+          break;
+        case 'copy':
+        case 'cut':
+        case 'paste':
+          this.handleClipboardEvent(eventData);
+          break;
+        case 'async_request_start':
+          // console.log('Async request start:', eventData);
+          break;
+        case 'async_request_complete':
+          // console.log('Async request complete:', eventData);
+          break;
+        case 'async_request_error':
+          // console.log('Async request error:', eventData);
+          break;
+        default:
         this.recordDefaultAction(eventData);
     }
   } catch (error) {
@@ -283,6 +283,7 @@ private processNavigationBuffer(eventData: any): void {
   if (!this.navigationBuffer || this.navigationBuffer.url !== eventData.url) {
     return;
   }
+  console.log("eventdata1: ", eventData)
   const pageContext = {
     url: eventData.url,
     title: eventData.title || 'Unknown Page',
@@ -299,61 +300,35 @@ private processNavigationBuffer(eventData: any): void {
   } catch (e) {
     domain = 'website';
   }
-  let isFromSearchEngine = false;
-  let searchEngineDomain = '';
-  let fromDomain = '';
   let navigationDescription = '';
-  if (this.lastPageContext && this.lastPageContext.url) {
-    try {
-      const previousUrl = new URL(this.lastPageContext.url);
-      fromDomain = previousUrl.hostname;
-      if (fromDomain.includes('google.') || 
-          fromDomain.includes('bing.') || 
-          fromDomain.includes('yahoo.') || 
-          fromDomain.includes('duckduckgo.') || 
-          fromDomain.includes('baidu.')) {
-        isFromSearchEngine = true;
-        searchEngineDomain = fromDomain.replace('www.', '');
-      }
-    } catch (e) {
-    }
-  }
-  if (isFromSearchEngine) {
-    navigationDescription = `Navigate from ${searchEngineDomain} search results to ${domain}`;
-  } else if (fromDomain && fromDomain !== domain) {
-    navigationDescription = `Navigate from ${fromDomain.replace('www.', '')} to ${domain}`;
-  } else {
-    navigationDescription = `Navigate to ${eventData.title || domain}`;
-  }
+  navigationDescription = `Navigate to "${eventData.url}"`;
   const cleanUrl = RecordingUtil.cleanGoogleUrl(eventData.url);
-  const displayUrl = cleanUrl.length > 60 ? cleanUrl.substring(0, 57) + '...' : cleanUrl;
+  
   const action: SemanticAction = {
     id: this.generateId(),
     type: ActionType.NAVIGATION,
     timestamp: eventData.timestamp || Date.now(),
     description: navigationDescription,
     target: {
-      description: `navigation ("${eventData.title || domain}") in ${isFromSearchEngine ? 'search-result' : 'browser'}`,
+      description: `Navigation "${eventData.url}"`,
       selector: '',
       xpath: '',
       role: 'page',
       isVisible: true,
       isInteractive: false,
-      context: 'navigation'
+      context: 'navigation',
+      url: eventData.url
     },
     value: JSON.stringify({
-      url: displayUrl,
+      url: cleanUrl,
       title: eventData.title || '',
-      fromDomain: fromDomain || '',
-      toDomain: domain,
-      navigationType: isFromSearchEngine ? 'search_result' : 'direct_navigation'
     }),
     context: pageContext,
     intent: 'navigate_to_page'
   };
   
   this.recordAction(action);
-  window.dispatchEvent(new CustomEvent('webview-recording-action', {
+  window.dispatchEvent(new CustomEvent('recording-action', {
     detail: {
       type: ActionType.NAVIGATION,
       description: action.description,
@@ -399,42 +374,147 @@ private processClickSequence(url: string, pageTitle: string): void {
     return;
   }
   const target = this.findMostSignificantClick();
+  const linkElement = RecordingUtil.findLinkElementInHierarchy(target);
   const elementContext = this.convertElementContext(target);
   const elementKey = this.generateElementKey(elementContext);
   const recentFocus = this.recentFocusEvents.get(elementKey);
-  const isFormElement = ['input', 'textarea', 'select'].includes(target.tagName?.toLowerCase()) ||
-                       elementContext.role?.includes('textbox') || 
-                       elementContext.role?.includes('combobox');
-  const action: SemanticAction = {
-    id: this.generateId(),
-    type: ActionType.CLICK,
-    timestamp: Date.now(),
-    description: recentFocus && !isFormElement ? 
-      `Click ${elementContext.description || target.tagName}` : 
-      `Click ${elementContext.description || target.tagName}`,
-    target: elementContext,
-    context: {
-      url: url,
-      title: pageTitle || 'Unknown Page',
+  const isNavigationClick = linkElement && linkElement.href && linkElement.href !== url;
+  
+  if (isNavigationClick) {
+    const targetUrl = isNavigationClick && linkElement ? linkElement.href : (target.href || '');
+    const linkText = isNavigationClick && linkElement ? 
+      (linkElement.href || linkElement.title) : 
+      (target.href || target.title);
+
+    const navigationAction: SemanticAction = {
+      id: this.generateId(),
+      type: ActionType.NAVIGATION,
       timestamp: Date.now(),
-      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
-      userAgent: navigator.userAgent,
-      keyElements: []
-    },
-    intent: this.inferIntent(ActionType.CLICK, elementContext)
-  };
-  if (recentFocus) {
-    this.recentFocusEvents.delete(elementKey);
-  }
-  this.recordAction(action);
-  window.dispatchEvent(new CustomEvent('webview-recording-action', {
-    detail: {
+      description: `Click "${elementContext.selector}" navigating to > "${RecordingUtil.cleanGoogleUrl(linkText ?? targetUrl)}"`,
+      target: {
+        description: `Click "${elementContext.selector}" leading navigation to > "${RecordingUtil.cleanGoogleUrl(linkText ?? targetUrl)}"`,
+        selector: isNavigationClick && linkElement ? this.generateCompleteSelector(linkElement) : '',
+        xpath: '',
+        role: 'page',
+        isVisible: true,
+        isInteractive: false,
+        context: 'navigation',
+        url: targetUrl
+      },
+      value: JSON.stringify({
+        url: RecordingUtil.cleanGoogleUrl(targetUrl),
+        clickedElement: elementContext.description
+      }),
+      context: {
+        url: url,
+        title: pageTitle || 'Unknown Page',
+        timestamp: Date.now(),
+        viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+        userAgent: navigator.userAgent,
+        keyElements: []
+      },
+      intent: 'navigate_to_page'
+    };
+    
+    this.recordAction(navigationAction);
+    window.dispatchEvent(new CustomEvent('recording-action', {
+      detail: {
+        type: ActionType.NAVIGATION,
+        description: navigationAction.description,
+        timestamp: navigationAction.timestamp
+      }
+    }));
+  } else {
+
+    const action: SemanticAction = {
+      id: this.generateId(),
       type: ActionType.CLICK,
-      description: action.description,
-      timestamp: action.timestamp
+      timestamp: Date.now(),
+      description: `Click "${elementContext.description}`,
+      target: elementContext,
+      context: {
+        url: url,
+        title: pageTitle || 'Unknown Page',
+        timestamp: Date.now(),
+        viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+        userAgent: navigator.userAgent,
+        keyElements: []
+      },
+      intent: this.inferIntent(ActionType.CLICK, elementContext)
+    };
+    if (recentFocus) {
+      this.recentFocusEvents.delete(elementKey);
     }
-  }));
+    this.recordAction(action);
+    window.dispatchEvent(new CustomEvent('recording-action', {
+      detail: {
+        type: ActionType.CLICK,
+        description: action.description,
+        timestamp: action.timestamp
+      }
+    }));
+  }
   this.clickSequence = [];
+}
+
+private generateCompleteSelector(element: any): string {
+  try {
+    if (!element) return '';
+    let selector = '';
+    if (element.tagName && typeof element.tagName === 'string') {
+      selector = `element ${element.tagName.toLowerCase()}| `;
+    }
+    if (element.id && typeof element.id === 'string') {
+       return selector += `id: ${element.id}`;
+    }
+    if (element.attributes && typeof element.attributes !== 'undefined') {
+      try {
+        const attributes = Array.from(element.attributes) as Array<{name: string, value: string}>;
+        for (const attr of attributes) {
+          if (attr && attr.name && typeof attr.name === 'string' && 
+              (attr.name.startsWith('data-') || 
+               attr.name === 'name' || 
+               attr.name === 'role' || 
+               attr.name === 'aria-label')) {
+            
+            const attrValue = attr.value && typeof attr.value === 'string' ? attr.value : '';
+            selector += `[${attr.name}="${attrValue}"]| `;
+            if (attr.name.startsWith('data-test') || 
+                attr.name.startsWith('data-cy') || 
+                attr.name.startsWith('data-qa')) {
+              return selector;
+            }
+          }
+        }
+      } catch (attrError) {
+        console.error('[RecordingEngine] Error processing attributes:', attrError);
+      }
+    }
+    if (element.className && typeof element.className === 'string') {
+      selector += `class: ${element.className}| `;
+    }
+    try {
+      const parent = element.parentElement || element.parentContext;
+      if (parent && parent.children && Array.isArray(parent.children)) {
+        try {
+          const siblings = Array.from(parent.children);
+          const index = siblings.indexOf(element);
+          if (index !== -1) {
+            selector += `:nth-child(${index + 1})`;
+          }
+        } catch (siblingError) {
+          console.error('[RecordingEngine] Error processing siblings:', siblingError);
+        }
+      }
+    } catch (parentError) {
+      console.error('[RecordingEngine] Error accessing parent:', parentError);
+    }
+    
+    return selector || element.tagName?.toLowerCase() || 'unknown';
+  } catch (error) {
+    console.error('[RecordingEngine] Error in generateCompleteSelector:', error);
+    return element.tagName?.toLowerCase() || 'unknown';
+  }
 }
 
 private findMostSignificantClick(): any {
@@ -466,9 +546,9 @@ private processInputBuffer(inputIdentifier: string, url: string, pageTitle: stri
     id: this.generateId(),
     type: ActionType.TYPE,
     timestamp: Date.now(),
-    description: `Enter "${this.maskSensitiveValue(value)}" in ${elementContext.description || element.tagName}`,
+    description: `Enter "${value}" in "${elementContext.description}"`,
     target: elementContext,
-    value: this.maskSensitiveValue(value),
+    value: value,
     context: {
       url: url,
       title: pageTitle || 'Unknown Page',
@@ -481,7 +561,7 @@ private processInputBuffer(inputIdentifier: string, url: string, pageTitle: stri
   };
   this.recordAction(action);
   this.inputBuffer.delete(inputIdentifier);
-  window.dispatchEvent(new CustomEvent('webview-recording-action', {
+  window.dispatchEvent(new CustomEvent('recording-action', {
     detail: {
       type: ActionType.TYPE,
       description: action.description,
@@ -510,9 +590,10 @@ private handleInputEvent(eventData: any): void {
 private handleKeyEvent(eventData: any): void {
   if (!eventData.target || !eventData.key) return;
   if (eventData.type !== 'keydown') return;
-  const specialKeys = ['Enter', 'Escape', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+  const specialKeys = ['Enter', 'Escape', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Delete', 'Ctrl', 'Alt', 'Shift'];
   if (!specialKeys.includes(eventData.key)) return;
-  if (eventData.key === 'Enter' && this.isFormElement(eventData.target)) {
+  if (eventData.key === 'Enter' && this.isFormElement(eventData.target) && 
+      this.hasVisibleSubmitButton(eventData.target)) {
     return;
   }
   
@@ -529,7 +610,7 @@ private handleKeyEvent(eventData: any): void {
     intent = 'cancel_action';
   } else if (eventData.key.startsWith('Arrow')) {
     const direction = eventData.key.replace('Arrow', '').toLowerCase();
-    description = `Navigate ${direction} using keyboard`;
+    description = `Navigate "${direction}" using keyboard`;
   }
   
   const action: SemanticAction = {
@@ -551,7 +632,7 @@ private handleKeyEvent(eventData: any): void {
   };
   
   this.recordAction(action);
-  window.dispatchEvent(new CustomEvent('webview-recording-action', {
+  window.dispatchEvent(new CustomEvent('recording-action', {
     detail: {
       type: ActionType.KEYPRESS,
       description: action.description,
@@ -569,27 +650,73 @@ private isFormElement(element: any): boolean {
   return formTags.includes(tagName) || element.form != null;
 }
 
+private hasVisibleSubmitButton(element: any): boolean {
+  try {
+    const form = element.form || (element.tagName?.toLowerCase() === 'form' ? element : null);
+    if (!form) return false;
+    const submitButtons = form.querySelectorAll('button[type="submit"], input[type="submit"]');
+    return submitButtons.length > 0;
+  } catch (e) {
+    return false;
+  }
+}
+
 private handleFormSubmitEvent(eventData: any): void {
   if (!eventData.target) return;
   
   const target = eventData.target;
+  const now = Date.now();
+  const recentClickThreshold = 800; // ms - Increased to catch more cases
+  let hasRecentSubmitButtonClick = false;
+  const recentActions = this.recentActions.filter(action => now - action.timestamp < recentClickThreshold);
+  for (const action of recentActions) {
+    const actionHash = action.hash;
+    if (actionHash.includes('submit') || 
+        actionHash.includes('form') || 
+        actionHash.includes('create') || 
+        actionHash.includes('sign') || 
+        actionHash.includes('login') || 
+        actionHash.includes('register')) {
+      hasRecentSubmitButtonClick = true;
+      break;
+    }
+  }
+  if (!hasRecentSubmitButtonClick && this.activeSession && this.activeSession.actions && this.activeSession.actions.length > 0) {
+    hasRecentSubmitButtonClick = this.activeSession.actions.some((action: any) => {
+      if (action.type !== ActionType.CLICK || now - action.timestamp > recentClickThreshold) {
+        return false;
+      }
+      const clickedElement = action.target;
+      if (!clickedElement) return false;
+      
+      const description = clickedElement.description?.toLowerCase() || '';
+      const isSubmitButton = 
+        (clickedElement.role === 'button') ||
+        (clickedElement.elementType === 'submit') ||
+        (description.includes('submit')) ||
+        (description.includes('create')) ||
+        (description.includes('sign')) ||
+        (description.includes('login')) ||
+        (description.includes('register')) ||
+        (description.includes('save'));
+        
+      return isSubmitButton;
+    });
+  }
+  if (hasRecentSubmitButtonClick) {
+    console.log('[RecordingEngine] Skipping duplicate form submission event');
+    return;
+  }
+  
   const elementContext = this.convertElementContext(target);
+  console.log("form target: ", target)
   let formDescription = 'form';
   if (target.id) {
     formDescription = `form #${target.id}`;
   } else if (target.name) {
     formDescription = `form ${target.name}`;
-  } else {
-    const inputTypes = RecordingUtil.getFormInputTypes(target);
-    
-    if (inputTypes.includes('search')) {
-      formDescription = 'search form';
-    } else if (inputTypes.includes('password')) {
-      formDescription = 'login form';
-    } else if (inputTypes.includes('email') && !inputTypes.includes('password')) {
-      formDescription = 'signup or contact form';
-    }
   }
+
   const action: SemanticAction = {
     id: this.generateId(),
     type: ActionType.SUBMIT,
@@ -608,7 +735,7 @@ private handleFormSubmitEvent(eventData: any): void {
   };
   
   this.recordAction(action);
-  window.dispatchEvent(new CustomEvent('webview-recording-action', {
+  window.dispatchEvent(new CustomEvent('recording-action', {
     detail: {
       type: ActionType.SUBMIT,
       description: action.description,
@@ -867,41 +994,34 @@ private convertElementContext(nativeElement: any): ElementContext {
       context: 'native_event'
     };
   }
-  let description = nativeElement.tagName?.toLowerCase() || 'element';
   
-  if (nativeElement.type) {
+  let description = 'element: ' + nativeElement.tagName?.toLowerCase() + '| ';
+  
+  if (nativeElement.type && nativeElement.type !== description) {
     description = `${nativeElement.type} ${description}`;
   }
-  
   if (nativeElement.id) {
-    description += ` #${nativeElement.id}`;
+    description += `id: #${nativeElement.id}| `;
   } else if (nativeElement.className) {
-    const classes = nativeElement.className.toString().split(' ');
-    if (classes.length > 0 && classes[0]) {
-      description += ` .${classes[0]}`;
-    }
+    description += `class: ${nativeElement.className.toString()}| `;
+  } 
+  if (nativeElement.name) {
+    description += `name: ${nativeElement.name}| `;
   }
-  
   if (nativeElement.text) {
-    description += ` "${nativeElement.text.substring(0, 30)}${nativeElement.text.length > 30 ? '...' : ''}"`;  
+    description += `text: "${nativeElement.text.substring(0, 30)}${nativeElement.text.length > 30 ? '...' : ''}"| `;
   }
-  let selector = nativeElement.tagName?.toLowerCase() || '';
-  if (nativeElement.id) {
-    selector = `#${nativeElement.id}`;
-  } else if (nativeElement.attributes && nativeElement.attributes['data-testid']) {
-    selector = `[data-testid="${nativeElement.attributes['data-testid']}"]`;
-  } else if (nativeElement.className) {
-    const classes = nativeElement.className.toString().split(' ');
-    if (classes.length > 0 && classes[0]) {
-      selector = `${selector}.${classes[0]}`;
-    }
+  if (nativeElement.attributes && nativeElement.attributes['aria-label']) {
+    description += `aria-label: ${nativeElement.attributes['aria-label']}| `;
   }
+  let selector = this.generateCompleteSelector(nativeElement);
+  let role = nativeElement.attributes?.role || 'generic';
   
   return {
     description,
     selector,
     xpath: '',
-    role: nativeElement.attributes?.role || 'generic',
+    role: role,
     boundingRect: nativeElement.boundingRect || { x: 0, y: 0, width: 0, height: 0 },
     isVisible: true,
     isInteractive: true,
@@ -1207,7 +1327,7 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       return false; // Return false because we want to keep form submissions (not low quality)
     }
     if (!action.id.includes('webview_')) {
-      window.dispatchEvent(new CustomEvent('webview-recording-action', {
+      window.dispatchEvent(new CustomEvent('recording-action', {
         detail: {
           type: action.type,
           description: action.description,
@@ -1231,23 +1351,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     
     return tagName;
   }
-
-  private maskSensitiveValue(value: string): string {
-    if (!value || typeof value !== 'string') return '';
-    if (value.length > 0 && /^[•*]+$/.test(value)) {
-      return '[PASSWORD]';
-    }
-    if (/^\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}$/.test(value)) {
-      return '[CREDIT_CARD]';
-    }
-    if (/@/.test(value) && value.includes('.')) {
-      const [local, domain] = value.split('@');
-      return `${local.substring(0, 2)}***@${domain}`;
-    }
-    
-    return value;
-  }
-
 
   private cleanupRecording(): void {
     this.processPendingActions();

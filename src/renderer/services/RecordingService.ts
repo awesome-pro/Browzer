@@ -64,7 +64,7 @@ export class RecordingService implements IRecordingService {
     });
     
     // Listen for recording actions from the engine
-    window.addEventListener('webview-recording-action', (e: Event) => {
+    window.addEventListener('recording-action', (e: Event) => {
       const actionData = (e as CustomEvent).detail;
       if (this.recordingActionsOverlay && actionData) {
         this.recordingActionsOverlay.addAction(actionData);

@@ -52,6 +52,7 @@ export interface ElementContext {
   
   // New enhanced targeting properties
   targetUrl?: string;             // Resolved target URL for links and forms
+  url?: string;                   // Full URL for navigation events
   uniqueIdentifiers?: string[];   // Multiple selector options (ID, data-testid, aria-label, etc.)
   semanticRole?: string;          // More detailed semantic role
   interactionContext?: string;    // Context where interaction occurs (search-result, navigation, etc.)
@@ -61,6 +62,7 @@ export interface ElementContext {
     className?: string;
     role?: string;
     text?: string;
+    href?: string;
   };
 }
 

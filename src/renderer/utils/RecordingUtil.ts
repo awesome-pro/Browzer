@@ -179,18 +179,42 @@ export default class RecordingUtil {
     }
     
     try {
-      const urlObj = new URL(url);
-      if (urlObj.hostname.includes('google.com') && urlObj.pathname === '/url') {
-        const destinationUrl = urlObj.searchParams.get('url') || urlObj.searchParams.get('q');
+      // Handle relative Google redirect URLs
+      if (url.startsWith('/url') && url.includes('url=')) {
+        const urlParams = new URLSearchParams(url.split('?')[1]);
+        const destinationUrl = urlParams.get('url');
         if (destinationUrl) {
           try {
-            new URL(destinationUrl);
-            return destinationUrl;
+            // URL decode the destination URL
+            const decodedUrl = decodeURIComponent(destinationUrl);
+            new URL(decodedUrl); // Validate it's a valid URL
+            return decodedUrl;
           } catch (e) {
+            // If decoding fails, return the original URL
           }
         }
       }
-      if (url.includes('google.com')) {
+      
+      const urlObj = new URL(url);
+      
+      // Handle Google redirect URLs
+      if ((urlObj.hostname.includes('google.com') || urlObj.hostname.includes('google.')) && urlObj.pathname === '/url') {
+        const destinationUrl = urlObj.searchParams.get('url') || urlObj.searchParams.get('q');
+        if (destinationUrl) {
+          try {
+            // URL decode the destination URL
+            const decodedUrl = decodeURIComponent(destinationUrl);
+            new URL(decodedUrl); // Validate it's a valid URL
+            return decodedUrl;
+          } catch (e) {
+            // If decoding fails, return the original URL
+          }
+        }
+      }
+      
+      // Clean Google search URLs
+      if (url.includes('google.com') || url.includes('google.')) {
+        // Only keep essential search parameters
         const essentialParams = ['q', 'tbm', 'safe', 'lr', 'hl'];
         const cleanParams = new URLSearchParams();
         
@@ -399,5 +423,52 @@ export default class RecordingUtil {
     }
     
     return [];
+  }
+
+  static findLinkElementInHierarchy(element: any): any {
+    try {
+      if (!element) return null;
+      if (element.tagName && typeof element.tagName === 'string' && 
+          element.tagName.toLowerCase() === 'a' && element.href) {
+        return element;
+      }
+      if (element.parentContext && element.parentContext.tagName && 
+          typeof element.parentContext.tagName === 'string' && 
+          element.parentContext.tagName.toLowerCase() === 'a' && 
+          element.parentContext.href) {
+        return element.parentContext;
+      }
+      if (element.closest && typeof element.closest === 'function') {
+        try {
+          const closestLink = element.closest('a[href]');
+          if (closestLink) {
+            return closestLink;
+          }
+        } catch (closestError) {
+          console.log('[RecordingEngine] Error in closest():', closestError);
+        }
+      }
+      if (element.parentElement) {
+        let parent = element.parentElement;
+        let depth = 0;
+        const maxDepth = 3;
+        
+        while (parent && depth < maxDepth) {
+          if (parent.tagName && 
+              typeof parent.tagName === 'string' && 
+              parent.tagName.toLowerCase() === 'a' && 
+              parent.href) {
+            return parent;
+          }
+          parent = parent.parentElement;
+          depth++;
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('[RecordingEngine] Error in findLinkElementInHierarchy:', error);
+      return null;
+    }
   }
 }
