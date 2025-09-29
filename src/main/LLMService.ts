@@ -38,7 +38,7 @@ export class LLMService {
       console.log('[LLMService] Making API call to:', request.provider);
       
       if (request.provider === 'anthropic') {
-        return await this.callGeminiAPI(request);
+        return await this.callAnthropicAPI(request)
       } else if (request.provider === 'openai') {
         return await this.callOpenAIAPI(request);
       } else if (request.provider === 'gemini') {
