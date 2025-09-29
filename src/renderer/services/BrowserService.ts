@@ -66,7 +66,6 @@ export class BrowserService implements IBrowserService {
   }
 
   private setupEventListeners(): void {
-    // Back button
     if (this.backBtn) {
       this.backBtn.addEventListener('click', () => {
         if (this.backClickCallback) {
@@ -74,8 +73,6 @@ export class BrowserService implements IBrowserService {
         }
       });
     }
-
-    // Forward button
     if (this.forwardBtn) {
       this.forwardBtn.addEventListener('click', () => {
         if (this.forwardClickCallback) {
@@ -83,8 +80,6 @@ export class BrowserService implements IBrowserService {
         }
       });
     }
-
-    // Reload button
     if (this.reloadBtn) {
       this.reloadBtn.addEventListener('click', () => {
         if (this.reloadClickCallback) {
@@ -92,8 +87,6 @@ export class BrowserService implements IBrowserService {
         }
       });
     }
-
-    // Go button
     if (this.goBtn) {
       this.goBtn.addEventListener('click', () => {
         if (this.goClickCallback) {
@@ -101,8 +94,6 @@ export class BrowserService implements IBrowserService {
         }
       });
     }
-
-    // URL bar enter key
     if (this.urlBar) {
       this.urlBar.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && this.urlEnterCallback) {
@@ -110,8 +101,6 @@ export class BrowserService implements IBrowserService {
         }
       });
     }
-
-    // Run agent button
     if (this.runAgentBtn) {
       this.runAgentBtn.addEventListener('click', () => {
         if (this.runAgentClickCallback) {
@@ -119,8 +108,6 @@ export class BrowserService implements IBrowserService {
         }
       });
     }
-
-    // History button
     if (this.historyBtn) {
       this.historyBtn.addEventListener('click', () => {
         if (this.historyClickCallback) {
@@ -128,8 +115,6 @@ export class BrowserService implements IBrowserService {
         }
       });
     }
-    
-    // Settings button
     if (this.settingsBtn) {
       this.settingsBtn.addEventListener('click', () => {
         if (this.settingsClickCallback) {
@@ -137,8 +122,6 @@ export class BrowserService implements IBrowserService {
         }
       });
     }
-    
-    // Extensions button
     if (this.extensionsBtn) {
       this.extensionsBtn.addEventListener('click', () => {
         if (this.extensionsClickCallback) {
@@ -191,8 +174,6 @@ export class BrowserService implements IBrowserService {
       this.disableNavigationButtons();
       return;
     }
-
-    // Wait for webview to be ready before checking navigation state
     setTimeout(() => {
       if (this.tabService.isWebviewReady(webview)) {
         try {
@@ -206,13 +187,10 @@ export class BrowserService implements IBrowserService {
             this.forwardBtn.disabled = !canGoForward;
           }
         } catch (error) {
-          // Retry after a short delay if webview isn't fully ready
           setTimeout(() => this.updateNavigationButtons(), 500);
         }
       } else {
         this.disableNavigationButtons();
-        
-        // Retry checking webview readiness
         setTimeout(() => this.updateNavigationButtons(), 1000);
       }
     }, 100);
@@ -249,26 +227,16 @@ export class BrowserService implements IBrowserService {
 
   public processUrl(url: string): string {
     if (!url) return '';
-
-    // Handle special URLs
     if (url === 'file://browzer-store' || url === 'browzer-store') {
       return url;
     }
-
-    // Trim whitespace
     url = url.trim();
-
-    // Search query detection (enhanced)
     const hasSpaces = url.includes(' ');
     const hasDot = url.includes('.');
     const hasProtocol = url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file://');
-    
-    // If it contains spaces or doesn't look like a URL, treat as search
     if (hasSpaces || (!hasProtocol && !hasDot)) {
       return 'https://www.google.com/search?q=' + encodeURIComponent(url);
     }
-
-    // Add protocol if missing for URLs
     if (!hasProtocol && hasDot) {
       return 'https://' + url;
     }
@@ -300,21 +268,15 @@ export class BrowserService implements IBrowserService {
   
     let url = this.urlBar.value.trim();
     if (!url) return;
-  
-    // Handle special internal URLs
     if (url === 'file://browzer-store' || url === 'browzer-store') {
       this.extensionStore.show();
       return; 
     }
-  
-    // Process URL (includes search detection and protocol addition)
     const processedUrl = this.processUrl(url);
     
     const webview = this.tabService.getActiveWebview();
     if (webview) {
       webview.loadURL(processedUrl);
-      
-      // Update navigation buttons after navigation starts
       setTimeout(() => {
         this.updateNavigationButtons();
       }, 500);
@@ -323,7 +285,6 @@ export class BrowserService implements IBrowserService {
 
   public destroy(): void {
     try {
-      // Remove event listeners by replacing elements
       if (this.backBtn) {
         const newBackBtn = this.backBtn.cloneNode(true) as HTMLButtonElement;
         this.backBtn.parentNode?.replaceChild(newBackBtn, this.backBtn);
@@ -358,8 +319,6 @@ export class BrowserService implements IBrowserService {
         const newUrlBar = this.urlBar.cloneNode(true) as HTMLInputElement;
         this.urlBar.parentNode?.replaceChild(newUrlBar, this.urlBar);
       }
-
-      // Clear references
       this.urlBar = null;
       this.backBtn = null;
       this.forwardBtn = null;
@@ -369,8 +328,6 @@ export class BrowserService implements IBrowserService {
       this.historyBtn = null;
       this.settingsBtn = null;
       this.extensionsBtn = null;
-
-      // Clear callbacks
       this.backClickCallback = undefined;
       this.forwardClickCallback = undefined;
       this.reloadClickCallback = undefined;

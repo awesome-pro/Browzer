@@ -1,6 +1,6 @@
 import { IpcRenderer } from '../types';
 import WorkflowProgressIndicator from '../components/WorkflowProgress';
-import { getBrowserApiKeys, getExtensionDisplayName } from '../utils';
+import { getExtensionDisplayName } from '../utils';
 
 /**
  * WorkflowService handles all workflow-related functionality including
@@ -42,16 +42,10 @@ export class WorkflowService {
     }
     
     console.log('🚨 [CONTEXT ISOLATION] Using secure electronAPI for workflow listeners');
-
-    // Set up workflow progress listeners using secure electronAPI
     window.electronAPI.onWorkflowProgress((data: any) => {
       console.log('[WorkflowProgress] workflow-progress event received:', data);
-      
-      // Handle different types of workflow progress events
       if (data.type === 'workflow_start') {
         console.log('[WorkflowProgress] workflow-start event received:', data);
-        
-        // Convert snake_case to camelCase for compatibility, including step fields
         const workflowData = {
           workflowId: data.workflow_id || `workflow-${Date.now()}`,
           type: data.type || 'workflow',
@@ -62,14 +56,10 @@ export class WorkflowService {
         };
         
         console.log('[WorkflowProgress] Creating new workflow progress in chat:', workflowData);
-        
-        // Create workflow progress as a chat message instead of using fixed container
         this.addWorkflowProgressToChat(workflowData);
         
       } else if (data.type === 'step_start') {
         console.log('📡 [IPC DEBUG] step_start event received:', data);
-        
-        // Find the workflow progress message in chat
         const workflowMessage = this.findWorkflowProgressInChat(data.workflow_id);
         if (workflowMessage && (workflowMessage as any).progressIndicator) {
           console.log('[WorkflowProgress] Updating progress for step start:', {
@@ -77,8 +67,6 @@ export class WorkflowService {
             currentStep: data.current_step,
             stepStatus: 'running'
           });
-          
-          // Convert snake_case to camelCase
           (workflowMessage as any).progressIndicator.updateProgress({
             workflowId: data.workflow_id,
             currentStep: data.current_step,
@@ -90,8 +78,6 @@ export class WorkflowService {
         
       } else if (data.type === 'step_complete') {
         console.log('📡 [IPC DEBUG] step_complete event received:', data);
-        
-        // Find the workflow progress message in chat
         const workflowMessage = this.findWorkflowProgressInChat(data.workflow_id);
         if (workflowMessage && (workflowMessage as any).progressIndicator) {
           console.log('[WorkflowProgress] Calling updateProgress with:', {
@@ -101,8 +87,6 @@ export class WorkflowService {
             stepResult: data.step_result,
             stepError: data.step_error
           });
-          
-          // Convert snake_case to camelCase  
           (workflowMessage as any).progressIndicator.updateProgress({
             workflowId: data.workflow_id,
             currentStep: data.current_step,
@@ -121,8 +105,6 @@ export class WorkflowService {
       console.log('📡 [IPC DEBUG] workflow-complete data keys:', Object.keys(data));
       console.log('📡 [IPC DEBUG] workflow-complete data.result keys:', data.result ? Object.keys(data.result) : 'no result');
       console.log('📡 [IPC DEBUG] workflow-complete has consolidated_summary:', !!(data.result && data.result.consolidated_summary));
-      
-      // Add workflow-level deduplication to prevent duplicate processing
       const workflowId = data.workflow_id;
       const currentTime = Date.now();
       const workflowCompleteKey = `workflowComplete_${workflowId}`;
@@ -132,20 +114,13 @@ export class WorkflowService {
         console.log('🚨 [DUPLICATE FIX] Same workflow completed recently, skipping duplicate processing:', workflowId);
         return;
       }
-      
-      // Store current completion time
       localStorage.setItem(workflowCompleteKey, currentTime.toString());
       
       this.logExecutionFlow('workflow-complete-event', { workflowId: data.workflow_id, hasResult: !!data.result });
-      
-      // Clear execution flag
       this.isWorkflowExecuting = false;
       console.log('[WorkflowProgress] Clearing execution flag on workflow completion');
-      
-      // Find the workflow progress message in chat
       const workflowMessage = this.findWorkflowProgressInChat(data.workflow_id);
       if (workflowMessage && (workflowMessage as any).progressIndicator) {
-        // Convert snake_case to camelCase
         (workflowMessage as any).progressIndicator.completeWorkflow({
           workflowId: data.workflow_id,
           result: data.result
@@ -153,19 +128,13 @@ export class WorkflowService {
       } else {
         console.warn('[WorkflowProgress] Workflow progress message not found for completion:', data.workflow_id);
       }
-      
-      // Display results if available
       if (data.result) {
         console.log('🎯 [WORKFLOW-COMPLETE] About to call displayAgentResults from workflow-complete event');
-        
-        // For workflow results, extract the inner data to normalize the structure
         let resultData = data.result;
         if (data.result.type === 'workflow' && data.result.data) {
           console.log('🎯 [WORKFLOW-COMPLETE] Extracting inner data from workflow result');
           resultData = data.result.data;
         }
-        
-        // Dispatch event for main app to handle results display
         const displayResultsEvent = new CustomEvent('workflow:displayResults', {
           detail: { data: resultData, workflowId: data.workflow_id }
         });
@@ -179,22 +148,16 @@ export class WorkflowService {
 
     window.electronAPI.onWorkflowError((data: any) => {
       console.log('📡 [IPC DEBUG] workflow-error event received:', data);
-      
-      // Clear execution flag
       this.isWorkflowExecuting = false;
       console.log('[WorkflowProgress] Clearing execution flag on workflow error');
-      
-      // Find the workflow progress message in chat
       const workflowMessage = this.findWorkflowProgressInChat(data.workflow_id || 'unknown');
       if (workflowMessage && (workflowMessage as any).progressIndicator) {
-        // Convert snake_case to camelCase
         (workflowMessage as any).progressIndicator.handleWorkflowError({
           workflowId: data.workflow_id || 'unknown',
           error: data.error
         });
       } else {
         console.warn('[WorkflowProgress] Workflow progress message not found for error:', data.workflow_id);
-        // Dispatch event for main app to handle error display
         const errorEvent = new CustomEvent('workflow:error', {
           detail: { error: data.error, workflowId: data.workflow_id }
         });
@@ -230,8 +193,6 @@ export class WorkflowService {
 
   public addWorkflowProgressToChat(workflowData: any): HTMLElement {
     let chatContainer = document.getElementById('chatContainer');
-    
-    // Create chat container if it doesn't exist
     if (!chatContainer) {
       console.log('[WorkflowService] Chat container not found, creating one');
       
@@ -240,14 +201,10 @@ export class WorkflowService {
         console.error('[WorkflowService] agentResults container not found');
         return document.createElement('div');
       }
-      
-      // Remove any existing welcome containers when starting chat
       const existingWelcome = agentResults.querySelector('.welcome-container');
       if (existingWelcome) {
         existingWelcome.remove();
       }
-      
-      // Create the chat container
       chatContainer = document.createElement('div');
       chatContainer.id = 'chatContainer';
       chatContainer.className = 'chat-container';
@@ -257,29 +214,19 @@ export class WorkflowService {
     }
 
     console.log('[WorkflowService] Creating workflow progress for:', workflowData);
-
-    // Create workflow progress message container
     const messageDiv = document.createElement('div');
     messageDiv.className = 'chat-message workflow-progress-message';
     messageDiv.dataset.role = 'workflow-progress';
     messageDiv.dataset.workflowId = workflowData.workflowId;
     messageDiv.dataset.timestamp = new Date().toISOString();
-
-    // Create container for the workflow progress component
     const progressContainer = document.createElement('div');
     progressContainer.className = 'workflow-progress-container';
     
     messageDiv.appendChild(progressContainer);
     chatContainer.appendChild(messageDiv);
-
-    // Initialize WorkflowProgressIndicator for this specific workflow
     const progressIndicator = new WorkflowProgressIndicator(progressContainer);
     progressIndicator.startWorkflow(workflowData);
-
-    // Store reference to the progress indicator on the message element
     (messageDiv as any).progressIndicator = progressIndicator;
-
-    // Scroll to bottom
     chatContainer.scrollTop = chatContainer.scrollHeight;
 
     console.log('[WorkflowService] Workflow progress message added to chat');
@@ -300,9 +247,6 @@ export class WorkflowService {
         data
       });
       
-      // Workflow execution is async - progress events will handle UI updates
-      // The workflow-complete event listener will call displayAgentResults when done
-      
     } catch (workflowError) {
       console.error('[WorkflowService] Workflow execution failed:', workflowError);
       this.setExecuting(false);
@@ -322,12 +266,8 @@ export class WorkflowService {
     
     console.log('[WorkflowService] Creating progress indicator for single extension:', singleExtensionWorkflowData);
     const progressElement = this.addWorkflowProgressToChat(singleExtensionWorkflowData);
-    
-    // Start the progress indicator
     if (progressElement && (progressElement as any).progressIndicator) {
       (progressElement as any).progressIndicator.startWorkflow(singleExtensionWorkflowData);
-      
-      // Update to running state
       (progressElement as any).progressIndicator.updateProgress({
         workflowId: singleExtensionWorkflowData.workflowId,
         currentStep: 0,
@@ -358,8 +298,6 @@ export class WorkflowService {
       data: data
     };
     this.displayAgentResultsCalls.push(callInfo);
-    
-    // Check for recent duplicate calls
     const recentCalls = this.displayAgentResultsCalls.filter(call => 
       callInfo.timestamp - call.timestamp < 5000 && call.callNumber !== callInfo.callNumber
     );

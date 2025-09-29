@@ -40,8 +40,6 @@ export class WebviewService implements IWebviewService {
       const webview = document.createElement('webview') as any;
       webview.id = webviewId;
       webview.className = 'webview';
-
-      // Configure webview asynchronously
       this.configureWebview(webview, url).catch(error => {
         console.error('🔴 [WebviewService] Failed to configure webview:', error);
       });
@@ -69,8 +67,6 @@ export class WebviewService implements IWebviewService {
         'images=true',
         'devTools=true'
       ];
-
-      // Set attributes
       webview.setAttribute('webpreferences', webPreferencesArray.join(', '));
       webview.setAttribute('allowpopups', 'true');
       webview.setAttribute('nodeintegration', 'true');
@@ -88,15 +84,12 @@ export class WebviewService implements IWebviewService {
   }
 
   public setupWebviewEvents(webview: any): void {
-    // Loading events
     webview.addEventListener('did-start-loading', () => {
       this.handleLoadingStart(webview);
     });
 
     webview.addEventListener('did-finish-load', () => {
       this.handleLoadingFinish(webview);
-      
-      // Additional title and favicon detection as backup methods
       setTimeout(async () => {
         try {
           const title = await webview.executeJavaScript('document.title');
@@ -129,8 +122,6 @@ export class WebviewService implements IWebviewService {
     webview.addEventListener('did-fail-load', () => {
       this.handleLoadingFail(webview);
     });
-
-    // Navigation events
     webview.addEventListener('will-navigate', (e: any) => {
       this.updateUrlBar(webview, e.url);
       this.notifyTabUrlChange(webview, e.url);
@@ -139,8 +130,6 @@ export class WebviewService implements IWebviewService {
     webview.addEventListener('did-navigate', (e: any) => {
       this.updateUrlBar(webview, e.url);
       this.notifyTabUrlChange(webview, e.url);
-      
-      // Trigger navigation button update
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('webview-navigation-changed', { 
           detail: { webviewId: webview.id } 
@@ -151,8 +140,6 @@ export class WebviewService implements IWebviewService {
     webview.addEventListener('did-navigate-in-page', (e: any) => {
       this.updateUrlBar(webview, e.url);
       this.notifyTabUrlChange(webview, e.url);
-      
-      // Trigger navigation button update for in-page navigation too
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('webview-navigation-changed', { 
           detail: { webviewId: webview.id } 
@@ -169,29 +156,18 @@ export class WebviewService implements IWebviewService {
         this.handleFaviconUpdate(webview, e.favicons[0]);
       }
     });
-
-
-    // New window handling
     webview.addEventListener('new-window', (e: any) => {
       this.handleNewWindow(webview, e);
     });
-
-    // Permission requests
     webview.addEventListener('permission-request', (e: any) => {
       this.handlePermissionRequest(webview, e);
     });
-
-    // Certificate errors
     webview.addEventListener('certificate-error', (e: any) => {
       console.log('[WebviewService] Certificate error for:', e.url);
     });
-
-    // IPC messages
     webview.addEventListener('ipc-message', (event: any) => {
       console.log('[WebviewService] Received ipc-message from webview:', webview.id, 'channel:', event.channel);
     });
-
-    // DOM ready event
     webview.addEventListener('dom-ready', () => {
       this.handleDomReady(webview);
     });
@@ -205,16 +181,12 @@ export class WebviewService implements IWebviewService {
   }
 
   private handleTitleUpdate(webview: any, title: string): void {
-    // Dispatch custom event for tab service to handle
     const titleEvent = new CustomEvent('webview-title-updated', {
       detail: { webviewId: webview.id, title: title }
     });
     window.dispatchEvent(titleEvent);
   }
-
-  // NEW: Handle favicon updates
   private handleFaviconUpdate(webview: any, faviconUrl: string): void {
-    // Dispatch custom event for tab service to handle
     const faviconEvent = new CustomEvent('webview-favicon-updated', {
       detail: { webviewId: webview.id, faviconUrl: faviconUrl }
     });
@@ -246,15 +218,11 @@ export class WebviewService implements IWebviewService {
     if (url && url !== 'about:blank' && !url.startsWith('file://')) {
       this.historyService.addVisit(url, webviewTitle);
     } 
-
-    // Inject ad block CSS
     setTimeout(() => {
       if (webview && !webview.isDestroyed && webview.executeJavaScript) {
         this.adBlockService.injectAdBlockCSS(webview);
       }
     }, 500);
-
-    // Update navigation buttons after page load
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent('webview-navigation-changed', { 
         detail: { webviewId: webview.id } 
@@ -271,8 +239,6 @@ export class WebviewService implements IWebviewService {
   }
 
   private handleNewWindow(webview: any, e: any): void {
-
-    // For OAuth flows, open in the same tab to maintain session
     const isAuthFlow = e.url && (
       e.url.includes('accounts.google.com') ||
       e.url.includes('login.microsoftonline.com') ||

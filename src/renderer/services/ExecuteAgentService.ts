@@ -169,8 +169,6 @@ export class ExecuteAgentService {
   private parseAndValidateSteps(llmResponse: string): ExecuteStep[] {
     try {
       console.log('[EnhancedExecuteAgentService] Parsing LLM response:', llmResponse);
-
-      // Use the new PromptGenerator to parse and validate the response
       const parsedSteps = PromptGenerator.parseAndValidateResponse(llmResponse);
       
       if (!parsedSteps) {
@@ -185,8 +183,6 @@ export class ExecuteAgentService {
       
       for (let i = 0; i < parsedSteps.length; i++) {
         const rawStep = parsedSteps[i];
-        
-        // Convert to unified format
         const step: ExecuteStep = {
           id: `step-${i + 1}`,
           action: this.normalizeActionType(rawStep.action),
@@ -197,8 +193,6 @@ export class ExecuteAgentService {
           maxRetries: this.MAX_RETRIES_PER_STEP,
           retryCount: 0
         };
-
-        // Validate the step
         const validation = ActionValidator.validateStep(step);
         if (!validation.valid) {
           console.warn(`[EnhancedExecuteAgentService] Step ${i + 1} validation failed:`, validation.errors);
@@ -227,26 +221,15 @@ export class ExecuteAgentService {
 
   private extractJSONFromResponse(response: string): string {
     console.log('[ExecuteAgentService] Extracting JSON from response...');
-    
-    // Clean the response first
     let cleaned = response.trim();
-    
-    // Remove common prefixes that Claude might add
     cleaned = cleaned.replace(/^Here's the JSON array[^[]*/, '');
     cleaned = cleaned.replace(/^Based on the recorded workflow[^[]*/, '');
     cleaned = cleaned.replace(/^Following the recorded pattern[^[]*/, '');
-    
-    // Try multiple extraction patterns in order of preference
     const patterns = [
-      // Pure JSON array (most preferred)
       /^\s*(\[[\s\S]*\])\s*$/,
-      // JSON in code blocks
       /```(?:json)?\s*(\[[\s\S]*?\])\s*```/,
-      // JSON after descriptive text
       /(?:array|steps|json)[:\s]*(\[[\s\S]*?\])/i,
-      // Any JSON array in the text
       /(\[[\s\S]*?\])/,
-      // JSON with trailing text
       /(\[[\s\S]*?\])[^}]*/
     ];
 
@@ -255,7 +238,6 @@ export class ExecuteAgentService {
       if (match) {
         const jsonStr = match[1];
         try {
-          // Validate JSON is parseable
           const parsed = JSON.parse(jsonStr);
           if (Array.isArray(parsed) && parsed.length > 0) {
             console.log(`[ExecuteAgentService] Successfully extracted JSON with ${parsed.length} steps`);
@@ -267,8 +249,6 @@ export class ExecuteAgentService {
         }
       }
     }
-
-    // Advanced cleaning for malformed JSON
     const lines = cleaned.split('\n');
     let jsonStart = -1;
     let jsonEnd = -1;
@@ -320,8 +300,6 @@ export class ExecuteAgentService {
       'check': ActionType.TOGGLE,
       'uncheck': ActionType.TOGGLE,
       'submit': ActionType.SUBMIT,
-      
-      // Enhanced Form Actions
       'select_option': ActionType.SELECT_OPTION,
       'select_dropdown': ActionType.SELECT_OPTION,
       'dropdown': ActionType.SELECT_OPTION,
@@ -335,13 +313,9 @@ export class ExecuteAgentService {
       'adjust_slider': ActionType.ADJUST_SLIDER,
       'slider': ActionType.ADJUST_SLIDER,
       'range': ActionType.ADJUST_SLIDER,
-      
-      // Clipboard Actions
       'copy': ActionType.COPY,
       'cut': ActionType.CUT,
       'paste': ActionType.PASTE,
-      
-      // Context Actions
       'context_menu': ActionType.CONTEXT_MENU,
       'right_click': ActionType.CONTEXT_MENU,
       'contextmenu': ActionType.CONTEXT_MENU,
@@ -363,12 +337,9 @@ export class ExecuteAgentService {
 
   private attemptStepFix(step: ExecuteStep, errors: string[]): ExecuteStep {
     const fixedStep = { ...step };
-
-    // Fix common issues
     for (const error of errors) {
       if (error.includes('URL is required') && step.action === ActionType.NAVIGATION) {
         if (!fixedStep.target && !fixedStep.value) {
-          // Try to extract URL from description
           const urlMatch = step.reasoning?.match(/(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
           if (urlMatch) {
             fixedStep.target = urlMatch[0].startsWith('http') ? urlMatch[0] : `https://${urlMatch[0]}`;
@@ -377,7 +348,6 @@ export class ExecuteAgentService {
       }
 
       if (error.includes('Target selector required') && !fixedStep.target) {
-        // Try to extract selector from description
         const selectorMatch = step.reasoning?.match(/['"`]([^'"`]+)['"`]/);
         if (selectorMatch) {
           fixedStep.target = selectorMatch[1];
@@ -385,7 +355,6 @@ export class ExecuteAgentService {
       }
 
       if (error.includes('value required') && !fixedStep.value) {
-        // Try to extract value from description
         const valueMatch = step.reasoning?.match(/(?:type|enter|select)\s+['"`]([^'"`]+)['"`]/i);
         if (valueMatch) {
           fixedStep.value = valueMatch[1];
@@ -449,8 +418,6 @@ I've analyzed the recorded workflow and generated **${steps.length} execution st
 I'll now begin executing these steps. You'll see real-time progress updates as each step completes.`;
 
     this.addMessageToChat('assistant', planMessage);
-
-    // Update current task
     if (this.currentTask) {
       this.currentTask.steps = steps as ExecuteStep[];
     }
@@ -461,43 +428,29 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
     let successCount = 0;
     let failureCount = 0;
     let finalResult = null;
-
-    // Get active webview
     const webview = this.tabService.getActiveWebview();
     if (!webview) {
       throw new Error('No active webview found. Please ensure a tab is open.');
     }
 
     const stepRunner = new ExecuteStepRunner(webview);
-
-    // Set overall timeout
     const executionTimeout = setTimeout(() => {
       throw new Error(`Execution timeout after ${this.MAX_EXECUTION_TIME / 1000} seconds`);
     }, this.MAX_EXECUTION_TIME);
 
     try {
-      // Execute steps with real-time monitoring
       for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
-        
-        // Update UI for current step
         this.updateStepProgress(i, step, 'running');
         
         try {
-          // Set step timeout
           const stepTimeout = setTimeout(() => {
             throw new Error(`Step timeout after ${this.STEP_TIMEOUT / 1000} seconds`);
           }, this.STEP_TIMEOUT);
-
-          // Execute step
           const stepResult = await stepRunner.executeStep(step);
           clearTimeout(stepTimeout);
-
-          // Update success
           successCount++;
           this.updateStepProgress(i, step, 'completed', stepResult)
-
-          // Brief pause between steps
           await this.wait(800);
 
         } catch (error) {
@@ -516,8 +469,6 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
       }
 
       clearTimeout(executionTimeout);
-
-      // Generate execution summary
       const executionTime = Date.now() - startTime;
       const overallSuccess = failureCount === 0 || (successCount > failureCount);
       
@@ -548,23 +499,15 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
       ActionType.NAVIGATION,
       ActionType.SUBMIT
     ];
-
-    // Don't continue after critical action failures
     if (criticalActions.includes(step.action)) {
       return false;
     }
-
-    // Don't continue after timeout errors
     if (error.message.includes('timeout')) {
       return false;
     }
-
-    // Continue after verification failures
     if (step.action.toString().includes('VERIFY') && error.message.includes('not found')) {
       return true;
     }
-    
-    // Continue after selector errors for non-critical actions
     if (error.message.includes('selector') || 
         error.message.includes('Element not found') ||
         error.message.includes('Failed to execute')) {
