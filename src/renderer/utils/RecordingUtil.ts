@@ -471,4 +471,61 @@ export default class RecordingUtil {
       return null;
     }
   }
+
+  public static normalizeActionType(action: string): ActionType {
+    if (!action) return ActionType.CLICK;
+    
+    const normalized = action.toLowerCase().trim();
+    const actionMap: Record<string, ActionType> = {
+      'navigate': ActionType.NAVIGATION,
+      'go_to': ActionType.NAVIGATION,
+      'visit': ActionType.NAVIGATION,
+      'type': ActionType.TYPE,
+      'input': ActionType.TYPE,
+      'enter': ActionType.TYPE,
+      'fill': ActionType.TYPE,
+      'clear': ActionType.CLEAR,
+      'click': ActionType.CLICK,
+      'press': ActionType.CLICK,
+      'tap': ActionType.CLICK,
+      'select': ActionType.SELECT,
+      'choose': ActionType.SELECT,
+      'toggle': ActionType.TOGGLE,
+      'check': ActionType.TOGGLE,
+      'uncheck': ActionType.TOGGLE,
+      'submit': ActionType.SUBMIT,
+      'select_option': ActionType.SELECT_OPTION,
+      'select_dropdown': ActionType.SELECT_OPTION,
+      'dropdown': ActionType.SELECT_OPTION,
+      'toggle_checkbox': ActionType.TOGGLE_CHECKBOX,
+      'checkbox': ActionType.TOGGLE_CHECKBOX,
+      'select_radio': ActionType.SELECT_RADIO,
+      'radio': ActionType.SELECT_RADIO,
+      'select_file': ActionType.SELECT_FILE,
+      'upload': ActionType.SELECT_FILE,
+      'file': ActionType.SELECT_FILE,
+      'adjust_slider': ActionType.ADJUST_SLIDER,
+      'slider': ActionType.ADJUST_SLIDER,
+      'range': ActionType.ADJUST_SLIDER,
+      'copy': ActionType.COPY,
+      'cut': ActionType.CUT,
+      'paste': ActionType.PASTE,
+      'context_menu': ActionType.CONTEXT_MENU,
+      'right_click': ActionType.CONTEXT_MENU,
+      'contextmenu': ActionType.CONTEXT_MENU,
+      
+      'wait': ActionType.WAIT,
+      'wait_for_element': ActionType.WAIT_FOR_ELEMENT,
+      'wait_element': ActionType.WAIT_FOR_ELEMENT,
+      'wait_for_dynamic_content': ActionType.DYNAMIC_CONTENT,
+      'focus': ActionType.FOCUS,
+      'blur': ActionType.BLUR,
+      'hover': ActionType.HOVER,
+      'keypress': ActionType.KEYPRESS,
+      'key': ActionType.KEYPRESS,
+      'scroll': ActionType.SCROLL,
+    };
+
+    return actionMap[normalized] || ActionType.CLICK;
+  }
 }

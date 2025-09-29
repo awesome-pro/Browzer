@@ -4,7 +4,7 @@ import { SessionSelector } from '../components/SessionSelector';
 import { SmartRecordingEngine } from '../components/RecordingEngine';
 import { PromptGenerator } from '../components/PromptGenerator';
 import { ExecuteStepRunner } from '../components/ExecuteStepRunner';
-import { Utils } from '../utils';
+import { RecordingUtil, Utils } from '../utils';
 
 export class ExecuteAgentService {
   private tabService: TabService;
@@ -73,7 +73,7 @@ export class ExecuteAgentService {
         status: 'running'
       };
 
-      const result = await this.executeWithEnhancedPrompting(instruction, session);
+      const result = await this.executeWithPrompting(instruction, session);
       
       return {
         success: result.success,
@@ -82,7 +82,7 @@ export class ExecuteAgentService {
         executionTime: Date.now() - startTime
       };
     } catch (error) {
-      console.error('[EnhancedExecuteAgentService] Task execution failed:', error);
+      console.error('[ExecuteAgentService] Task execution failed:', error);
       this.addMessageToChat('assistant', `Execution failed: ${(error as Error).message}`);
       return {
         success: false,
@@ -100,7 +100,7 @@ export class ExecuteAgentService {
     console.log('[ExecuteAgentService] Selected recording session ID:', sessionId);
   }
 
-  private async executeWithEnhancedPrompting(instruction: string, session: any): Promise<ExecuteResult> {
+  private async executeWithPrompting(instruction: string, session: any): Promise<ExecuteResult> {
     try {
       this.addMessageToChat('assistant', this.generateContextAnalysis(instruction, session));
 
@@ -128,18 +128,18 @@ export class ExecuteAgentService {
 
       this.displayExecutionPlan(executionSteps, session);
 
-      const result = await this.executeStepsWithEnhancedMonitoring(executionSteps);
+      const result = await this.executeStepsWithMonitoring(executionSteps);
       
       return result;
     } catch (error) {
-      console.error('[EnhancedExecuteAgentService] Enhanced execution failed:', error);
+      console.error('[ExecuteAgentService]  execution failed:', error);
       throw error;
     }
   }
 
   private async callLLM(systemPrompt: string, userPrompt: string, apiKey: string): Promise<string> {
     try {
-      console.log('[ExecuteAgentService] Calling Anthropic Claude with enhanced prompt...');
+      console.log('[ExecuteAgentService] Calling Anthropic Claude with  prompt...');
       console.log('[ExecuteAgentService] System prompt length:', systemPrompt.length);
       console.log('[ExecuteAgentService] User prompt length:', userPrompt.length);
 
@@ -169,7 +169,7 @@ export class ExecuteAgentService {
 
   private parseAndValidateSteps(llmResponse: string): ExecuteStep[] {
     try {
-      console.log('[EnhancedExecuteAgentService] Parsing LLM response:', llmResponse);
+      console.log('[ExecuteAgentService] Parsing LLM response:', llmResponse);
       const parsedSteps = PromptGenerator.parseAndValidateResponse(llmResponse);
       
       if (!parsedSteps) {
@@ -186,7 +186,7 @@ export class ExecuteAgentService {
         const rawStep = parsedSteps[i];
         const step: ExecuteStep = {
           id: `step-${i + 1}`,
-          action: this.normalizeActionType(rawStep.action),
+          action: RecordingUtil.normalizeActionType(rawStep.action),
           target: rawStep.target || '',
           value: rawStep.value,
           reasoning: rawStep.reasoning || '',
@@ -196,12 +196,12 @@ export class ExecuteAgentService {
         };
         const validation = ActionValidator.validateStep(step);
         if (!validation.valid) {
-          console.warn(`[EnhancedExecuteAgentService] Step ${i + 1} validation failed:`, validation.errors);
+          console.warn(`[ExecuteAgentService] Step ${i + 1} validation failed:`, validation.errors);
           const fixedStep = this.attemptStepFix(step, validation.errors);
           if (ActionValidator.validateStep(fixedStep).valid) {
             validatedSteps.push(fixedStep);
           } else {
-            console.error(`[EnhancedExecuteAgentService] Could not fix step ${i + 1}, skipping`);
+            console.error(`[ExecuteAgentService] Could not fix step ${i + 1}, skipping`);
           }
         } else {
           validatedSteps.push(step);
@@ -212,128 +212,12 @@ export class ExecuteAgentService {
         throw new Error('No valid execution steps could be generated');
       }
 
-      console.log(`[EnhancedExecuteAgentService] Successfully parsed and validated ${validatedSteps.length} steps`);
+      console.log(`[ExecuteAgentService] Successfully parsed and validated ${validatedSteps.length} steps`);
       return validatedSteps;
     } catch (error) {
-      console.error('[EnhancedExecuteAgentService] Step parsing failed:', error);
+      console.error('[ExecuteAgentService] Step parsing failed:', error);
       throw new Error(`Failed to parse execution steps: ${(error as Error).message}`);
     }
-  }
-
-  private extractJSONFromResponse(response: string): string {
-    console.log('[ExecuteAgentService] Extracting JSON from response...');
-    let cleaned = response.trim();
-    cleaned = cleaned.replace(/^Here's the JSON array[^[]*/, '');
-    cleaned = cleaned.replace(/^Based on the recorded workflow[^[]*/, '');
-    cleaned = cleaned.replace(/^Following the recorded pattern[^[]*/, '');
-    const patterns = [
-      /^\s*(\[[\s\S]*\])\s*$/,
-      /```(?:json)?\s*(\[[\s\S]*?\])\s*```/,
-      /(?:array|steps|json)[:\s]*(\[[\s\S]*?\])/i,
-      /(\[[\s\S]*?\])/,
-      /(\[[\s\S]*?\])[^}]*/
-    ];
-
-    for (const pattern of patterns) {
-      const match = cleaned.match(pattern);
-      if (match) {
-        const jsonStr = match[1];
-        try {
-          const parsed = JSON.parse(jsonStr);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            console.log(`[ExecuteAgentService] Successfully extracted JSON with ${parsed.length} steps`);
-            return jsonStr;
-          }
-        } catch (e) {
-          console.warn('[ExecuteAgentService] JSON validation failed for pattern:', pattern);
-          continue;
-        }
-      }
-    }
-    const lines = cleaned.split('\n');
-    let jsonStart = -1;
-    let jsonEnd = -1;
-    
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].trim().startsWith('[') && jsonStart === -1) {
-        jsonStart = i;
-      }
-      if (lines[i].trim().endsWith(']') && jsonStart !== -1) {
-        jsonEnd = i;
-        break;
-      }
-    }
-    
-    if (jsonStart !== -1 && jsonEnd !== -1) {
-      const extractedJson = lines.slice(jsonStart, jsonEnd + 1).join('\n');
-      try {
-        JSON.parse(extractedJson);
-        console.log('[ExecuteAgentService] Extracted JSON using line-by-line method');
-        return extractedJson;
-      } catch (e) {
-        console.warn('[ExecuteAgentService] Line-by-line extraction failed');
-      }
-    }
-
-    console.error('[ExecuteAgentService] Failed to extract valid JSON from response');
-    return cleaned;
-  }
-
-  private normalizeActionType(action: string): ActionType {
-    if (!action) return ActionType.CLICK;
-    
-    const normalized = action.toLowerCase().trim();
-    const actionMap: Record<string, ActionType> = {
-      'navigate': ActionType.NAVIGATION,
-      'go_to': ActionType.NAVIGATION,
-      'visit': ActionType.NAVIGATION,
-      'type': ActionType.TYPE,
-      'input': ActionType.TYPE,
-      'enter': ActionType.TYPE,
-      'fill': ActionType.TYPE,
-      'clear': ActionType.CLEAR,
-      'click': ActionType.CLICK,
-      'press': ActionType.CLICK,
-      'tap': ActionType.CLICK,
-      'select': ActionType.SELECT,
-      'choose': ActionType.SELECT,
-      'toggle': ActionType.TOGGLE,
-      'check': ActionType.TOGGLE,
-      'uncheck': ActionType.TOGGLE,
-      'submit': ActionType.SUBMIT,
-      'select_option': ActionType.SELECT_OPTION,
-      'select_dropdown': ActionType.SELECT_OPTION,
-      'dropdown': ActionType.SELECT_OPTION,
-      'toggle_checkbox': ActionType.TOGGLE_CHECKBOX,
-      'checkbox': ActionType.TOGGLE_CHECKBOX,
-      'select_radio': ActionType.SELECT_RADIO,
-      'radio': ActionType.SELECT_RADIO,
-      'select_file': ActionType.SELECT_FILE,
-      'upload': ActionType.SELECT_FILE,
-      'file': ActionType.SELECT_FILE,
-      'adjust_slider': ActionType.ADJUST_SLIDER,
-      'slider': ActionType.ADJUST_SLIDER,
-      'range': ActionType.ADJUST_SLIDER,
-      'copy': ActionType.COPY,
-      'cut': ActionType.CUT,
-      'paste': ActionType.PASTE,
-      'context_menu': ActionType.CONTEXT_MENU,
-      'right_click': ActionType.CONTEXT_MENU,
-      'contextmenu': ActionType.CONTEXT_MENU,
-      
-      'wait': ActionType.WAIT,
-      'wait_for_element': ActionType.WAIT_FOR_ELEMENT,
-      'wait_element': ActionType.WAIT_FOR_ELEMENT,
-      'wait_for_dynamic_content': ActionType.DYNAMIC_CONTENT,
-      'focus': ActionType.FOCUS,
-      'blur': ActionType.BLUR,
-      'hover': ActionType.HOVER,
-      'keypress': ActionType.KEYPRESS,
-      'key': ActionType.KEYPRESS,
-      'scroll': ActionType.SCROLL,
-    };
-
-    return actionMap[normalized] || ActionType.CLICK;
   }
 
   private attemptStepFix(step: ExecuteStep, errors: string[]): ExecuteStep {
@@ -371,8 +255,6 @@ export class ExecuteAgentService {
 
 **New Task:** ${instruction}
 **Referenced Workflow:** ${session.taskGoal}
-**Session Success:** ${session.metadata.success ? 'Yes' : 'No'}
-**Complexity:** ${session.metadata.complexity}
 **Original Steps:** ${session.actions.length}
 **Pages Visited:** ${session.metadata.pagesVisited.length}
 
@@ -424,7 +306,7 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
     }
   }
 
-  private async executeStepsWithEnhancedMonitoring(steps: ExecuteStep[]): Promise<ExecuteResult> {
+  private async executeStepsWithMonitoring(steps: ExecuteStep[]): Promise<ExecuteResult> {
     const startTime = Date.now();
     let successCount = 0;
     let failureCount = 0;
@@ -636,7 +518,7 @@ The task execution is now complete. ${overallSuccess ? 'All critical steps were 
       chatContainer.appendChild(messageDiv);
       chatContainer.scrollTop = chatContainer.scrollHeight;
     } catch (error) {
-      console.error('[EnhancedExecuteAgentService] Error adding message to chat:', error);
+      console.error('[ExecuteAgentService] Error adding message to chat:', error);
     }
   }
 
@@ -658,7 +540,7 @@ The task execution is now complete. ${overallSuccess ? 'All critical steps were 
       this.currentTask = null;
       this.sessionSelector = null;
     } catch (error) {
-      console.error('[EnhancedExecuteAgentService] Error during destruction:', error);
+      console.error('[ExecuteAgentService] Error during destruction:', error);
     }
   }
 }
