@@ -13,9 +13,6 @@ export class PromptGenerator {
    * Generates the system prompt with recording context
    */
   static generateSystemPrompt(session: SmartRecordingSession): string {
-    const actions = this.extractActionPatterns(session);
-    const elementSelectors = this.extractElementSelectors(session);
-    const timingInfo = this.extractTimingInfo(session);
     
     return `You are a browser automation expert that generates precise action sequences based on recorded workflows.
 
@@ -148,102 +145,7 @@ Your response must be a valid JSON array of action objects. Do not include any e
 ${this.generateAdditionalGuidelines(session)}`;
   }
 
-  /**
-   * Extracts common action patterns from the recording session
-   */
-  private static extractActionPatterns(session: SmartRecordingSession): string[] {
-    if (!session || !session.actions || session.actions.length === 0) {
-      return [];
-    }
 
-    const patterns: string[] = [];
-    const actionCounts = new Map<string, number>();
-
-    // Count action types
-    session.actions.forEach(action => {
-      const type = action.type;
-      actionCounts.set(type, (actionCounts.get(type) || 0) + 1);
-    });
-
-    // Extract common sequences (e.g., click followed by type)
-    for (let i = 0; i < session.actions.length - 1; i++) {
-      const current = session.actions[i];
-      const next = session.actions[i + 1];
-      const pattern = `${current.type}_${next.type}`;
-      
-      if (!patterns.includes(pattern)) {
-        patterns.push(pattern);
-      }
-    }
-
-    return Array.from(actionCounts.keys());
-  }
-
-  /**
-   * Extracts element selectors used in the recording
-   */
-  private static extractElementSelectors(session: SmartRecordingSession): string[] {
-    const selectors = new Set<string>();
-    
-    session.actions.forEach(action => {
-      if (action.target) {
-        // Extract clean selectors from the target description
-        const targetStr = typeof action.target === 'string' 
-          ? action.target 
-          : action.target.description || '';
-        
-        // Extract ID
-        const idMatch = targetStr.match(/id:\s*#?([^\s|]+)/);
-        if (idMatch) {
-          selectors.add(`#${idMatch[1]}`);
-        }
-        
-        // Extract name
-        const nameMatch = targetStr.match(/name:\s*([^\s|]+)/);
-        if (nameMatch) {
-          selectors.add(`[name='${nameMatch[1]}']`);
-        }
-        
-        // Extract class
-        const classMatch = targetStr.match(/class:\s*([^\s|]+)/);
-        if (classMatch) {
-          const className = classMatch[1].split(' ')[0];
-          selectors.add(`.${className}`);
-        }
-      }
-    });
-    
-    return Array.from(selectors);
-  }
-  /**
-   * Extracts timing information from the recording
-   */
-  private static extractTimingInfo(session: SmartRecordingSession): { 
-    averageDelay: number, 
-    totalDuration: number 
-  } {
-    if (!session || !session.actions || session.actions.length <= 1) {
-      return { averageDelay: 1000, totalDuration: 0 };
-    }
-
-    let totalDelay = 0;
-    let count = 0;
-
-    for (let i = 1; i < session.actions.length; i++) {
-      const delay = session.actions[i].timestamp - session.actions[i-1].timestamp;
-      if (delay > 0 && delay < 30000) { // Ignore unreasonable delays
-        totalDelay += delay;
-        count++;
-      }
-    }
-
-    const averageDelay = count > 0 ? Math.round(totalDelay / count) : 1000;
-    const totalDuration = session.endTime && session.startTime 
-      ? session.endTime - session.startTime 
-      : session.actions[session.actions.length - 1].timestamp - session.actions[0].timestamp;
-
-    return { averageDelay, totalDuration };
-  }
 
   /**
    * Formats recorded actions into a readable reference format
@@ -254,10 +156,10 @@ ${this.generateAdditionalGuidelines(session)}`;
     }
 
     return session.actions.map((action, index) => {
-      // Format the target in the expected element identifier format
+
       const targetSelector = this.formatElementIdentifier(action.target);
       
-      // Format the action into a readable step
+
       let step = `${index + 1}. [${action.type}] ${this.formatActionDescription(action)}`;
       
       if (targetSelector) {
@@ -290,22 +192,22 @@ ${this.generateAdditionalGuidelines(session)}`;
 
     const parts: string[] = [];
     
-    // Start with element type/tag name
+
     if (element.description) {
       parts.push(element.description);
     }
     
-    // Format the identifier based on available properties
+
     let identifier = '';
     
-    // Add tag name if available
+
     if (element.parentElement?.tagName) {
       identifier += element.parentElement.tagName.toLowerCase();
     } else if (element.parentContext?.tagName) {
       identifier += element.parentContext.tagName.toLowerCase();
     }
     
-    // Add ID if available
+
     if (element.uniqueIdentifiers?.some(id => id.includes('#'))) {
       const idSelector = element.uniqueIdentifiers.find(id => id.includes('#'));
       if (idSelector) {
@@ -317,14 +219,14 @@ ${this.generateAdditionalGuidelines(session)}`;
       identifier += `#${element.parentContext.id}`;
     }
     
-    // Add class if available
+
     if (element.parentElement?.className) {
       identifier += `.${element.parentElement.className.split(' ')[0]}`;
     } else if (element.parentContext?.className) {
       identifier += `.${element.parentContext.className.split(' ')[0]}`;
     }
     
-    // Add attributes if available
+
     if (element.role) {
       identifier += `[role="${element.role}"]`;
     }
@@ -333,17 +235,17 @@ ${this.generateAdditionalGuidelines(session)}`;
       identifier += `[href="${element.href}"]`;
     }
     
-    // Add text content if available
+
     if (element.text) {
       identifier += `@${element.text}`;
     }
     
-    // If we have a selector from the recording, use it as fallback
+
     if (!identifier && element.selector) {
       identifier = element.selector;
     }
     
-    // If we still don't have an identifier, use the xpath as last resort
+
     if (!identifier && element.xpath) {
       identifier = `xpath:${element.xpath}`;
     }
@@ -428,19 +330,19 @@ ${this.generateAdditionalGuidelines(session)}`;
   private static generateAdditionalGuidelines(session: SmartRecordingSession): string {
     const guidelines: string[] = [];
     
-    // Check if there are form submissions in the recording
+
     const hasFormSubmissions = session.actions.some(a => a.type === ActionType.SUBMIT);
     if (hasFormSubmissions) {
       guidelines.push('8. For form submissions, ensure all required fields are filled before submitting');
     }
     
-    // Check if there are navigations in the recording
+
     const hasNavigations = session.actions.some(a => a.type === ActionType.NAVIGATION);
     if (hasNavigations) {
       guidelines.push('9. Add wait_for_element actions after navigation to ensure the page has loaded');
     }
     
-    // Check if there are keypresses in the recording
+
     const hasKeypresses = session.actions.some(a => a.type === ActionType.KEYPRESS);
     if (hasKeypresses) {
       guidelines.push('10. Ensure elements are focused before sending keypress actions');
@@ -454,25 +356,24 @@ ${this.generateAdditionalGuidelines(session)}`;
    */
   static parseAndValidateResponse(llmResponse: string): any[] | null {
     try {
-      // Extract JSON array from the response (in case it's wrapped in markdown code blocks)
-      const jsonMatch = llmResponse.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || 
-                        llmResponse.match(/(\[[\s\S]*?\])/);
-      
-      if (!jsonMatch || !jsonMatch[1]) {
+      let jsonString = this.extractJsonArray(llmResponse);
+
+
+      if (!jsonString) {
         console.error('No valid JSON array found in the response');
         return null;
       }
-      
-      const parsedSteps = JSON.parse(jsonMatch[1]);
-      
+
+      const parsedSteps = JSON.parse(jsonString);
+
       if (!Array.isArray(parsedSteps)) {
         console.error('Parsed result is not an array');
         return null;
       }
       
-      // Validate each step
+
       const validatedSteps = parsedSteps.map(step => {
-        // Ensure all required fields are present
+
         if (!step.action || typeof step.action !== 'string') {
           throw new Error(`Invalid action: ${JSON.stringify(step)}`);
         }
@@ -498,5 +399,68 @@ ${this.generateAdditionalGuidelines(session)}`;
       console.error('Error parsing LLM response:', error);
       return null;
     }
+  }
+
+  /**
+   * Extracts JSON array from LLM response using balanced bracket parsing
+   */
+  private static extractJsonArray(response: string): string | null {
+
+    const codeBlockMatch = response.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (codeBlockMatch && codeBlockMatch[1]) {
+      return codeBlockMatch[1].trim();
+    }
+
+
+    const arrayStart = response.indexOf('[');
+    if (arrayStart === -1) {
+      return null;
+    }
+
+
+    let bracketCount = 0;
+    let inString = false;
+    let escaped = false;
+    let arrayEnd = -1;
+
+    for (let i = arrayStart; i < response.length; i++) {
+      const char = response[i];
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (char === '\\' && inString) {
+        escaped = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (!inString) {
+        if (char === '[') {
+          bracketCount++;
+        } else if (char === ']') {
+          bracketCount--;
+          if (bracketCount === 0) {
+            arrayEnd = i;
+            break;
+          }
+        }
+      }
+    }
+
+    if (arrayEnd === -1) {
+      console.warn('[PromptGenerator] Could not find matching closing bracket');
+      return null;
+    }
+
+    const jsonString = response.substring(arrayStart, arrayEnd + 1);
+    console.log('[PromptGenerator] Extracted JSON using balanced parsing, length:', jsonString.length);
+    return jsonString;
   }
 }
