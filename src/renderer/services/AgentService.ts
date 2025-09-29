@@ -900,6 +900,13 @@ export class AgentService implements IAgentService {
 
   private addMessageToChat(role: string, content: string, timing?: number): void {
     try {
+      // Use the new ChatMessage component if available
+      if (typeof window !== 'undefined' && window.ChatMessage) {
+        window.ChatMessage.addMessageToChat(role, content, timing);
+        return;
+      }
+      
+      // Fallback to original implementation if ChatMessage is not available
       let chatContainer = document.getElementById('chatContainer');
       
       if (!chatContainer) {
@@ -997,6 +1004,13 @@ export class AgentService implements IAgentService {
   }
 
   private clearLoadingMessages(): void {
+    // Use the new ChatMessage component if available
+    if (typeof window !== 'undefined' && window.ChatMessage) {
+      window.ChatMessage.clearLoadingMessages();
+      return;
+    }
+    
+    // Fallback to original implementation
     const loadingMessages = document.querySelectorAll('.loading');
     loadingMessages.forEach(message => {
       const parentMessage = message.closest('.chat-message');

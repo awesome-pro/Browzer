@@ -280,27 +280,48 @@ I'll modify the specific targets, values, and selectors from the recording to ma
   }
 
   private displayExecutionPlan(steps: ExecuteStep[], session: any): void {
-    let planMessage = `## Execution Plan
+    // Check if the ExecutionSteps component is available
+    if (typeof window !== 'undefined' && window.ExecutionSteps) {
+      // Create a container for the chat message
+      let chatContainer = document.getElementById('chatContainer');
+      if (!chatContainer) return;
+      
+      const messageDiv = document.createElement('div');
+      messageDiv.className = 'chat-message assistant-message';
+      messageDiv.dataset.role = 'assistant';
+      messageDiv.dataset.timestamp = new Date().toISOString();
+      
+      // Create the execution plan visualization
+      const executionPlan = window.ExecutionSteps.createExecutionPlan(steps, session);
+      messageDiv.appendChild(executionPlan);
+      
+      chatContainer.appendChild(messageDiv);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    } else {
+      // Fallback to original text-based plan if component not available
+      let planMessage = `## Execution Plan
 
 I've analyzed the recorded workflow and generated **${steps.length} execution steps** based on the proven pattern. Here's what I'll do:
 
 ### Steps Overview:`;
 
-    steps.forEach((step, index) => {
-      planMessage += `\n${index + 1}. ${step.action} - ${step.reasoning}`;
-      if (step.reasoning) {
-        planMessage += `\n   *${step.reasoning}*`;
-      }
-    });
+      steps.forEach((step, index) => {
+        planMessage += `\n${index + 1}. ${step.action} - ${step.reasoning}`;
+        if (step.reasoning) {
+          planMessage += `\n   *${step.reasoning}*`;
+        }
+      });
 
-    planMessage += `\n\n### Execution Settings
+      planMessage += `\n\n### Execution Settings
 - **Max retries per step:** ${this.MAX_RETRIES_PER_STEP}
 - **Step timeout:** ${this.STEP_TIMEOUT / 1000}s
 - **Total timeout:** ${this.MAX_EXECUTION_TIME / 1000}s
 
 I'll now begin executing these steps. You'll see real-time progress updates as each step completes.`;
 
-    this.addMessageToChat('assistant', planMessage);
+      this.addMessageToChat('assistant', planMessage);
+    }
+    
     if (this.currentTask) {
       this.currentTask.steps = steps as ExecuteStep[];
     }
@@ -402,10 +423,30 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
   }
 
   private updateStepProgress(index: number, step: ExecuteStep, status: string, result?: any, error?: string): void {
+    // Check if the ExecutionSteps component is available
+    if (typeof window !== 'undefined' && window.ExecutionSteps) {
+      // Find the execution plan container
+      const chatContainer = document.getElementById('chatContainer');
+      if (!chatContainer) return;
+      
+      const executionPlanContainer = chatContainer.querySelector('.execution-plan');
+      if (executionPlanContainer) {
+        // Update the step status in the visual component
+        window.ExecutionSteps.updateStepStatus(
+          executionPlanContainer as HTMLElement,
+          step.id,
+          status as 'pending' | 'running' | 'completed' | 'failed',
+          result,
+          error
+        );
+        return;
+      }
+    }
+    
+    // Fallback to original text-based progress if component not available
     const statusIcon = status === 'completed' ? '✅' : 
                       status === 'failed' ? '❌' : 
                       status === 'running' ? '🔄' : '⭕';
-
     
     let progressMessage = `**Step ${index + 1}:** ${step.reasoning} ${statusIcon}`;
     
@@ -432,7 +473,32 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
     executionTime: number,
     overallSuccess: boolean
   ): void {
-    const summary = `## Execution Summary
+    // Check if the ExecutionSteps component is available
+    if (typeof window !== 'undefined' && window.ExecutionSteps) {
+      // Create a container for the chat message
+      let chatContainer = document.getElementById('chatContainer');
+      if (!chatContainer) return;
+      
+      const messageDiv = document.createElement('div');
+      messageDiv.className = 'chat-message assistant-message';
+      messageDiv.dataset.role = 'assistant';
+      messageDiv.dataset.timestamp = new Date().toISOString();
+      
+      // Create the execution summary visualization
+      const executionSummary = window.ExecutionSteps.createExecutionSummary(
+        steps, 
+        successCount, 
+        failureCount, 
+        executionTime,
+        overallSuccess
+      );
+      messageDiv.appendChild(executionSummary);
+      
+      chatContainer.appendChild(messageDiv);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    } else {
+      // Fallback to original text-based summary if component not available
+      const summary = `## Execution Summary
 
 ${overallSuccess ? '🎉 **Task Completed Successfully!**' : '⚠️ **Task Completed with Issues**'}
 
@@ -453,7 +519,8 @@ ${steps.filter(s => s.status === 'failed').map((s) =>
 
 The task execution is now complete. ${overallSuccess ? 'All critical steps were successful.' : 'Some steps failed, but the main workflow completed.'}`;
 
-    this.addMessageToChat('assistant', summary);
+      this.addMessageToChat('assistant', summary);
+    }
   }
 
   private generatePerformanceAnalysis(steps: ExecuteStep[], totalTime: number): string {
@@ -481,6 +548,13 @@ The task execution is now complete. ${overallSuccess ? 'All critical steps were 
 
   private addMessageToChat(role: string, content: string, timing?: number): void {
     try {
+      // Use the new ChatMessage component if available
+      if (typeof window !== 'undefined' && window.ChatMessage) {
+        window.ChatMessage.addMessageToChat(role, content, timing);
+        return;
+      }
+      
+      // Fallback to original implementation if ChatMessage is not available
       let chatContainer = document.getElementById('chatContainer');
       
       if (!chatContainer) {
@@ -523,6 +597,13 @@ The task execution is now complete. ${overallSuccess ? 'All critical steps were 
   }
 
   private clearLoadingMessages(): void {
+    // Use the new ChatMessage component if available
+    if (typeof window !== 'undefined' && window.ChatMessage) {
+      window.ChatMessage.clearLoadingMessages();
+      return;
+    }
+    
+    // Fallback to original implementation
     const loadingMessages = document.querySelectorAll('.loading');
     Array.from(loadingMessages).forEach(message => {
       const parentMessage = message.closest('.chat-message');

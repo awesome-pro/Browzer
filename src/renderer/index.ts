@@ -2,6 +2,10 @@
 import './styles.css';
 import './recording-session-list.css';
 import './recording.css';
+import './components/ChatMessage.css';
+import './components/ChatMessage';
+import './components/ExecutionSteps.css';
+import './components/ExecutionSteps';
 
 // Services
 import { BrowserService } from './services/BrowserService';
@@ -703,18 +707,15 @@ class BrowzerApp {
 // ========================= APPLICATION BOOTSTRAP =========================
 let browzerApp: BrowzerApp;
 
-// Initialize the application
 const initializeApplication = async () => {
   try {
     browzerApp = new BrowzerApp();
     await browzerApp.init();
     
-    // Expose public API to window
     (window as any).browzerApp = browzerApp.getPublicAPI();
   } catch (error) {
     console.error('[Bootstrap] Failed to initialize Browzer application:', error);
     
-    // Show error to user
     document.body.innerHTML = `
       <div style="padding: 20px; color: red; font-family: Arial, sans-serif;">
         <h1>Application Failed to Initialize</h1>
@@ -725,16 +726,13 @@ const initializeApplication = async () => {
   }
 };
 
-// Start the application
 initializeApplication();
 
-// Cleanup on page unload
 window.addEventListener('beforeunload', () => {
   if (browzerApp) {
     browzerApp.destroy();
   }
 });
 
-// Export for testing purposes
 export { BrowzerApp };
 export default () => browzerApp;
