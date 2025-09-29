@@ -208,6 +208,8 @@ export enum ActionType {
     DYNAMIC_CONTENT = 'dynamic_content', // Dynamic content loaded
     
     REACT_EVENT = 'react_event',
+    MODAL_OPEN = 'modal_open',
+    MODAL_CLOSE = 'modal_close',
 
     UNKNOWN = 'unknown',
   }
