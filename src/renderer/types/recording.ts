@@ -80,6 +80,15 @@ export interface ElementContext {
     className?: string;
     text?: string;
   };
+
+  formContext?: {
+    action?: string;
+    method?: string;
+    name?: string;
+    id?: string;
+    className?: string;
+    text?: string;
+  };
 }
 
 export interface PageContext {

@@ -26,6 +26,8 @@ export class SmartRecordingEngine {
   private eventListeners: Map<string, EventListener> = new Map();
   private recentFocusEvents: Map<string, {timestamp: number, elementContext: any}> = new Map();
   private readonly FOCUS_CLICK_CONSOLIDATION_WINDOW = 1500;
+  private pendingFormSubmissions: Map<string, {timestamp: number, target: any}> = new Map();
+  private readonly FORM_SUBMIT_CONSOLIDATION_WINDOW = 1000; // ms
 
   private constructor() {
     this.initializeWebviewEventHandlers();
@@ -178,18 +180,15 @@ private handleEvent(eventData: any): void {
         break;
       case 'modal_open':
         case 'dialog_open':
-          // console.log('Modal open:', eventData);
           break;
         case 'modal_close':
         case 'dialog_close':
         case 'cancel':
         case 'close':
-          // console.log('Modal close:', eventData);
           break;
       case 'dom_change':
       case 'dynamic_content_change':
         case 'dom_significant_change':
-          // console.log('DOM change:', eventData);
           break;
         case 'animation_start':
         case 'animation_end':
@@ -197,18 +196,14 @@ private handleEvent(eventData: any): void {
           this.handleAnimationEvent(eventData);
           break;
         case 'play':
-          // console.log('Media play:', eventData);
           break;
         case 'pause':
-          // console.log('Media pause:', eventData);
           break;
         case 'ended':
-          // console.log('Media ended:', eventData);
           break;
         case 'touch_start':
         case 'touch_end':
         case 'touch_move':
-          // console.log('Touch event:', eventData);
           break;
         case 'copy':
         case 'cut':
@@ -216,13 +211,10 @@ private handleEvent(eventData: any): void {
           this.handleClipboardEvent(eventData);
           break;
         case 'async_request_start':
-          // console.log('Async request start:', eventData);
           break;
         case 'async_request_complete':
-          // console.log('Async request complete:', eventData);
           break;
         case 'async_request_error':
-          // console.log('Async request error:', eventData);
           break;
         default:
         this.recordDefaultAction(eventData);
@@ -301,7 +293,7 @@ private processNavigationBuffer(eventData: any): void {
     domain = 'website';
   }
   let navigationDescription = '';
-  navigationDescription = `Navigate to "${eventData.url}"`;
+  navigationDescription = `Navigate to "${RecordingUtil.cleanGoogleUrl(eventData.url)}"`;
   const cleanUrl = RecordingUtil.cleanGoogleUrl(eventData.url);
   
   const action: SemanticAction = {
@@ -460,24 +452,16 @@ private processClickSequence(url: string, pageTitle: string): void {
 private generateCompleteSelector(element: any): string {
   try {
     if (!element) return '';
-    
-    // Store all potential selectors
     const selectorParts: string[] = [];
     const uniqueIdentifiers: string[] = [];
-    
-    // Basic element info
     const tagName = element.tagName?.toLowerCase();
     if (tagName) {
       selectorParts.push(`element ${tagName}| `);
     }
-    
-    // ID is the most reliable selector
     if (element.id && typeof element.id === 'string' && element.id.trim()) {
       selectorParts.push(`id: ${element.id}| `);
       uniqueIdentifiers.push(`#${element.id}`);
     }
-    
-    // Process attributes (data attributes, name, role, aria)
     if (element.attributes && typeof element.attributes !== 'undefined') {
       try {
         const attributes = Array.from(element.attributes) as Array<{name: string, value: string}>;
@@ -485,8 +469,6 @@ private generateCompleteSelector(element: any): string {
           if (!attr || !attr.name || typeof attr.name !== 'string') continue;
           
           const attrValue = attr.value && typeof attr.value === 'string' ? attr.value : '';
-          
-          // Prioritize test-related data attributes
           if (attr.name.startsWith('data-test') || 
               attr.name.startsWith('data-cy') || 
               attr.name.startsWith('data-qa') || 
@@ -494,7 +476,6 @@ private generateCompleteSelector(element: any): string {
             selectorParts.push(`${attr.name}: ${attrValue}| `);
             uniqueIdentifiers.push(`[${attr.name}="${attrValue}"]`);
           }
-          // Other important attributes
           else if (attr.name.startsWith('data-') || 
                    attr.name === 'name' || 
                    attr.name === 'role' || 
@@ -522,41 +503,28 @@ private generateCompleteSelector(element: any): string {
         console.error('[RecordingEngine] Error processing attributes:', attrError);
       }
     }
-    
-    // Class names
     if (element.className && typeof element.className === 'string' && element.className.trim()) {
       const classNames = element.className.split(' ').filter(Boolean);
       if (classNames.length > 0) {
         selectorParts.push(`class: ${element.className}| `);
-        
-        // Add the most specific class (usually the longest one)
         const sortedClasses = [...classNames].sort((a, b) => b.length - a.length);
         if (sortedClasses.length > 0) {
           uniqueIdentifiers.push(`${tagName}.${sortedClasses[0]}`);
-          
-          // Also add a selector with multiple classes for better specificity
           if (sortedClasses.length > 1) {
             uniqueIdentifiers.push(`${tagName}.${sortedClasses[0]}.${sortedClasses[1]}`);
           }
         }
       }
     }
-    
-    // Text content is very useful for buttons and links
     if (element.textContent && typeof element.textContent === 'string' && element.textContent.trim()) {
       const text = element.textContent.trim();
       const shortText = text.length > 30 ? text.substring(0, 30) + '...' : text;
       selectorParts.push(`text: "${shortText}"| `);
-      
-      // For buttons and links, text content is often a reliable identifier
       if ((tagName === 'button' || tagName === 'a' || 
            (element.role && (element.role === 'button' || element.role === 'link')))) {
-        // Store text-based selector for buttons and links
         uniqueIdentifiers.push(`${tagName}:has(text="${shortText}")`);
       }
     }
-    
-    // Add nth-child for position-based selection as a last resort
     try {
       const parent = element.parentElement || element.parentContext;
       if (parent && parent.children && Array.isArray(parent.children)) {
@@ -564,8 +532,6 @@ private generateCompleteSelector(element: any): string {
         const index = siblings.indexOf(element);
         if (index !== -1) {
           selectorParts.push(`:nth-child(${index + 1})| `);
-          
-          // If parent has an ID, create a more specific selector
           if (parent.id && typeof parent.id === 'string' && parent.id.trim()) {
             uniqueIdentifiers.push(`#${parent.id} > ${tagName}:nth-child(${index + 1})`);
           }
@@ -574,8 +540,6 @@ private generateCompleteSelector(element: any): string {
     } catch (parentError) {
       console.error('[RecordingEngine] Error accessing parent:', parentError);
     }
-    
-    // Store unique identifiers in the element for later use
     if (uniqueIdentifiers.length > 0) {
       element.uniqueIdentifiers = uniqueIdentifiers;
     }
@@ -659,13 +623,37 @@ private handleInputEvent(eventData: any): void {
 
 private handleKeyEvent(eventData: any): void {
   if (!eventData.target || !eventData.key) return;
-  if (eventData.type !== 'keydown') return;
-  const specialKeys = ['Enter', 'Escape', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Delete', 'Ctrl', 'Alt', 'Shift'];
-  if (!specialKeys.includes(eventData.key)) return;
-  if (eventData.key === 'Enter' && this.isFormElement(eventData.target) && 
-      this.hasVisibleSubmitButton(eventData.target)) {
-    return;
-  }
+    if (eventData.type !== 'keydown') return;
+
+    const specialKeys = ['Enter', 'Escape', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Delete', 'Ctrl', 'Alt', 'Shift'];
+    if (!specialKeys.includes(eventData.key)) return;
+    if (eventData.key === 'Enter') {
+      const target = eventData.target;
+      if (this.isFormElement(target) && this.hasVisibleSubmitButton(target)) {
+        console.log('[RecordingEngine] Suppressing Enter key - form has visible submit button');
+        return;
+      }
+      const now = Date.now();
+      const recentSubmissionThreshold = 800;
+      
+      if (this.activeSession && this.activeSession.actions) {
+        const hasRecentFormSubmission = this.activeSession.actions.some((action: any) => {
+          return action.type === ActionType.SUBMIT && 
+                 now - action.timestamp < recentSubmissionThreshold;
+        });
+        
+        if (hasRecentFormSubmission) {
+          console.log('[RecordingEngine] Suppressing Enter key - recent form submission detected');
+          return;
+        }
+      }
+      for (const [formId, submission] of this.pendingFormSubmissions.entries()) {
+        if (now - submission.timestamp < recentSubmissionThreshold) {
+          console.log('[RecordingEngine] Suppressing Enter key - pending form submission detected');
+          return;
+        }
+      }
+    }
   
   const target = eventData.target;
   const elementContext = this.convertElementContext(target);
@@ -722,10 +710,45 @@ private isFormElement(element: any): boolean {
 
 private hasVisibleSubmitButton(element: any): boolean {
   try {
-    const form = element.form || (element.tagName?.toLowerCase() === 'form' ? element : null);
+    const form = element.form || (element.tagName?.toLowerCase() === 'form' ? element : null) ||
+                 element.closest?.('form');
     if (!form) return false;
-    const submitButtons = form.querySelectorAll('button[type="submit"], input[type="submit"]');
-    return submitButtons.length > 0;
+    const submitSelectors = [
+      'button[type="submit"]',
+      'input[type="submit"]',
+      'button:not([type])', // buttons default to submit
+      '[role="button"]'
+    ];
+    
+    for (const selector of submitSelectors) {
+      const buttons = form.querySelectorAll ? form.querySelectorAll(selector) : [];
+      for (const button of buttons) {
+        const style = window.getComputedStyle ? window.getComputedStyle(button) : {};
+        const isVisible =( style as any).display !== 'none' && 
+                         (style as any).visibility !== 'hidden' && 
+                         (style as any).opacity !== '0';
+        if (isVisible) return true;
+      }
+    }
+    const allButtons = form.querySelectorAll ? form.querySelectorAll('button, [role="button"]') : [];
+    for (const button of allButtons) {
+      const text = button.textContent?.toLowerCase() || button.innerText?.toLowerCase() || '';
+      const isSubmitLike = text.includes('submit') || text.includes('create') || 
+                          text.includes('save') || text.includes('send') || 
+                          text.includes('post') || text.includes('publish') ||
+                          text.includes('sign up') || text.includes('sign in') ||
+                          text.includes('login') || text.includes('register');
+      
+      if (isSubmitLike) {
+        const style = window.getComputedStyle ? window.getComputedStyle(button) : {};
+        const isVisible =( style as any).display !== 'none' && 
+                         (style as any).visibility !== 'hidden' && 
+                         (style as any).opacity !== '0';
+        if (isVisible) return true;
+      }
+    }
+    
+    return false;
   } catch (e) {
     return false;
   }
@@ -736,55 +759,69 @@ private handleFormSubmitEvent(eventData: any): void {
   
   const target = eventData.target;
   const now = Date.now();
-  const recentClickThreshold = 800; // ms - Increased to catch more cases
+  const formId = target.id || target.name || `form_${target.tagName}_${now}`;
+  const recentClickThreshold = 1000; // Increased threshold
   let hasRecentSubmitButtonClick = false;
-  const recentActions = this.recentActions.filter(action => now - action.timestamp < recentClickThreshold);
-  for (const action of recentActions) {
-    const actionHash = action.hash;
-    if (actionHash.includes('submit') || 
-        actionHash.includes('form') || 
-        actionHash.includes('create') || 
-        actionHash.includes('sign') || 
-        actionHash.includes('login') || 
-        actionHash.includes('register')) {
-      hasRecentSubmitButtonClick = true;
-      break;
-    }
-  }
-  if (!hasRecentSubmitButtonClick && this.activeSession && this.activeSession.actions && this.activeSession.actions.length > 0) {
+  if (this.activeSession && this.activeSession.actions && this.activeSession.actions.length > 0) {
     hasRecentSubmitButtonClick = this.activeSession.actions.some((action: any) => {
       if (action.type !== ActionType.CLICK || now - action.timestamp > recentClickThreshold) {
         return false;
       }
+      
       const clickedElement = action.target;
       if (!clickedElement) return false;
       
       const description = clickedElement.description?.toLowerCase() || '';
+      const elementType = clickedElement.elementType?.toLowerCase() || '';
+      const role = clickedElement.role?.toLowerCase() || '';
       const isSubmitButton = 
-        (clickedElement.role === 'button') ||
-        (clickedElement.elementType === 'submit') ||
+        (elementType === 'submit') ||
+        (elementType === 'button' && description.includes('submit')) ||
+        (role === 'button') ||
         (description.includes('submit')) ||
         (description.includes('create')) ||
-        (description.includes('sign')) ||
+        (description.includes('sign up')) ||
+        (description.includes('sign in')) ||
         (description.includes('login')) ||
         (description.includes('register')) ||
-        (description.includes('save'));
+        (description.includes('save')) ||
+        (description.includes('send')) ||
+        (description.includes('post')) ||
+        (description.includes('publish'));
         
       return isSubmitButton;
     });
   }
   if (hasRecentSubmitButtonClick) {
-    console.log('[RecordingEngine] Skipping duplicate form submission event');
+    console.log('[RecordingEngine] Suppressing duplicate form submission - recent submit button click detected');
     return;
   }
+  if (this.pendingFormSubmissions.has(formId)) {
+    const pending = this.pendingFormSubmissions.get(formId);
+    if (pending && now - pending.timestamp < 500) {
+      console.log('[RecordingEngine] Suppressing duplicate form submission - too close to previous');
+      return;
+    }
+  }
+  this.pendingFormSubmissions.set(formId, { timestamp: now, target });
+  setTimeout(() => {
+    this.pendingFormSubmissions.delete(formId);
+  }, this.FORM_SUBMIT_CONSOLIDATION_WINDOW);
   
   const elementContext = this.convertElementContext(target);
-  console.log("form target: ", target)
+  
   let formDescription = 'form';
   if (target.id) {
     formDescription = `form #${target.id}`;
   } else if (target.name) {
     formDescription = `form ${target.name}`;
+  } else if (target.action) {
+    try {
+      const actionUrl = new URL(target.action, window.location.href);
+      formDescription = `form submitting to ${actionUrl.pathname}`;
+    } catch (e) {
+      formDescription = 'form';
+    }
   }
 
   const action: SemanticAction = {
@@ -813,6 +850,7 @@ private handleFormSubmitEvent(eventData: any): void {
     }
   }));
 }
+
 
 private handleReactEvent(eventData: any): void {
   if (!eventData.target) return;
@@ -1068,7 +1106,6 @@ private convertElementContext(nativeElement: any): ElementContext {
   const isSvg = nativeElement.isSvg || nativeElement.tagName?.toLowerCase() === 'svg';
   
   let description = 'element: ' + nativeElement.tagName?.toLowerCase() + '| ';
-  
   if (isSvg && nativeElement.parentInteractiveElement) {
     const parent = nativeElement.parentInteractiveElement;
     
@@ -1083,8 +1120,6 @@ private convertElementContext(nativeElement: any): ElementContext {
     if (parent.role) {
       description += `parent-role: ${parent.role}| `;
     }
-    
-    // Add text content from parent or nearest text
     if (parent.text) {
       description += `text: "${parent.text.substring(0, 30)}${parent.text.length > 30 ? '...' : ''}"| `;
     } else if (nativeElement.nearestTextContent) {
@@ -1102,23 +1137,38 @@ private convertElementContext(nativeElement: any): ElementContext {
     if (nativeElement.id) {
       description += `id: #${nativeElement.id}| `;
     } else if (nativeElement.className) {
-      description += `class: ${nativeElement.className}| `;
+      const classes = nativeElement.className.split(' ').filter(Boolean);
+      const buttonClasses = classes.filter((cls: string) => 
+        cls.includes('btn') || cls.includes('button') || 
+        cls.includes('submit') || cls.includes('primary')
+      );
+      const relevantClasses = buttonClasses.length > 0 ? buttonClasses : classes.slice(0, 2);
+      description += `class: ${relevantClasses.join(' ')}| `;
     } 
     
     if (nativeElement.name) {
       description += `name: ${nativeElement.name}| `;
     }
-    
     if (nativeElement.text) {
-      description += `text: "${nativeElement.text.substring(0, 30)}${nativeElement.text.length > 30 ? '...' : ''}"| `;
+      const text = nativeElement.text.trim();
+      description += `text: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"| `;
     }
     
     if (nativeElement.attributes && nativeElement.attributes['aria-label']) {
       description += `aria-label: ${nativeElement.attributes['aria-label']}| `;
     }
+    if (nativeElement.formContext) {
+      const form = nativeElement.formContext;
+      if (form.action) {
+        try {
+          const actionUrl = new URL(form.action, window.location.href);
+          description += `form-action: ${actionUrl.pathname}| `;
+        } catch (e) {
+          description += `form-action: ${form.action}| `;
+        }
+      }
+    }
   }
-  
-  // Add SVG-specific data to the description if available
   if (isSvg && nativeElement.svgData) {
     if (nativeElement.svgData.id) {
       description += `svg-id: ${nativeElement.svgData.id}| `;
@@ -1138,8 +1188,21 @@ private convertElementContext(nativeElement: any): ElementContext {
   
   let selector = this.generateCompleteSelector(nativeElement);
   let role = nativeElement.role || nativeElement.attributes?.role || 'generic';
-  
-  // For SVG elements, enhance the selector with parent information if available
+  if (role === 'generic' || !role) {
+    const tagName = nativeElement.tagName?.toLowerCase();
+    const type = nativeElement.type?.toLowerCase();
+    const className = nativeElement.className?.toLowerCase() || '';
+    const text = nativeElement.text?.toLowerCase() || '';
+    
+    if (tagName === 'button' || type === 'button' || type === 'submit') {
+      role = 'button';
+    } else if (className.includes('btn') || className.includes('button')) {
+      role = 'button';
+    } else if (text && (text.includes('submit') || text.includes('create') || 
+                       text.includes('save') || text.includes('send'))) {
+      role = 'button';
+    }
+  }
   if (isSvg && nativeElement.parentInteractiveElement) {
     const parent = nativeElement.parentInteractiveElement;
     if (parent.id) {
@@ -1167,7 +1230,8 @@ private convertElementContext(nativeElement: any): ElementContext {
       className: nativeElement.parentInteractiveElement.className,
       text: nativeElement.parentInteractiveElement.text
     } : undefined,
-    svgData: nativeElement.svgData
+    svgData: nativeElement.svgData,
+    formContext: nativeElement.formContext
   };
 }
 
@@ -1537,6 +1601,96 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     
     return JSON.stringify(hashObj);
   }
+
+  private findActualClickTarget(target: any): any {
+    if (!target) return target;
+    
+    const lowPriorityTags = ['span', 'div', 'i', 'svg', 'path'];
+    const tagName = target.tagName?.toLowerCase();
+    
+    if (!tagName || !lowPriorityTags.includes(tagName)) {
+      return target;
+    }
+    let currentElement = target;
+    let depth = 0;
+    const maxDepth = 3; // Limit search depth
+    
+    while (currentElement && depth < maxDepth) {
+      const parent = currentElement.parentElement || currentElement.parentContext;
+      if (!parent) break;
+      
+      const parentTag = parent.tagName?.toLowerCase();
+      const parentRole = parent.role || parent.getAttribute?.('role');
+      if (parentTag === 'button' || 
+          parentRole === 'button' ||
+          parentTag === 'a' ||
+          parentRole === 'link' ||
+          parent.onclick ||
+          (parent.className && parent.className.includes('btn')) ||
+          (parent.className && parent.className.includes('button'))) {
+        
+        console.log(`[RecordingEngine] Found better click target: ${parentTag} (was ${tagName})`);
+        return parent;
+      }
+      
+      currentElement = parent;
+      depth++;
+    }
+    
+    return target;
+  }
+
+  private isSubmitButton(element: any): boolean {
+    if (!element) return false;
+    
+    const tagName = element.tagName?.toLowerCase();
+    const type = element.type?.toLowerCase();
+    const role = element.role?.toLowerCase() || element.getAttribute?.('role')?.toLowerCase();
+    const className = element.className?.toLowerCase() || '';
+    const text = element.textContent?.toLowerCase() || element.innerText?.toLowerCase() || '';
+    if (type === 'submit') return true;
+    if (tagName === 'button' && type !== 'button' && type !== 'reset') return true;
+    if (role === 'button' && (text.includes('submit') || text.includes('create') || 
+        text.includes('save') || text.includes('send') || text.includes('post') ||
+        text.includes('publish') || text.includes('sign up') || text.includes('sign in') ||
+        text.includes('login') || text.includes('register'))) return true;
+    
+    return false;
+  }
+
+  private recordClickAction(target: any, elementContext: ElementContext, recentFocus: any, 
+    url: string, pageTitle: string, elementKey: string): void {
+    const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.CLICK,
+    timestamp: Date.now(),
+    description: `Click "${elementContext.description}"`,
+    target: elementContext,
+    context: {
+    url: url,
+    title: pageTitle || 'Unknown Page',
+    timestamp: Date.now(),
+    viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+    userAgent: navigator.userAgent,
+    keyElements: []
+    },
+    intent: this.inferIntent(ActionType.CLICK, elementContext)
+    };
+
+    if (recentFocus) {
+    this.recentFocusEvents.delete(elementKey);
+    }
+
+    this.recordAction(action);
+    window.dispatchEvent(new CustomEvent('recording-action', {
+    detail: {
+    type: ActionType.CLICK,
+    description: action.description,
+    timestamp: action.timestamp
+    }
+    }));
+    }
+
   
   private isSemanticallySigificant(action: SemanticAction): boolean {
     if (action.type === ActionType.NAVIGATION) {
@@ -1552,7 +1706,6 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
       return true;
     }
     if (action.type === ActionType.KEYPRESS && action.value && typeof action.value === 'string') {
-      // Include all special keys that are detected in handleKeyEvent
       const specialKeys = ['Enter', 'Escape', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Delete', 'Ctrl', 'Alt', 'Shift'];
       return specialKeys.includes(action.value);
     }

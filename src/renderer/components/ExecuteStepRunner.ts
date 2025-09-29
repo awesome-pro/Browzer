@@ -21,10 +21,7 @@ export class ExecuteStepRunner {
     step.status = 'running';
 
     try {
-      // Parse the element identifier from the target
       const elementInfo = this.parseElementIdentifier(step.target);
-      
-      // Execute the action with parsed info
       const result = await this.executeActionWithRetry(step, elementInfo);
       
       step.status = 'completed';
@@ -40,77 +37,45 @@ export class ExecuteStepRunner {
       
       console.error(`[ExecuteStepRunner] Step failed:`, error);
       throw error;
-  }
+    }
   }
 
   private parseElementIdentifier(target: string): ElementIdentifier {
     const identifier: ElementIdentifier = {};
-    
-    // Handle empty targets
     if (!target) {
       return identifier;
     }
-    
-    // Handle URL targets for navigation
     if (target.startsWith('http://') || target.startsWith('https://')) {
       return { href: target };
     }
-    
-    // Handle relative path navigation targets
-    if (target.startsWith('/')) {
+     if (target.startsWith('/')) {
       return { href: target };
     }
-    
-    // Handle multiple comma-separated selectors
     if (target.includes(',')) {
-      // Just store the full selector string for now
-      // The actual selector resolution will happen in findElement
       return { 
         selector: target.trim(),
         isMultiSelector: true
       };
     }
-    
-    // Parse the structured target format: "element_type#id.class[name='value']@text"
-    // Examples: "textarea#APjFqb", "input[name='q']", "button.primary@Submit"
-    
-    // Extract ID
     const idMatch = target.match(/#([^.\[\s@]+)/);
     if (idMatch) identifier.id = idMatch[1];
-    
-    // Extract name attribute
-    const nameMatch = target.match(/\[name=['"?]([^'"\]]+)['"?]\]/);
+    const nameMatch = target.match(/\[name=['"]?([^'"\]]+)['"]?\]/);
     if (nameMatch) identifier.name = nameMatch[1];
-    
-    // Extract class names
     const classMatch = target.match(/\.([^#\[\s@]+)/);
     if (classMatch) identifier.className = classMatch[1];
-    
-    // Extract tag name (at the beginning)
     const tagMatch = target.match(/^([a-z]+)/i);
     if (tagMatch) identifier.tagName = tagMatch[1].toLowerCase();
-    
-    // Extract aria-label
     const ariaMatch = target.match(/\[aria-label=['"?]([^'"\]]+)['"?]\]/);
     if (ariaMatch) identifier.ariaLabel = ariaMatch[1];
-    
-    // Extract text content (after @)
     const textMatch = target.match(/@(.+)$/);
     if (textMatch) identifier.text = textMatch[1];
-    
-    // Extract type attribute
     const typeMatch = target.match(/\[type=['"?]([^'"\]]+)['"?]\]/);
     if (typeMatch) identifier.type = typeMatch[1];
-    
-    // Extract role attribute
     const roleMatch = target.match(/\[role=['"?]([^'"\]]+)['"?]\]/);
     if (roleMatch) identifier.role = roleMatch[1];
-    
-    // Extract href attribute
     const hrefMatch = target.match(/\[href=['"?]([^'"\]]+)['"?]\]/);
     if (hrefMatch) identifier.href = hrefMatch[1];
-    
-    // Store the original selector for reference
+
     identifier.selector = target;
     
     console.log(`[ExecuteStepRunner] Parsed identifier:`, identifier);
@@ -119,32 +84,24 @@ export class ExecuteStepRunner {
 
   private generateSelectors(identifier: ElementIdentifier): string[] {
     const selectors: string[] = [];
-    
-    // Priority 1: ID selector (most specific)
     if (identifier.id) {
       selectors.push(`#${identifier.id}`);
       if (identifier.tagName) {
         selectors.push(`${identifier.tagName}#${identifier.id}`);
       }
     }
-    
-    // Priority 2: Name attribute selector
     if (identifier.name) {
       selectors.push(`[name="${identifier.name}"]`);
       if (identifier.tagName) {
         selectors.push(`${identifier.tagName}[name="${identifier.name}"]`);
       }
     }
-    
-    // Priority 3: Aria-label selector
     if (identifier.ariaLabel) {
       selectors.push(`[aria-label="${identifier.ariaLabel}"]`);
       if (identifier.tagName) {
         selectors.push(`${identifier.tagName}[aria-label="${identifier.ariaLabel}"]`);
       }
     }
-    
-    // Priority 4: Class selector
     if (identifier.className) {
       const classes = identifier.className.split(' ').filter(c => c.trim());
       if (classes.length > 0) {
@@ -154,29 +111,19 @@ export class ExecuteStepRunner {
         }
       }
     }
-    
-    // Priority 5: Type attribute selector
     if (identifier.type && identifier.tagName) {
       selectors.push(`${identifier.tagName}[type="${identifier.type}"]`);
     }
-    
-    // Priority 6: Role attribute selector
     if (identifier.role) {
       selectors.push(`[role="${identifier.role}"]`);
     }
-    
-    // Priority 7: Href attribute selector
     if (identifier.href) {
       selectors.push(`[href="${identifier.href}"]`);
       selectors.push(`[href*="${identifier.href}"]`);
     }
-    
-    // Priority 8: Tag name only (least specific)
     if (identifier.tagName && selectors.length === 0) {
       selectors.push(identifier.tagName);
     }
-    
-    // Remove duplicates and return
     return [...new Set(selectors)];
   }
 
@@ -214,17 +161,13 @@ export class ExecuteStepRunner {
 
   private async executeAction(step: ExecuteStep, elementInfo: ElementIdentifier): Promise<any> {
     await this.wait(this.ACTION_DELAY);
-
-    // Normalize action type
     const actionType = step.action.toLowerCase();
-
-    // Handle navigation actions with special care
     if (actionType === 'navigate' || actionType === 'navigation') {
       console.log(`[ExecuteStepRunner] Executing navigation action with target: ${step.target}`);
       return await this.navigate(step);
     }
 
-    switch (actionType) {
+    switch (actionType) {      
       case 'click':
         return await this.click(step, elementInfo);
       
@@ -244,15 +187,12 @@ export class ExecuteStepRunner {
       
       case 'wait_for_element':
         return await this.waitForElement(step, elementInfo);
-      
-      case 'spa_navigation':
-        // Explicitly handle SPA navigation
-        if (step.target) {
-          return await this.handleSpaNavigation(step.target);
-        } else {
-          throw new Error('SPA navigation requires a target path');
-        }
-      
+        case 'spa_navigation':
+          if (step.target) {
+            return await this.handleSpaNavigation(step.target);
+          } else {
+            throw new Error('SPA navigation requires a target path');
+          }
       default:
         throw new Error(`Unsupported action: ${step.action}`);
     }
@@ -264,24 +204,17 @@ export class ExecuteStepRunner {
     if (!url) {
       throw new Error('No URL provided for navigation');
     }
-
-    console.log(`[ExecuteStepRunner] Processing navigation to: ${url}`);
-
-    // Handle different types of URLs
     if (url.startsWith('/')) {
-      // Relative path navigation (SPA route)
       return this.handleSpaNavigation(url);
     } else if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      // Add protocol if missing for absolute URLs
       if (url.includes('.') && !url.startsWith('/')) {
         url = `https://${url}`;
       } else {
-        // Could be a relative path without leading slash
         return this.handleSpaNavigation(`/${url}`);
       }
     }
 
-    console.log(`[ExecuteStepRunner] Navigating to external URL: ${url}`);
+    console.log(`[ExecuteStepRunner] Navigating to: ${url}`);
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -327,36 +260,21 @@ export class ExecuteStepRunner {
    */
   private async handleSpaNavigation(path: string): Promise<any> {
     console.log(`[ExecuteStepRunner] Handling SPA navigation to: ${path}`);
-    
-    // Get the current base URL
     const currentUrl = this.webview.getURL();
     const baseUrl = new URL(currentUrl).origin;
-    
-    // Construct the full URL for logging purposes
     const fullUrl = `${baseUrl}${path}`;
     console.log(`[ExecuteStepRunner] Full SPA URL: ${fullUrl}`);
-    
-    // Try multiple SPA navigation strategies
     const script = `
       (async function() {
         try {
           console.log('[SPA Navigation] Attempting to navigate to:', ${JSON.stringify(path)});
-          
-          // Strategy 1: Use History API directly
           if (window.history && window.history.pushState) {
             console.log('[SPA Navigation] Using History API');
             window.history.pushState({}, '', ${JSON.stringify(path)});
-            
-            // Dispatch popstate event to trigger route change handlers
             const popStateEvent = new PopStateEvent('popstate', { state: {} });
             window.dispatchEvent(popStateEvent);
-            
-            // Also try dispatching custom events that some frameworks listen for
             window.dispatchEvent(new Event('locationchange'));
           }
-          
-          // Strategy 2: Look for common router objects
-          // React Router
           if (window.ReactRouter || (window.__REACT_ROUTER_GLOBAL_CONTEXT__ && window.__REACT_ROUTER_GLOBAL_CONTEXT__.router)) {
             console.log('[SPA Navigation] Using React Router');
             const router = window.ReactRouter || window.__REACT_ROUTER_GLOBAL_CONTEXT__.router;
@@ -364,20 +282,14 @@ export class ExecuteStepRunner {
               router.history.push(${JSON.stringify(path)});
             }
           }
-          
-          // Next.js Router
           if (window.next && window.next.router) {
             console.log('[SPA Navigation] Using Next.js Router');
             window.next.router.push(${JSON.stringify(path)});
           }
-          
-          // Vue Router
           if (window.$nuxt && window.$nuxt.$router) {
             console.log('[SPA Navigation] Using Vue/Nuxt Router');
             window.$nuxt.$router.push(${JSON.stringify(path)});
           }
-          
-          // Strategy 3: Find and click a matching link
           const links = Array.from(document.querySelectorAll('a[href]'));
           const matchingLink = links.find(link => {
             const href = link.getAttribute('href');
@@ -388,8 +300,6 @@ export class ExecuteStepRunner {
             console.log('[SPA Navigation] Found matching link, clicking it');
             matchingLink.click();
           }
-          
-          // Wait a bit for the navigation to take effect
           await new Promise(resolve => setTimeout(resolve, 1000));
           
           return { 
@@ -415,11 +325,7 @@ export class ExecuteStepRunner {
       }
       
       console.log(`[ExecuteStepRunner] SPA navigation result:`, result);
-      
-      // Wait a bit longer for any async operations to complete
       await this.wait(2000);
-      
-      // Verify the navigation worked
       const currentPath = await this.webview.executeJavaScript('window.location.pathname');
       if (!currentPath.includes(path.replace(/^\//, ''))) {
         console.warn(`[ExecuteStepRunner] SPA navigation may not have worked. Expected path: ${path}, Current path: ${currentPath}`);
@@ -433,12 +339,8 @@ export class ExecuteStepRunner {
       };
     } catch (error) {
       console.error(`[ExecuteStepRunner] SPA navigation error:`, error);
-      
-      // Fallback: Try direct navigation as last resort
       console.log(`[ExecuteStepRunner] Falling back to direct navigation`);
       this.webview.src = fullUrl;
-      
-      // Wait for navigation to complete
       await new Promise(resolve => {
         const onLoad = () => {
           this.webview.removeEventListener('did-finish-load', onLoad);
@@ -463,15 +365,11 @@ export class ExecuteStepRunner {
         const textContent = ${JSON.stringify(elementInfo.text || '')};
         
         console.log('[FindElement] Trying selectors:', selectors);
-        
-        // Try each selector
         for (const selector of selectors) {
           try {
             const elements = document.querySelectorAll(selector);
             
             if (elements.length === 0) continue;
-            
-            // If we have text content to match, filter by it
             if (textContent) {
               for (const el of elements) {
                 if (el.textContent && el.textContent.includes(textContent)) {
@@ -480,7 +378,6 @@ export class ExecuteStepRunner {
                 }
               }
             } else {
-              // No text filter, use first element
               console.log('[FindElement] Found element with selector:', selector);
               return { found: true, selector: selector, hasText: false };
             }
@@ -488,14 +385,11 @@ export class ExecuteStepRunner {
             console.warn('[FindElement] Selector failed:', selector, e.message);
           }
         }
-        
-        // Fallback: Try to find by text content only
         if (textContent) {
           const allElements = document.querySelectorAll('*');
           for (const el of allElements) {
             if (el.textContent && el.textContent.trim() === textContent.trim()) {
               console.log('[FindElement] Found element by text only');
-              // Create a unique selector for this element
               const tag = el.tagName.toLowerCase();
               const id = el.id ? '#' + el.id : '';
               const className = el.className ? '.' + el.className.split(' ')[0] : '';
@@ -524,8 +418,6 @@ export class ExecuteStepRunner {
     }
     
     console.log(`[ExecuteStepRunner] Click - trying selectors:`, selectors);
-    
-    // First, find the element
     const findResult = await this.findElement(selectors, elementInfo);
     
     if (!findResult.found) {
@@ -542,7 +434,6 @@ export class ExecuteStepRunner {
           let element = null;
           
           if (byTextOnly && textContent) {
-            // Find by text content
             const allElements = document.querySelectorAll('*');
             for (const el of allElements) {
               if (el.textContent && el.textContent.trim() === textContent.trim()) {
@@ -551,7 +442,6 @@ export class ExecuteStepRunner {
               }
             }
           } else {
-            // Find by selector, optionally filtered by text
             const elements = document.querySelectorAll(selector);
             if (textContent) {
               for (const el of elements) {
@@ -568,12 +458,8 @@ export class ExecuteStepRunner {
           if (!element) {
             return { success: false, error: 'Element not found in click execution' };
           }
-          
-          // Scroll into view
           element.scrollIntoView({ behavior: 'smooth', block: 'center' });
           await new Promise(resolve => setTimeout(resolve, 500));
-          
-          // Check visibility
           const rect = element.getBoundingClientRect();
           const style = window.getComputedStyle(element);
           
@@ -581,23 +467,15 @@ export class ExecuteStepRunner {
               style.display === 'none' || style.visibility === 'hidden') {
             return { success: false, error: 'Element is not visible' };
           }
-          
-          // Visual feedback
           const originalOutline = element.style.outline;
           element.style.outline = '2px solid blue';
-          
-          // Try multiple click strategies
           let clicked = false;
-          
-          // Strategy 1: Native click
           try {
             element.click();
             clicked = true;
           } catch (e) {
             console.warn('[Click] Native click failed:', e);
           }
-          
-          // Strategy 2: Dispatch mouse events
           if (!clicked) {
             try {
               element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
@@ -608,8 +486,6 @@ export class ExecuteStepRunner {
               console.warn('[Click] Mouse events failed:', e);
             }
           }
-          
-          // Restore outline after delay
           setTimeout(() => {
             element.style.outline = originalOutline;
           }, 1000);
@@ -652,8 +528,6 @@ export class ExecuteStepRunner {
     }
     
     console.log(`[ExecuteStepRunner] Type - trying selectors:`, selectors);
-    
-    // First, find the element
     const findResult = await this.findElement(selectors, elementInfo);
     
     if (!findResult.found) {
@@ -665,62 +539,81 @@ export class ExecuteStepRunner {
         try {
           const selector = '${findResult.selector.replace(/'/g, "\\'")}';
           const textValue = '${text.replace(/'/g, "\\'")}';
-          
-          const element = document.querySelector(selector);
+          let element = document.querySelector(selector);
           
           if (!element) {
             return { success: false, error: 'Element not found in type execution' };
           }
-          
-          // Scroll into view
+          const elementInfo = {
+            tagName: element.tagName,
+            id: element.id,
+            name: element.name,
+            type: element.type,
+            initialValue: element.value
+          };
           element.scrollIntoView({ behavior: 'smooth', block: 'center' });
           await new Promise(resolve => setTimeout(resolve, 500));
-          
-          // Focus the element
           element.focus();
-          
-          // Visual feedback
+          await new Promise(resolve => setTimeout(resolve, 200));
           const originalOutline = element.style.outline;
           element.style.outline = '2px solid green';
-          
-          // Clear existing value
           if (element.value !== undefined) {
+            const originalValue = element.value;
             element.value = '';
+            element.dispatchEvent(new Event('input', { bubbles: true }));
+            await new Promise(resolve => setTimeout(resolve, 100));
           }
-          
-          // Type the text character by character
           for (let i = 0; i < textValue.length; i++) {
             const char = textValue[i];
             
             if (element.value !== undefined) {
               element.value += char;
-            }
-            
-            // Dispatch input event for each character
-            element.dispatchEvent(new Event('input', { bubbles: true }));
-            
-            // Small delay between characters
-            if (i < textValue.length - 1) {
-              await new Promise(resolve => setTimeout(resolve, 50));
+              element.dispatchEvent(new Event('input', { bubbles: true }));
+              if (i < textValue.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+              }
             }
           }
-          
-          // Final events
+          if (element.value !== undefined) {
+            element.value = textValue;
+          }
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+          await new Promise(resolve => setTimeout(resolve, 100));
           element.dispatchEvent(new Event('change', { bubbles: true }));
+          await new Promise(resolve => setTimeout(resolve, 100));
+          try {
+            if (element.setAttribute) {
+              element.setAttribute('value', textValue);
+            }
+            element.dataset.testValue = textValue;
+            Object.defineProperty(element, 'value', {
+              value: textValue,
+              writable: true
+            });
+          } catch (e) {
+            console.warn('[Type] Failed to set value using alternative methods:', e);
+          }
           element.dispatchEvent(new Event('blur', { bubbles: true }));
-          
-          // Restore outline after delay
           setTimeout(() => {
             element.style.outline = originalOutline;
           }, 1000);
-          
           const finalValue = element.value || element.textContent || '';
+          const isValueSet = finalValue === textValue;
+          if (!isValueSet && element.value !== undefined) {
+            console.warn('[Type] Value not set correctly, trying alternative method');
+            element.focus();
+            element.value = textValue;
+            element.dispatchEvent(new Event('input', { bubbles: true }));
+            element.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          await new Promise(resolve => setTimeout(resolve, 300));
           
           return {
             success: true,
             message: 'Text typed successfully',
-            valueSet: finalValue === textValue,
-            finalValue: finalValue
+            valueSet: isValueSet,
+            finalValue: finalValue,
+            elementInfo: elementInfo
           };
         } catch (error) {
           return { success: false, error: error.message };
@@ -733,63 +626,91 @@ export class ExecuteStepRunner {
     if (!result.success) {
       throw new Error(`Type failed: ${result.error}`);
     }
-    
-    await this.wait(500);
     return result;
   }
 
   private async submit(step: ExecuteStep, elementInfo: ElementIdentifier): Promise<any> {
-    const selectors = this.generateSelectors(elementInfo);
     
-    // Add form-specific selectors
-    selectors.push('form');
-    selectors.push('button[type="submit"]');
-    selectors.push('input[type="submit"]');
-    
-    console.log(`[ExecuteStepRunner] Submit - trying selectors:`, selectors);
-    
+    console.log(`[ExecuteStepRunner] Submit - converting to click action on submit button`);
+    if (elementInfo.id || elementInfo.className || elementInfo.text) {
+      return await this.click(step, elementInfo);
+    }
     const script = `
       (async function() {
         try {
-          // Try to find a form first
-          let form = document.querySelector('form');
+          const submitSelectors = [
+            'button[type="submit"]',
+            'input[type="submit"]',
+            'button:contains("Submit")',
+            'button:contains("Create")',
+            'button:contains("Save")',
+            'button:contains("Send")',
+            'button.btn-primary',
+            'button.submit',
+            '[role="button"][type="submit"]'
+          ];
           
-          if (!form) {
-            // Try to find a submit button
-            const submitButton = document.querySelector('button[type="submit"], input[type="submit"]');
-            if (submitButton) {
-              submitButton.click();
-              return { success: true, message: 'Submit button clicked' };
+          let submitButton = null;
+          
+          for (const selector of submitSelectors) {
+            try {
+              if (selector.includes(':contains')) {
+                const [base, text] = selector.split(':contains');
+                const textContent = text.replace(/[()'"]/g, '');
+                const elements = document.querySelectorAll(base || 'button');
+                
+                for (const el of elements) {
+                  if (el.textContent && el.textContent.includes(textContent)) {
+                    submitButton = el;
+                    break;
+                  }
+                }
+              } else {
+                submitButton = document.querySelector(selector);
+              }
+              
+              if (submitButton) break;
+            } catch (e) {
+              console.warn('[Submit] Selector failed:', selector);
             }
-            
-            return { success: false, error: 'No form or submit button found' };
           }
           
-          // Check form validity
-          const inputs = form.querySelectorAll('input[required], textarea[required], select[required]');
-          let allValid = true;
-          
-          for (const input of inputs) {
-            if (input.required && !input.value) {
-              allValid = false;
-              console.warn('[Submit] Required field empty:', input.name || input.id);
+          if (!submitButton) {
+            const form = document.querySelector('form');
+            if (form) {
+              submitButton = form.querySelector('button, input[type="submit"]');
             }
           }
           
-          if (!allValid) {
-            console.warn('[Submit] Form has invalid fields');
+          if (!submitButton) {
+            return { success: false, error: 'No submit button found' };
           }
+          const rect = submitButton.getBoundingClientRect();
+          const style = window.getComputedStyle(submitButton);
           
-          // Try to submit
-          try {
-            form.submit();
-            return { success: true, message: 'Form submitted via submit()' };
-          } catch (e) {
-            // Try dispatching submit event
-            const submitEvent = new Event('submit', { bubbles: true, cancelable: true });
-            form.dispatchEvent(submitEvent);
-            return { success: true, message: 'Form submitted via event' };
+          if (rect.width === 0 || rect.height === 0 || 
+              style.display === 'none' || style.visibility === 'hidden' ||
+              submitButton.disabled) {
+            return { success: false, error: 'Submit button is not clickable' };
           }
+          submitButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const originalOutline = submitButton.style.outline;
+          submitButton.style.outline = '3px solid green';
+          submitButton.click();
+          setTimeout(() => {
+            submitButton.style.outline = originalOutline;
+          }, 1000);
+          
+          return {
+            success: true,
+            message: 'Form submitted via button click',
+            button: {
+              tagName: submitButton.tagName,
+              text: submitButton.textContent?.trim(),
+              type: submitButton.type
+            }
+          };
         } catch (error) {
           return { success: false, error: error.message };
         }
@@ -811,7 +732,6 @@ export class ExecuteStepRunner {
     const key = (step.value as string) || 'Enter';
     
     if (selectors.length === 0) {
-      // If no selectors, target the active element
       selectors.push(':focus');
     }
     
@@ -824,8 +744,6 @@ export class ExecuteStepRunner {
           const key = '${key}';
           
           let element = null;
-          
-          // Try each selector
           for (const selector of selectors) {
             try {
               element = document.querySelector(selector);
@@ -834,8 +752,6 @@ export class ExecuteStepRunner {
               console.warn('[Keypress] Selector failed:', selector);
             }
           }
-          
-          // If no element found, use the currently focused element
           if (!element) {
             element = document.activeElement;
           }
@@ -843,11 +759,7 @@ export class ExecuteStepRunner {
           if (!element) {
             return { success: false, error: 'No element found for keypress' };
           }
-          
-          // Focus the element
           element.focus();
-          
-          // Determine key code
           const keyCodes = {
             'Enter': 13,
             'Tab': 9,
@@ -862,8 +774,6 @@ export class ExecuteStepRunner {
           };
           
           const keyCode = keyCodes[key] || key.charCodeAt(0);
-          
-          // Dispatch keyboard events
           const keydownEvent = new KeyboardEvent('keydown', {
             key: key,
             keyCode: keyCode,
@@ -880,8 +790,6 @@ export class ExecuteStepRunner {
           
           element.dispatchEvent(keydownEvent);
           element.dispatchEvent(keyupEvent);
-          
-          // For Enter key on forms, try to submit
           if (key === 'Enter' && element.tagName === 'INPUT') {
             const form = element.closest('form');
             if (form) {
@@ -953,7 +861,6 @@ export class ExecuteStepRunner {
                   }
                 }
               } catch (e) {
-                // Invalid selector, skip
               }
             }
             

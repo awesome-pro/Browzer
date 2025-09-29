@@ -51,8 +51,8 @@ Each action must be a JSON object with these exact fields:
   - target: Element identifier (or empty for active element)
   - value: Key name (Enter, Backspace, Tab, etc.)
   
-- **submit**: Submit a form
-  - target: "form" or element identifier
+- **submit**: Submit a form by clicking submit button/input
+  - target: Submit button/input identifier (or "form" to auto-find button)
   - value: empty string
   
 - **wait**: Wait for milliseconds
@@ -75,26 +75,64 @@ Examples:
 - a[href='/new'] (link with href)
 - form (just the tag name)
 
-You can combine multiple identifiers with commas:
-- button.btn-primary, [data-testid="submit-button"], .form-actions button[type="submit"]
+You can combine multiple identifiers:
+- input#repository-name-input[name='repository_name']
+- button[type='submit']@Create Repository
+
+## CRITICAL RULES
+1. **NEVER use comma-separated selectors** - Use a single, most specific identifier
+2. **Prefer IDs when available** - They are most reliable
+3. **Use text content for buttons and links** - button@Submit, a@New
+4. **For forms, click the submit button** - Don't use form.submit(), use click on button
+5. **Add waits between actions** - Especially after navigation or clicks
+6. **Keep selectors simple** - Don't overcomplicate with multiple attributes
 
 ## RESPONSE FORMAT
 Your response must be a valid JSON array of action objects. Do not include any explanations or markdown formatting outside the JSON array.
 
-Example response:
-\`\`\`json
+## EXAMPLE OUTPUT
 [
   {
     "action": "navigate",
-    "target": "https://example.com",
+    "target": "https://github.com",
     "value": "",
-    "reasoning": "Navigate to the target website"
+    "reasoning": "Navigate to GitHub homepage"
+  },
+  {
+    "action": "wait",
+    "target": "",
+    "value": 2000,
+    "reasoning": "Wait for page to load"
   },
   {
     "action": "click",
-    "target": "button.login-btn@Sign in",
+    "target": "a[href='/new']@New",
     "value": "",
-    "reasoning": "Click the sign in button"
+    "reasoning": "Click the New repository button"
+  },
+  {
+    "action": "wait_for_element",
+    "target": "input#repository-name-input",
+    "value": 5000,
+    "reasoning": "Wait for repository name input"
+  },
+  {
+    "action": "type",
+    "target": "input#repository-name-input",
+    "value": "my-new-repo",
+    "reasoning": "Enter repository name"
+  },
+  {
+    "action": "type",
+    "target": "input[name='Description']",
+    "value": "This is my repository",
+    "reasoning": "Enter repository description"
+  },
+  {
+    "action": "click",
+    "target": "button[type='submit']@Create repository",
+    "value": "",
+    "reasoning": "Click submit button to create repository"
   }
 ]
 \`\`\`
@@ -145,21 +183,38 @@ ${this.generateAdditionalGuidelines(session)}`;
    * Extracts element selectors used in the recording
    */
   private static extractElementSelectors(session: SmartRecordingSession): string[] {
-    if (!session || !session.actions || session.actions.length === 0) {
-      return [];
-    }
-
-    const selectors: string[] = [];
+    const selectors = new Set<string>();
     
     session.actions.forEach(action => {
-      if (action.target && action.target.selector) {
-        selectors.push(action.target.selector);
+      if (action.target) {
+        // Extract clean selectors from the target description
+        const targetStr = typeof action.target === 'string' 
+          ? action.target 
+          : action.target.description || '';
+        
+        // Extract ID
+        const idMatch = targetStr.match(/id:\s*#?([^\s|]+)/);
+        if (idMatch) {
+          selectors.add(`#${idMatch[1]}`);
+        }
+        
+        // Extract name
+        const nameMatch = targetStr.match(/name:\s*([^\s|]+)/);
+        if (nameMatch) {
+          selectors.add(`[name='${nameMatch[1]}']`);
+        }
+        
+        // Extract class
+        const classMatch = targetStr.match(/class:\s*([^\s|]+)/);
+        if (classMatch) {
+          const className = classMatch[1].split(' ')[0];
+          selectors.add(`.${className}`);
+        }
       }
     });
-
-    return [...new Set(selectors)]; // Remove duplicates
+    
+    return Array.from(selectors);
   }
-
   /**
    * Extracts timing information from the recording
    */

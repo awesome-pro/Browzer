@@ -167,346 +167,366 @@ export class NativeEventMonitor {
     }
   };
 
-  private async injectEventMonitoringScript(webContents: WebContents): Promise<void> {
-    if (!webContents || webContents.isDestroyed()) return;
+private async injectEventMonitoringScript(webContents: WebContents): Promise<void> {
+  if (!webContents || webContents.isDestroyed()) return;
 
-    try {
-      if (webContents.isLoading()) {
-        try {
-          await new Promise<void>((resolve) => {
-            const loadHandler = () => {
-              webContents.off('did-finish-load', loadHandler);
-              resolve();
-            };
-            webContents.on('did-finish-load', loadHandler);
-            setTimeout(resolve, 3000);
-          });
-        } catch (error) {
-        }
+  try {
+    if (webContents.isLoading()) {
+      try {
+        await new Promise<void>((resolve) => {
+          const loadHandler = () => {
+            webContents.off('did-finish-load', loadHandler);
+            resolve();
+          };
+          webContents.on('did-finish-load', loadHandler);
+          setTimeout(resolve, 3000);
+        });
+      } catch (error) {
       }
-      await webContents.executeJavaScript(`
-        (function() {
-          if (window.__nativeEventMonitorInjected) return;
-          window.__nativeEventMonitorInjected = true;
+    }
+    await webContents.executeJavaScript(`
+      (function() {
+        if (window.__nativeEventMonitorInjected) return;
+        window.__nativeEventMonitorInjected = true;
+        
+        console.log('[NativeEventMonitor] Injecting event monitoring script');
+        const originalAddEventListener = EventTarget.prototype.addEventListener;
+        const originalRemoveEventListener = EventTarget.prototype.removeEventListener;
+        const originalPushState = history.pushState;
+        const originalReplaceState = history.replaceState;
+        
+        const eventsToMonitor = [
+          'click', 'input', 'change', 'submit',
+          'keydown', 'keyup', 'keypress', 'focus', 'contextmenu',
+          'select', 'reset', 'invalid',
+          'copy', 'cut', 'paste',
+          'dragstart', 'dragend', 'dragenter', 'dragleave', 'dragover', 'drop',
+          'scroll',
+          'cancel', 'close',
+          'play', 'pause', 'ended', 'volumechange',
+          'touchstart', 'touchend', 'touchmove', 'touchcancel'
+        ];
+        window.__nativeEventListeners = new Map();
+        
+        function captureElement(element) {
+          if (!element || !element.tagName) return null;
           
-          console.log('[NativeEventMonitor] Injecting event monitoring script');
-          const originalAddEventListener = EventTarget.prototype.addEventListener;
-          const originalRemoveEventListener = EventTarget.prototype.removeEventListener;
-          const originalPushState = history.pushState;
-          const originalReplaceState = history.replaceState;
-          
-          const eventsToMonitor = [
-            'click', 'input', 'change', 'submit',
-            'keydown', 'keyup', 'keypress', 'focus', 'contextmenu',
+          try {
+            const rect = element.getBoundingClientRect();
+            const computedStyle = window.getComputedStyle(element);
             
-            'select', 'reset', 'invalid',
+            const isVisible = !(computedStyle.display === 'none' || 
+                             computedStyle.visibility === 'hidden' || 
+                             computedStyle.opacity === '0' ||
+                             rect.width === 0 || 
+                             rect.height === 0);
             
-            'copy', 'cut', 'paste',
+            const isSvg = element.tagName.toLowerCase() === 'svg' || element.ownerSVGElement != null;
             
-            'dragstart', 'dragend', 'dragenter', 'dragleave', 'dragover', 'drop',
+            let parentInteractiveElement = null;
+            if (isSvg || ['span', 'i', 'div'].includes(element.tagName.toLowerCase())) {
+              let currentEl = element;
+              let depth = 0;
+              while (currentEl && depth < 4) { // Increased depth
+                const parent = currentEl.parentElement;
+                if (parent && (
+                  parent.tagName.toLowerCase() === 'button' || 
+                  parent.tagName.toLowerCase() === 'a' || 
+                  parent.getAttribute('role') === 'button' || 
+                  parent.getAttribute('role') === 'link' ||
+                  parent.onclick ||
+                  (parent.className && (
+                    parent.className.includes('btn') || 
+                    parent.className.includes('button') ||
+                    parent.className.includes('submit')
+                  )) ||
+                  parent.type === 'submit'
+                )) {
+                  parentInteractiveElement = parent;
+                  break;
+                }
+                currentEl = parent;
+                depth++;
+              }
+            }
             
-            'scroll',
+            const primaryElement = parentInteractiveElement || element;
             
-            'cancel', 'close',
-            'play', 'pause', 'ended', 'volumechange',
+            let classNameStr = null;
+            if (primaryElement.className) {
+              if (typeof primaryElement.className === 'string') {
+                classNameStr = primaryElement.className;
+              } else if (isSvg && primaryElement.className.baseVal !== undefined) {
+                classNameStr = primaryElement.className.baseVal;
+              }
+            }
             
-            'touchstart', 'touchend', 'touchmove', 'touchcancel'
-          ];
-          window.__nativeEventListeners = new Map();
-          
-          function captureElement(element) {
-            if (!element || !element.tagName) return null;
+            let svgData = null;
+            if (isSvg) {
+              svgData = {
+                id: element.id || null,
+                viewBox: element.getAttribute('viewBox') || null,
+                path: element.querySelector('path')?.getAttribute('d') || null,
+                use: element.querySelector('use')?.getAttribute('href') || null
+              };
+            }
             
+            let role = primaryElement.getAttribute('role');
+            if (!role) {
+              const tagName = primaryElement.tagName.toLowerCase();
+              const type = primaryElement.type?.toLowerCase();
+              if (tagName === 'a') role = 'link';
+              else if (tagName === 'button') role = 'button';
+              else if (type === 'submit' || type === 'button') role = 'button';
+              else if (tagName === 'input') {
+                if (type === 'checkbox') role = 'checkbox';
+                else if (type === 'radio') role = 'radio';
+                else role = 'textbox';
+              }
+              else if (tagName === 'select') role = 'combobox';
+              else if (tagName === 'textarea') role = 'textbox';
+              else if (tagName === 'img') role = 'img';
+              else if (tagName === 'svg') role = 'image';
+              else if (/^h[1-6]$/.test(tagName)) role = 'heading';
+              else if (classNameStr && (classNameStr.includes('btn') || 
+                       classNameStr.includes('button'))) role = 'button';
+              else role = 'generic';
+            }
+            
+            const dataAttributes = {};
+            Array.from(primaryElement.attributes || []).forEach(attr => {
+              if (attr.name.startsWith('data-')) {
+                dataAttributes[attr.name] = attr.value;
+              }
+            });
+            
+            let parentContext = null;
             try {
-              const rect = element.getBoundingClientRect();
-              
-              const computedStyle = window.getComputedStyle(element);
-              
-              const isVisible = !(computedStyle.display === 'none' || 
-                               computedStyle.visibility === 'hidden' || 
-                               computedStyle.opacity === '0' ||
-                               rect.width === 0 || 
-                               rect.height === 0);
-              
-              const isSvg = element.tagName.toLowerCase() === 'svg' || element.ownerSVGElement != null;
-              
-              let parentInteractiveElement = null;
-              if (isSvg) {
-                let currentEl = element;
-                let depth = 0;
-                while (currentEl && depth < 3) {
-                  const parent = currentEl.parentElement;
-                  if (parent && (parent.tagName.toLowerCase() === 'button' || 
-                                parent.tagName.toLowerCase() === 'a' || 
-                                parent.getAttribute('role') === 'button' || 
-                                parent.getAttribute('role') === 'link' ||
-                                parent.onclick)) {
-                    parentInteractiveElement = parent;
-                    break;
+              const parentElement = primaryElement.parentElement;
+              if (parentElement && parentElement.tagName) {
+                let parentClassNameStr = null;
+                if (parentElement.className) {
+                  if (typeof parentElement.className === 'string') {
+                    parentClassNameStr = parentElement.className;
+                  } else if (parentElement.className.baseVal !== undefined) {
+                    parentClassNameStr = parentElement.className.baseVal;
                   }
-                  currentEl = parent;
-                  depth++;
                 }
-              }
-              
-              let classNameStr = null;
-              if (element.className) {
-                if (typeof element.className === 'string') {
-                  classNameStr = element.className;
-                } else if (isSvg && element.className.baseVal !== undefined) {
-                  classNameStr = element.className.baseVal;
-                }
-              }
-              
-              let svgData = null;
-              if (isSvg) {
-                svgData = {
-                  id: element.id || null,
-                  viewBox: element.getAttribute('viewBox') || null,
-                  path: element.querySelector('path')?.getAttribute('d') || null,
-                  use: element.querySelector('use')?.getAttribute('href') || null
+                
+                parentContext = {
+                  tagName: parentElement.tagName.toLowerCase(),
+                  id: parentElement.id || null,
+                  className: parentClassNameStr,
+                  role: parentElement.getAttribute('role') || null,
+                  href: parentElement.getAttribute('href') || null,
+                  onclick: !!parentElement.onclick,
+                  ariaLabel: parentElement.getAttribute('aria-label') || null,
+                  title: parentElement.title || null,
+                  type: parentElement.type || null
                 };
               }
-              
-              let role = element.getAttribute('role');
-              if (!role) {
-                const tagName = element.tagName.toLowerCase();
-                if (tagName === 'a') role = 'link';
-                else if (tagName === 'button') role = 'button';
-                else if (tagName === 'input') {
-                  if (element.type === 'checkbox') role = 'checkbox';
-                  else if (element.type === 'radio') role = 'radio';
-                  else if (element.type === 'submit' || element.type === 'button') role = 'button';
-                  else role = 'textbox';
-                }
-                else if (tagName === 'select') role = 'combobox';
-                else if (tagName === 'textarea') role = 'textbox';
-                else if (tagName === 'img') role = 'img';
-                else if (tagName === 'svg') role = 'image';
-                else if (tagName === 'h1' || tagName === 'h2' || tagName === 'h3' || 
-                         tagName === 'h4' || tagName === 'h5' || tagName === 'h6') role = 'heading';
-              }
-              
-              const dataAttributes = {};
-              Array.from(element.attributes || []).forEach(attr => {
-                if (attr.name.startsWith('data-')) {
-                  dataAttributes[attr.name] = attr.value;
-                }
-              });
-              
-              let parentContext = null;
-              try {
-                const parentElement = element.parentElement;
-                if (parentElement && parentElement.tagName) {
-                  let parentClassNameStr = null;
-                  if (parentElement.className) {
-                    if (typeof parentElement.className === 'string') {
-                      parentClassNameStr = parentElement.className;
-                    } else if (parentElement.className.baseVal !== undefined) {
-                      parentClassNameStr = parentElement.className.baseVal;
-                    }
-                  }
-                  
-                  parentContext = {
-                    tagName: parentElement.tagName.toLowerCase(),
-                    id: parentElement.id || null,
-                    className: parentClassNameStr,
-                    role: parentElement.getAttribute('role') || null,
-                    href: parentElement.getAttribute('href') || null,
-                    onclick: !!parentElement.onclick,
-                    ariaLabel: parentElement.getAttribute('aria-label') || null,
-                    title: parentElement.title || null
-                  };
-                }
-              } catch (e) { /* Ignore parent context errors */ }
-              
-              let formContext = null;
-              try {
-                const form = element.form || element.closest('form');
-                if (form) {
-                  formContext = {
-                    id: form.id || null,
-                    name: form.name || null,
-                    action: form.action || null,
-                    method: form.method || null
-                  };
-                }
-              } catch (e) { /* Ignore form context errors */ }
-              
-              // Find nearest element with text for SVG icons
-              let nearestTextContent = null;
-              if (isSvg && !element.textContent?.trim()) {
-                // Look for sibling elements with text
-                if (parentInteractiveElement) {
-                  const siblings = Array.from(parentInteractiveElement.childNodes);
-                  for (const sibling of siblings) {
-                    if (sibling !== element && sibling.textContent?.trim()) {
-                      nearestTextContent = sibling.textContent.trim().substring(0, 100);
-                      break;
-                    }
-                  }
-                  
-                  // If no sibling has text, use parent's text
-                  if (!nearestTextContent && parentInteractiveElement.textContent?.trim()) {
-                    nearestTextContent = parentInteractiveElement.textContent.trim().substring(0, 100);
-                  }
-                }
-              }
-              
-              return {
-                tagName: element.tagName.toLowerCase(),
-                id: element.id || null,
-                className: classNameStr,
-                type: element.type || null,
-                name: element.name || null,
-                value: element.value || null,
-                href: element.href || null,
-                src: element.src || null,
-                alt: element.alt || null,
-                placeholder: element.placeholder || null,
-                checked: element.checked !== undefined ? element.checked : null,
-                selected: element.selected !== undefined ? element.selected : null,
-                disabled: element.disabled !== undefined ? element.disabled : null,
-                readOnly: element.readOnly !== undefined ? element.readOnly : null,
-                required: element.required !== undefined ? element.required : null,
-                text: element.textContent?.trim().substring(0, 100) || null,
-                innerText: element.innerText?.trim().substring(0, 100) || null,
-                title: element.title || null,
-                ariaLabel: element.getAttribute('aria-label') || null,
-                role: role || null,
-                isVisible: isVisible,
-                isInteractive: ['a', 'button', 'input', 'select', 'textarea', 'details', 'summary'].includes(element.tagName.toLowerCase()) || 
-                              !!element.getAttribute('role') || 
-                              !!element.onclick || 
-                              computedStyle.cursor === 'pointer',
-                attributes: Array.from(element.attributes || []).reduce((obj, attr) => {
-                  obj[attr.name] = attr.value;
-                  return obj;
-                }, {}),
-                dataAttributes: Object.keys(dataAttributes).length > 0 ? dataAttributes : null,
-                svgData: svgData,
-                isSvg: isSvg,
-                nearestTextContent: nearestTextContent,
-                parentInteractiveElement: parentInteractiveElement ? {
-                  tagName: parentInteractiveElement.tagName.toLowerCase(),
-                  id: parentInteractiveElement.id || null,
-                  className: typeof parentInteractiveElement.className === 'string' ? 
-                             parentInteractiveElement.className : 
-                             (parentInteractiveElement.className?.baseVal || null),
-                  role: parentInteractiveElement.getAttribute('role') || null,
-                  text: parentInteractiveElement.textContent?.trim().substring(0, 100) || null,
-                  ariaLabel: parentInteractiveElement.getAttribute('aria-label') || null,
-                  title: parentInteractiveElement.title || null
-                } : null,
-                boundingRect: {
-                  x: rect.x,
-                  y: rect.y,
-                  width: rect.width,
-                  height: rect.height,
-                  top: rect.top,
-                  bottom: rect.bottom,
-                  left: rect.left,
-                  right: rect.right
-                },
-                styles: {
-                  display: computedStyle.display,
-                  visibility: computedStyle.visibility,
-                  position: computedStyle.position,
-                  zIndex: computedStyle.zIndex,
-                  opacity: computedStyle.opacity,
-                  cursor: computedStyle.cursor
-                },
-                parentContext: parentContext,
-                formContext: formContext
-              };
-            } catch (e) {
-              console.error('Error in captureElement:', e);
-              return { tagName: element.tagName.toLowerCase() };
-            }
-          }
-          function handleNativeEvent(event) {
-            const asyncEvents = ['play', 'pause', 'ended'];
-            if (!event.isTrusted && !asyncEvents.includes(event.type)) return;
+            } catch (e) { /* Ignore parent context errors */ }
             
-            const target = event.target;
-            if (!target) return;
-            if (event.type === 'scroll') {
-              if (!window.__lastScrollPosition) {
-                window.__lastScrollPosition = { x: window.scrollX, y: window.scrollY };
-                return;
+            let formContext = null;
+            try {
+              const form = primaryElement.form || primaryElement.closest('form');
+              if (form) {
+                formContext = {
+                  id: form.id || null,
+                  name: form.name || null,
+                  action: form.action || null,
+                  method: form.method || 'get',
+                  target: form.target || null,
+                  enctype: form.enctype || null
+                };
               }
-              
-              const scrollDiffY = Math.abs(window.scrollY - window.__lastScrollPosition.y);
-              const scrollDiffX = Math.abs(window.scrollX - window.__lastScrollPosition.x);
-              
-              if (scrollDiffY < 100 && scrollDiffX < 100) return;
-              
-              window.__lastScrollPosition = { x: window.scrollX, y: window.scrollY };
+            } catch (e) { /* Ignore form context errors */ }
+            
+            let nearestTextContent = null;
+            if (isSvg && !primaryElement.textContent?.trim()) {
+              if (parentInteractiveElement) {
+                const siblings = Array.from(parentInteractiveElement.childNodes);
+                for (const sibling of siblings) {
+                  if (sibling !== element && sibling.textContent?.trim()) {
+                    nearestTextContent = sibling.textContent.trim().substring(0, 100);
+                    break;
+                  }
+                }
+                
+                if (!nearestTextContent && parentInteractiveElement.textContent?.trim()) {
+                  nearestTextContent = parentInteractiveElement.textContent.trim().substring(0, 100);
+                }
+              }
             }
-              
-            const eventData = {
-              type: event.type,
-              timestamp: Date.now(),
-              target: captureElement(target),
-              coordinates: event.clientX !== undefined ? { x: event.clientX, y: event.clientY } : null,
-              key: event.key,
-              keyCode: event.keyCode,
-              value: target.value,
-              checked: target.checked,
-              url: window.location.href,
-              title: document.title
+            
+            const isInteractive = ['a', 'button', 'input', 'select', 'textarea', 
+                                 'details', 'summary'].includes(primaryElement.tagName.toLowerCase()) || 
+                                !!primaryElement.getAttribute('role') || 
+                                !!primaryElement.onclick || 
+                                computedStyle.cursor === 'pointer' ||
+                                (classNameStr && (classNameStr.includes('btn') || 
+                                 classNameStr.includes('button') || 
+                                 classNameStr.includes('clickable'))) ||
+                                primaryElement.type === 'submit';
+            
+            let textContent = primaryElement.textContent?.trim() || primaryElement.innerText?.trim() || '';
+            if (!textContent && element !== primaryElement) {
+              textContent = element.textContent?.trim() || element.innerText?.trim() || '';
+            }
+            
+            return {
+              tagName: primaryElement.tagName.toLowerCase(),
+              id: primaryElement.id || null,
+              className: classNameStr,
+              type: primaryElement.type || null,
+              name: primaryElement.name || null,
+              value: primaryElement.value || null,
+              href: primaryElement.href || null,
+              src: primaryElement.src || null,
+              alt: primaryElement.alt || null,
+              placeholder: primaryElement.placeholder || null,
+              checked: primaryElement.checked !== undefined ? primaryElement.checked : null,
+              selected: primaryElement.selected !== undefined ? primaryElement.selected : null,
+              disabled: primaryElement.disabled !== undefined ? primaryElement.disabled : null,
+              readOnly: primaryElement.readOnly !== undefined ? primaryElement.readOnly : null,
+              required: primaryElement.required !== undefined ? primaryElement.required : null,
+              text: textContent.substring(0, 100) || null,
+              innerText: primaryElement.innerText?.trim().substring(0, 100) || null,
+              title: primaryElement.title || null,
+              ariaLabel: primaryElement.getAttribute('aria-label') || null,
+              role: role || null,
+              isVisible: isVisible,
+              isInteractive: isInteractive,
+              attributes: Array.from(primaryElement.attributes || []).reduce((obj, attr) => {
+                obj[attr.name] = attr.value;
+                return obj;
+              }, {}),
+              dataAttributes: Object.keys(dataAttributes).length > 0 ? dataAttributes : null,
+              svgData: svgData,
+              isSvg: isSvg,
+              nearestTextContent: nearestTextContent,
+              parentInteractiveElement: parentInteractiveElement ? {
+                tagName: parentInteractiveElement.tagName.toLowerCase(),
+                id: parentInteractiveElement.id || null,
+                className: typeof parentInteractiveElement.className === 'string' ? 
+                           parentInteractiveElement.className : 
+                           (parentInteractiveElement.className?.baseVal || null),
+                role: parentInteractiveElement.getAttribute('role') || null,
+                text: parentInteractiveElement.textContent?.trim().substring(0, 100) || null,
+                ariaLabel: parentInteractiveElement.getAttribute('aria-label') || null,
+                title: parentInteractiveElement.title || null,
+                type: parentInteractiveElement.type || null
+              } : null,
+              boundingRect: {
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: rect.height,
+                top: rect.top,
+                bottom: rect.bottom,
+                left: rect.left,
+                right: rect.right
+              },
+              styles: {
+                display: computedStyle.display,
+                visibility: computedStyle.visibility,
+                position: computedStyle.position,
+                zIndex: computedStyle.zIndex,
+                opacity: computedStyle.opacity,
+                cursor: computedStyle.cursor
+              },
+              parentContext: parentContext,
+              formContext: formContext,
+              usedParentAsPrimary: !!parentInteractiveElement
             };
-            if (event.type === 'scroll') {
-              eventData.scrollPosition = { x: window.scrollX, y: window.scrollY };
-              eventData.viewportHeight = window.innerHeight;
-              eventData.documentHeight = document.documentElement.scrollHeight;
-              eventData.scrollPercentage = Math.round((window.scrollY / (document.documentElement.scrollHeight - window.innerHeight)) * 100);
-            } else if (['dragstart', 'dragend', 'drop'].includes(event.type)) {
-              eventData.dataTransfer = event.dataTransfer ? {
-                types: Array.from(event.dataTransfer.types || []),
-                effectAllowed: event.dataTransfer.effectAllowed
-              } : null;
-            } else if (['play', 'pause', 'ended'].includes(event.type)) {
-              const mediaElement = target;
-              eventData.mediaInfo = {
-                currentTime: mediaElement.currentTime,
-                duration: mediaElement.duration,
-                paused: mediaElement.paused,
-                muted: mediaElement.muted,
-                volume: mediaElement.volume
-              };
+          } catch (e) {
+            console.error('Error in captureElement:', e);
+            return { tagName: element.tagName.toLowerCase() };
+          }
+        }
+        function handleNativeEvent(event) {
+          const asyncEvents = ['play', 'pause', 'ended'];
+          if (!event.isTrusted && !asyncEvents.includes(event.type)) return;
+          
+          const target = event.target;
+          if (!target) return;
+          if (event.type === 'scroll') {
+            if (!window.__lastScrollPosition) {
+              window.__lastScrollPosition = { x: window.scrollX, y: window.scrollY };
+              return;
             }
-
-            console.log('__NATIVE_EVENT__:' + JSON.stringify(eventData));
+            
+            const scrollDiffY = Math.abs(window.scrollY - window.__lastScrollPosition.y);
+            const scrollDiffX = Math.abs(window.scrollX - window.__lastScrollPosition.x);
+            
+            if (scrollDiffY < 100 && scrollDiffX < 100) return;
+            
+            window.__lastScrollPosition = { x: window.scrollX, y: window.scrollY };
           }
           
-          eventsToMonitor.forEach(eventType => {
-            const listener = (event) => handleNativeEvent(event);
-            window.__nativeEventListeners.set(eventType, listener);
-            originalAddEventListener.call(document, eventType, listener, { capture: true, passive: true });
-          });
-          history.pushState = function() {
-            const result = originalPushState.apply(this, arguments);
-            console.log('__NATIVE_EVENT__:' + JSON.stringify({
-              type: 'history_push_state',
-              timestamp: Date.now(),
-              url: window.location.href,
-              title: document.title
-            }));
-            return result;
+          const eventData = {
+            type: event.type,
+            timestamp: Date.now(),
+            target: captureElement(target),
+            coordinates: event.clientX !== undefined ? { x: event.clientX, y: event.clientY } : null,
+            key: event.key,
+            keyCode: event.keyCode,
+            value: target.value,
+            checked: target.checked,
+            url: window.location.href,
+            title: document.title
           };
-          
-          history.replaceState = function() {
-            const result = originalReplaceState.apply(this, arguments);
-            console.log('__NATIVE_EVENT__:' + JSON.stringify({
-              type: 'history_replace_state',
-              timestamp: Date.now(),
-              url: window.location.href,
-              title: document.title
-            }));
-            return result;
-          };
-          window.__cleanupNativeEventMonitor = function() {
+          if (event.type === 'scroll') {
+            eventData.scrollPosition = { x: window.scrollX, y: window.scrollY };
+            eventData.viewportHeight = window.innerHeight;
+            eventData.documentHeight = document.documentElement.scrollHeight;
+            eventData.scrollPercentage = Math.round((window.scrollY / (document.documentElement.scrollHeight - window.innerHeight)) * 100);
+          } else if (['dragstart', 'dragend', 'drop'].includes(event.type)) {
+            eventData.dataTransfer = event.dataTransfer ? {
+              types: Array.from(event.dataTransfer.types || []),
+              effectAllowed: event.dataTransfer.effectAllowed
+            } : null;
+          } else if (['play', 'pause', 'ended'].includes(event.type)) {
+            const mediaElement = target;
+            eventData.mediaInfo = {
+              currentTime: mediaElement.currentTime,
+              duration: mediaElement.duration,
+              paused: mediaElement.paused,
+              muted: mediaElement.muted,
+              volume: mediaElement.volume
+            };
+          }
+
+          console.log('__NATIVE_EVENT__:' + JSON.stringify(eventData));
+        }
+        
+        eventsToMonitor.forEach(eventType => {
+          const listener = (event) => handleNativeEvent(event);
+          window.__nativeEventListeners.set(eventType, listener);
+          originalAddEventListener.call(document, eventType, listener, { capture: true, passive: true });
+        });
+        history.pushState = function() {
+          const result = originalPushState.apply(this, arguments);
+          console.log('__NATIVE_EVENT__:' + JSON.stringify({
+            type: 'history_push_state',
+            timestamp: Date.now(),
+            url: window.location.href,
+            title: document.title
+          }));
+          return result;
+        };
+        
+        history.replaceState = function() {
+          const result = originalReplaceState.apply(this, arguments);
+          console.log('__NATIVE_EVENT__:' + JSON.stringify({
+            type: 'history_replace_state',
+            timestamp: Date.now(),
+            url: window.location.href,
+            title: document.title
+          }));
+          return result;
+        };
+        window.__cleanupNativeEventMonitor = function() {
             if (!window.__nativeEventListeners) return;
             
             eventsToMonitor.forEach(eventType => {
@@ -932,12 +952,12 @@ export class NativeEventMonitor {
           setupSPARouteMonitoring();
         
           console.log('[NativeEventMonitor] Event monitoring script injected successfully');
-        })();
-      `, true);
-    } catch (error) {
-      console.error('[NativeEventMonitor] Error injecting event monitoring script:', error);
-    }
+      })();
+    `, true);
+  } catch (error) {
+    console.error('[NativeEventMonitor] Error injecting event monitoring script:', error);
   }
+}
 
   private async injectCleanupScript(webContents: WebContents): Promise<void> {
     if (!webContents || webContents.isDestroyed()) return;
