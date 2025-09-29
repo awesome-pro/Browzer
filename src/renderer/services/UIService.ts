@@ -105,7 +105,7 @@ I've analyzed the recorded workflow and generated **${steps.length} execution st
 ### Steps Overview:`;
 
     steps.forEach((step, index) => {
-      planMessage += `\n${index + 1}. ${step.action} - ${step.description}`;
+      planMessage += `\n${index + 1}. ${step.action} - ${step.reasoning}`;
       if (step.reasoning) {
         planMessage += `\n   *${step.reasoning}*`;
       }
@@ -128,7 +128,7 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
                       status === 'running' ? '🔄' : '⭕';
 
     
-    let progressMessage = `**Step ${index + 1}:** ${step.description} ${statusIcon}`;
+    let progressMessage = `**Step ${index + 1}:** ${step.reasoning} ${statusIcon}`;
     
     if (status === 'running') {
       progressMessage += '\n  *Executing...*';
@@ -170,7 +170,7 @@ ${this.generatePerformanceAnalysis(steps, executionTime)}
 
 ${failureCount > 0 ? `### Failed Steps:
 ${steps.filter(s => s.status === 'failed').map((s) => 
-  `- **Step ${steps.indexOf(s) + 1}:** ${s.description}\n  Error: ${s.error}`
+  `- **Step ${steps.indexOf(s) + 1}:** ${s.reasoning}\n  Error: ${s.error}`
 ).join('\n')}` : ''}
 
 The task execution is now complete. ${overallSuccess ? 'All critical steps were successful.' : 'Some steps failed, but the main workflow completed.'}`;

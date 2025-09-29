@@ -2,7 +2,7 @@ import { ExecuteResult, ExecuteStep, ExecuteTask, ActionValidator, ActionType, }
 import { TabService } from './TabService';
 import { SessionSelector } from '../components/SessionSelector';
 import { SmartRecordingEngine } from '../components/RecordingEngine';
-import { AnthropicPromptGenerator } from '../components/PropmtGenerator';
+import { PromptGenerator } from '../components/PromptGenerator';
 import { ExecuteStepRunner } from '../components/ExecuteStepRunner';
 
 export class ExecuteAgentService {
@@ -103,8 +103,8 @@ export class ExecuteAgentService {
     try {
       this.addMessageToChat('assistant', this.generateContextAnalysis(instruction, session));
 
-      const systemPrompt = AnthropicPromptGenerator.generateClaudeSystemPrompt(session);
-      const userPrompt = AnthropicPromptGenerator.generateClaudeUserPrompt(instruction, session);
+      const systemPrompt = PromptGenerator.generateSystemPrompt(session);
+      const userPrompt = PromptGenerator.generateUserPrompt(instruction);
 
       this.addMessageToChat('assistant', '<div class="loading">🧠 Analyzing recorded workflow and planning execution steps...</div>');
 
@@ -170,16 +170,13 @@ export class ExecuteAgentService {
     try {
       console.log('[EnhancedExecuteAgentService] Parsing LLM response:', llmResponse);
 
-      const cleanedResponse = this.extractJSONFromResponse(llmResponse);
-      let parsedSteps: any[];
-
-      try {
-        parsedSteps = JSON.parse(cleanedResponse);
-      } catch (parseError) {
-        console.error('[EnhancedExecuteAgentService] JSON parsing failed, trying alternative methods');
+      // Use the new PromptGenerator to parse and validate the response
+      const parsedSteps = PromptGenerator.parseAndValidateResponse(llmResponse);
+      
+      if (!parsedSteps) {
         throw new Error('Failed to parse execution steps from AI response');
       }
-
+      
       if (!Array.isArray(parsedSteps)) {
         throw new Error('AI response is not a valid array of steps');
       }
@@ -193,7 +190,6 @@ export class ExecuteAgentService {
         const step: ExecuteStep = {
           id: `step-${i + 1}`,
           action: this.normalizeActionType(rawStep.action),
-          description: rawStep.description || `Step ${i + 1}`,
           target: rawStep.target || '',
           value: rawStep.value,
           reasoning: rawStep.reasoning || '',
@@ -373,7 +369,7 @@ export class ExecuteAgentService {
       if (error.includes('URL is required') && step.action === ActionType.NAVIGATION) {
         if (!fixedStep.target && !fixedStep.value) {
           // Try to extract URL from description
-          const urlMatch = step.description.match(/(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+          const urlMatch = step.reasoning?.match(/(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
           if (urlMatch) {
             fixedStep.target = urlMatch[0].startsWith('http') ? urlMatch[0] : `https://${urlMatch[0]}`;
           }
@@ -382,7 +378,7 @@ export class ExecuteAgentService {
 
       if (error.includes('Target selector required') && !fixedStep.target) {
         // Try to extract selector from description
-        const selectorMatch = step.description.match(/['"`]([^'"`]+)['"`]/);
+        const selectorMatch = step.reasoning?.match(/['"`]([^'"`]+)['"`]/);
         if (selectorMatch) {
           fixedStep.target = selectorMatch[1];
         }
@@ -390,7 +386,7 @@ export class ExecuteAgentService {
 
       if (error.includes('value required') && !fixedStep.value) {
         // Try to extract value from description
-        const valueMatch = step.description.match(/(?:type|enter|select)\s+['"`]([^'"`]+)['"`]/i);
+        const valueMatch = step.reasoning?.match(/(?:type|enter|select)\s+['"`]([^'"`]+)['"`]/i);
         if (valueMatch) {
           fixedStep.value = valueMatch[1];
         }
@@ -439,7 +435,7 @@ I've analyzed the recorded workflow and generated **${steps.length} execution st
 ### Steps Overview:`;
 
     steps.forEach((step, index) => {
-      planMessage += `\n${index + 1}. ${step.action} - ${step.description}`;
+      planMessage += `\n${index + 1}. ${step.action} - ${step.reasoning}`;
       if (step.reasoning) {
         planMessage += `\n   *${step.reasoning}*`;
       }
@@ -585,7 +581,7 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
                       status === 'running' ? '🔄' : '⭕';
 
     
-    let progressMessage = `**Step ${index + 1}:** ${step.description} ${statusIcon}`;
+    let progressMessage = `**Step ${index + 1}:** ${step.reasoning} ${statusIcon}`;
     
     if (status === 'running') {
       progressMessage += '\n  *Executing...*';
@@ -626,7 +622,7 @@ ${this.generatePerformanceAnalysis(steps, executionTime)}
 
 ${failureCount > 0 ? `### Failed Steps:
 ${steps.filter(s => s.status === 'failed').map((s) => 
-  `- **Step ${steps.indexOf(s) + 1}:** ${s.description}\n  Error: ${s.error}`
+  `- **Step ${steps.indexOf(s) + 1}:** ${s.reasoning}\n  Error: ${s.error}`
 ).join('\n')}` : ''}
 
 The task execution is now complete. ${overallSuccess ? 'All critical steps were successful.' : 'Some steps failed, but the main workflow completed.'}`;

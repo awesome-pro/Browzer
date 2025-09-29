@@ -207,24 +207,32 @@ export enum ActionType {
   export interface ExecuteStep {
     id: string;
     action: ActionType;
-    description: string;
-    target?: string;          // CSS selector or URL
-    value?: string | number;  // Text to type, option to select, milliseconds to wait
-    reasoning: string;        // Why this step is needed
-    
-    // Execution state
-    status: 'pending' | 'running' | 'completed' | 'failed';
-    result?: any;
-    error?: string;
+    target: string;
+    value?: string | number;
+    reasoning?: string;
+    status?: string;
     startTime?: number;
     endTime?: number;
-    
-    // Context for verification
-    expectedOutcome?: string;
+    result?: any;
+    error?: string;
     retryCount?: number;
     maxRetries?: number;
   }
   
+  export interface ElementIdentifier {
+    id?: string;
+    name?: string;
+    className?: string;
+    tagName?: string;
+    ariaLabel?: string;
+    text?: string;
+    href?: string;
+    type?: string;
+    role?: string;
+    selector?: string;
+    isMultiSelector?: boolean;
+  }
+
   export interface ExecuteTask {
     id: string;
     instruction: string;
@@ -250,10 +258,6 @@ export enum ActionType {
       
       if (!step.action || !Object.values(ActionType).includes(step.action)) {
         errors.push('Invalid or missing action type');
-      }
-      
-      if (!step.description?.trim()) {
-        errors.push('Description is required');
       }
       
       // Action-specific validations
@@ -301,7 +305,6 @@ export enum ActionType {
       return {
         id: step.id || `step_${Date.now()}`,
         action: step.action || ActionType.CLICK,
-        description: step.description?.trim() || 'Automated action',
         target: step.target?.trim() || '',
         value: step.value,
         reasoning: step.reasoning?.trim() || 'Automated step',

@@ -1,7 +1,7 @@
 // SessionManager - Manages and displays recording sessions
 import { SmartRecordingEngine } from './RecordingEngine';
 import { SmartRecordingSession, ActionType } from '../types'
-import { AnthropicPromptGenerator } from './PropmtGenerator';
+import { PromptGenerator } from './PromptGenerator';
 
 export class SessionManager {
     private recordingEngine: SmartRecordingEngine;
@@ -217,7 +217,7 @@ export class SessionManager {
         }
         
         try {
-            const prompt = AnthropicPromptGenerator.generateClaudeSystemPrompt(session);
+            const prompt = PromptGenerator.generateSystemPrompt(session);
             
             const dataBlob = new Blob([prompt], { type: 'text/plain' });
             const url = URL.createObjectURL(dataBlob);

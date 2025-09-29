@@ -390,9 +390,9 @@ private processClickSequence(url: string, pageTitle: string): void {
       id: this.generateId(),
       type: ActionType.NAVIGATION,
       timestamp: Date.now(),
-      description: `Click "${elementContext.selector}" navigating to > "${RecordingUtil.cleanGoogleUrl(linkText ?? targetUrl)}"`,
+      description: `Navigate to > "${RecordingUtil.cleanGoogleUrl(linkText ?? targetUrl)}"`,
       target: {
-        description: `Click "${elementContext.selector}" leading navigation to > "${RecordingUtil.cleanGoogleUrl(linkText ?? targetUrl)}"`,
+        description: `Navigate to > "${RecordingUtil.cleanGoogleUrl(linkText ?? targetUrl)}" by clicking on "${elementContext.description}"`,
         selector: isNavigationClick && linkElement ? this.generateCompleteSelector(linkElement) : '',
         xpath: '',
         role: 'page',
