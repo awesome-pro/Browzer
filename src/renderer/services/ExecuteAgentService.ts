@@ -4,6 +4,7 @@ import { SessionSelector } from '../components/SessionSelector';
 import { SmartRecordingEngine } from '../components/RecordingEngine';
 import { PromptGenerator } from '../components/PromptGenerator';
 import { ExecuteStepRunner } from '../components/ExecuteStepRunner';
+import { Utils } from '../utils';
 
 export class ExecuteAgentService {
   private tabService: TabService;
@@ -621,7 +622,7 @@ The task execution is now complete. ${overallSuccess ? 'All critical steps were 
       messageDiv.dataset.timestamp = new Date().toISOString();
       
       const isLoading = content.includes('class="loading"');
-      const processedContent = isLoading ? content : this.markdownToHtml(content);
+      const processedContent = isLoading ? content : Utils.markdownToHtml(content);
       
       if (timing && !isLoading) {
         messageDiv.innerHTML = `
@@ -637,19 +638,6 @@ The task execution is now complete. ${overallSuccess ? 'All critical steps were 
     } catch (error) {
       console.error('[EnhancedExecuteAgentService] Error adding message to chat:', error);
     }
-  }
-
-  private markdownToHtml(markdown: string): string {
-    return markdown
-      .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-      .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-      .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-      .replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>')
-      .replace(/\*(.*?)\*/gim, '<em>$1</em>')
-      .replace(/```([^`]*?)```/gim, '<pre><code>$1</code></pre>')
-      .replace(/`([^`]*?)`/gim, '<code>$1</code>')
-      .replace(/^(?!<[hou])\s*([^\n].*)$/gim, '<p>$1</p>')
-      .replace(/\n/g, '<br/>');
   }
 
   private clearLoadingMessages(): void {

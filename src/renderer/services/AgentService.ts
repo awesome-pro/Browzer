@@ -1,6 +1,6 @@
 import CONSTANTS from '../constants';
 import { DoStep, DoTask, IAgentService, IpcRenderer, WebpageContext } from '../types';
-import { extractPageContent, getBrowserApiKeys, getExtensionDisplayName, markdownToHtml } from '../utils';
+import { Utils } from '../utils';
 import { DoAgentService } from './DoAgentService';
 import { ExecuteAgentService } from './ExecuteAgentService';
 import { McpClientManager } from './McpClientService';
@@ -62,8 +62,6 @@ export class AgentService implements IAgentService {
     }
     
     this.globalQueryTracker.set(normalizedQuery, currentTime);
-    
-    // Clean up old entries to prevent memory leaks
     if (this.globalQueryTracker.size > 100) {
       const cutoffTime = currentTime - (windowMs * 10);
       for (const [key, time] of this.globalQueryTracker.entries()) {
@@ -77,7 +75,6 @@ export class AgentService implements IAgentService {
   }
 
   private setupAgentControls(): void {
-    // Initialize chat UI in the fixed container
     const chatInputContainer = document.querySelector('.chat-input-container');
     if (chatInputContainer) {
       let chatInputArea = document.querySelector('.chat-input-area');
@@ -170,14 +167,12 @@ export class AgentService implements IAgentService {
       
       sendButton.addEventListener('click', (e) => {
         e.preventDefault();
-        // this.hideMentionDropdown();
         sendMessage();
       });
       
       chatInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
-          // this.hideMentionDropdown();
           sendMessage();
         }
       });    
@@ -192,7 +187,6 @@ export class AgentService implements IAgentService {
             placeholderText = 'Enter a task to perform...';
           } else if (mode === 'execute') {
             placeholderText = 'Describe what to do with the recording...';
-            // this.setupSessionSelectorUI();
           }
           chatInput.placeholder = placeholderText;
           
@@ -200,7 +194,6 @@ export class AgentService implements IAgentService {
           if (sidebarContent) {
             if (mode === 'execute') {
               sidebarContent.classList.add('execute-mode');
-              // this.setupSessionSelectorUI();
             } else {
               sidebarContent.classList.remove('execute-mode');
             }
@@ -257,8 +250,6 @@ export class AgentService implements IAgentService {
         this.showToast('This query was just processed, skipping duplicate', 'info');
         return;
       }
-      
-      // Prevent duplicate execution
       const currentTime = Date.now();
       const queryKey = `${query}-${url}`;
       const lastProcessedKey = `lastProcessed_${queryKey}`;
@@ -270,24 +261,20 @@ export class AgentService implements IAgentService {
       }
       
       localStorage.setItem(lastProcessedKey, currentTime.toString());
-      
-      // Ensure chat input area exists
       this.ensureChatInputArea();
 
       this.addMessageToChat('assistant', '<div class="loading">Analyzing request and routing to appropriate agent...</div>');
       
-      const pageContent = await extractPageContent(webview);
+      const pageContent = await Utils.extractPageContent(webview);
       const routingResult = await this.ipcRenderer.invoke('route-extension-request', query);
       
       this.clearLoadingMessages();
 
       if (routingResult.type === 'workflow') {
-        // Execute workflow asynchronously - progress events will update the UI
-        // The workflow-complete event listener will call displayAgentResults when done
         try {
           const workflowData = {
             pageContent,
-            browserApiKeys: getBrowserApiKeys(),
+            browserApiKeys: Utils.getBrowserApiKeys(),
             selectedProvider: provider,
             selectedModel: 'claude-3-5-sonnet-20241022', // Always use Claude 3.5 Sonnet
             isQuestion: false,
@@ -300,14 +287,10 @@ export class AgentService implements IAgentService {
             data: workflowData
           });
           
-          // Workflow execution is async - progress events will handle UI updates
-          // The workflow-complete event listener will call displayAgentResults when done
-          
         } catch (workflowError) {
           console.error('Workflow execution failed:', workflowError);
           this.addMessageToChat('assistant', `Workflow execution failed: ${(workflowError as Error).message}`);
         } finally {
-          // Always clear the execution flag
           this.isExecuting = false;
         }
         
@@ -326,17 +309,13 @@ export class AgentService implements IAgentService {
         type: 'single_extension',
         steps: [{
           extensionId: extensionId,
-          extensionName: getExtensionDisplayName(extensionId)
+          extensionName: Utils.getExtensionDisplayName(extensionId)
         }]
       };
       
       const progressElement = this.workflowService.addWorkflowProgressToChat(singleExtensionWorkflowData);
-      
-      // Start the progress indicator
       if (progressElement && (progressElement as any).progressIndicator) {
         (progressElement as any).progressIndicator.startWorkflow(singleExtensionWorkflowData);
-        
-        // Update to running state
         (progressElement as any).progressIndicator.updateProgress({
           workflowId: singleExtensionWorkflowData.workflowId,
           currentStep: 0,
@@ -385,26 +364,19 @@ export class AgentService implements IAgentService {
         if (this.memoryService && result.data) {
           let summary = '';
           let memoryQuery = query || 'Agent Query';
-          
-          // Try different content sources in order of preference
           if (result.data.consolidated_summary) {
             summary = result.data.consolidated_summary;
           } else if (result.data.summaries && result.data.summaries.length > 0) {
             summary = result.data.summaries.map((s: any) => `${s.title}: ${s.summary}`).join('\n\n');
           } else if (typeof result.data === 'string') {
-            // Handle simple string responses
             summary = result.data;
           } else if (result.data.content) {
-            // Handle responses with content field
             summary = result.data.content;
           } else if (result.data.response) {
-            // Handle responses with response field
             summary = result.data.response;
           }
           
           if (summary && summary.trim()) {
-            
-            // Get current page info for memory context
             const webview = this.getActiveWebview();
             const url = webview?.src || '';
             const title = webview?.getTitle ? webview.getTitle() : '';
@@ -465,16 +437,10 @@ export class AgentService implements IAgentService {
         const sessionItem = document.createElement('div');
         sessionItem.className = 'session-list-item';
         sessionItem.dataset.sessionId = session.id;
-        
-        // Format date
         const date = new Date(session.startTime);
         const formattedDate = date.toLocaleDateString();
-        
-        // Calculate duration
         const duration = session.endTime ? Math.round((session.endTime - session.startTime) / 1000) : 0;
         const formattedDuration = `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`;
-        
-        // Count events
         const eventCount = session.events?.length || 0;
         
         sessionItem.innerHTML = `
@@ -485,22 +451,13 @@ export class AgentService implements IAgentService {
             <span class="session-item-events">${eventCount} events</span>
           </div>
         `;
-        
-        // Add click event
         sessionItem.addEventListener('click', () => {
-          // Remove selected class from all items
           document.querySelectorAll('.session-list-item').forEach(item => {
             item.classList.remove('selected');
           });
-          
-          // Add selected class to clicked item
           sessionItem.classList.add('selected');
-          
-          // Store selected session ID
           if (this.executeAgentService) {
             this.executeAgentService.setSelectedSessionId(session.id);
-            
-            // Hide the selection required message
             const selectionMessage = document.getElementById('sessionSelectionRequired');
             if (selectionMessage) {
               selectionMessage.classList.add('session-selected');
@@ -518,8 +475,6 @@ export class AgentService implements IAgentService {
           <button class="retry-btn">Retry</button>
         </div>
       `;
-      
-      // Add retry button event listener
       const retryBtn = sessionListItems.querySelector('.retry-btn');
       if (retryBtn) {
         retryBtn.addEventListener('click', () => this.loadRecordingSessions());
@@ -547,7 +502,6 @@ export class AgentService implements IAgentService {
     this.isExecuting = true;
     
     try {
-      // Execute the task using the ExecuteAgentService
       const result = await this.executeAgentService.executeTask(message);
       
       if (!result.success && result.error) {
@@ -625,7 +579,7 @@ export class AgentService implements IAgentService {
         return;
       }
       
-      const pageContent = await extractPageContent(activeWebview);
+      const pageContent = await Utils.extractPageContent(activeWebview);
       const questionRequest = `Answer this question about the page: ${question}`;
       const routingResult = await this.ipcRenderer.invoke('route-extension-request', questionRequest);
       
@@ -685,26 +639,19 @@ export class AgentService implements IAgentService {
 
         if (this.memoryService && result.data) {
           let summary = '';
-          
-          // Try different content sources in order of preference
           if (result.data.consolidated_summary) {
             summary = result.data.consolidated_summary;
           } else if (result.data.summaries && result.data.summaries.length > 0) {
             summary = result.data.summaries.map((s: any) => `${s.title}: ${s.summary}`).join('\n\n');
           } else if (typeof result.data === 'string') {
-            // Handle simple string responses
             summary = result.data;
           } else if (result.data.content) {
-            // Handle responses with content field
             summary = result.data.content;
           } else if (result.data.response) {
-            // Handle responses with response field
             summary = result.data.response;
           }
           
           if (summary && summary.trim()) {
-            
-            // Get current page info for memory context
             const webview = this.getActiveWebview();
             const url = webview?.src || '';
             const title = webview?.getTitle ? webview.getTitle() : '';
@@ -729,8 +676,6 @@ export class AgentService implements IAgentService {
       this.showToast('Workflow already in progress...', 'info');
       return;
     }
-    
-    // Set execution flag immediately to prevent race conditions
     this.isExecuting = true;
     
     try {
@@ -755,7 +700,7 @@ export class AgentService implements IAgentService {
       }
       
       const currentUrl = activeWebview.src || '';
-      const pageContent = await extractPageContent(activeWebview);
+      const pageContent = await Utils.extractPageContent(activeWebview);
       
       const enhancedPageContent = {
         ...pageContent,
@@ -797,31 +742,23 @@ export class AgentService implements IAgentService {
         
         return;
       }
-      
-      // Handle single extension result
       const extensionId = routingResult.extensionId;
       if (!extensionId) {
         this.addMessageToChat('assistant', 'Error: No extension available to answer your question');
         return;
       }
-      
-      // Create progress indicator for single extension execution
       const singleExtensionWorkflowData = {
         workflowId: `followup-context-single-${Date.now()}`,
         type: 'single_extension',
         steps: [{
           extensionId: extensionId,
-          extensionName: getExtensionDisplayName(extensionId)
+          extensionName: Utils.getExtensionDisplayName(extensionId)
         }]
       };
 
       const progressElement = this.workflowService.addWorkflowProgressToChat(singleExtensionWorkflowData);
-      
-      // Start the progress indicator
       if (progressElement && (progressElement as any).progressIndicator) {
         (progressElement as any).progressIndicator.startWorkflow(singleExtensionWorkflowData);
-        
-        // Update to running state
         (progressElement as any).progressIndicator.updateProgress({
           workflowId: singleExtensionWorkflowData.workflowId,
           currentStep: 0,
@@ -847,9 +784,6 @@ export class AgentService implements IAgentService {
           browserApiKeys: this.getBrowserApiKeys(),
           selectedProvider: provider
         });
-        
-        
-        // Complete the progress indicator
         if (progressElement && (progressElement as any).progressIndicator) {
           (progressElement as any).progressIndicator.updateProgress({
             workflowId: singleExtensionWorkflowData.workflowId,
@@ -871,29 +805,21 @@ export class AgentService implements IAgentService {
         
         console.log('[processFollowupQuestionWithContexts] Displaying results...');
         this.displayAgentResults(result.data);
-        
-        // Store memory if available - try multiple content sources
         if (this.memoryService && result.data) {
           let summary = '';
-          
-          // Try different content sources in order of preference
           if (result.data.consolidated_summary) {
             summary = result.data.consolidated_summary;
           } else if (result.data.summaries && result.data.summaries.length > 0) {
             summary = result.data.summaries.map((s: any) => `${s.title}: ${s.summary}`).join('\n\n');
           } else if (typeof result.data === 'string') {
-            // Handle simple string responses
             summary = result.data;
           } else if (result.data.content) {
-            // Handle responses with content field
             summary = result.data.content;
           } else if (result.data.response) {
-            // Handle responses with response field
             summary = result.data.response;
           }
           
           if (summary && summary.trim()) {
-            // Get current page info for memory context
             const webview = this.getActiveWebview();
             const url = webview?.src || '';
             const title = webview?.getTitle ? webview.getTitle() : '';
@@ -905,8 +831,6 @@ export class AgentService implements IAgentService {
         }
       } catch (extensionError) {
         console.error('Follow-up extension with contexts execution failed:', extensionError);
-        
-        // Mark progress as failed
         if (progressElement && (progressElement as any).progressIndicator) {
           (progressElement as any).progressIndicator.handleWorkflowError({
             workflowId: singleExtensionWorkflowData.workflowId,
@@ -1002,11 +926,11 @@ export class AgentService implements IAgentService {
       
       if (role === 'context') {
         messageDiv.className = 'chat-message context-message';
-        messageDiv.innerHTML = `<div class="message-content">${markdownToHtml(content)}</div>`;
+        messageDiv.innerHTML = `<div class="message-content">${Utils.markdownToHtml(content)}</div>`;
         messageDiv.dataset.role = 'context';
       } else if (role === 'user') {
         messageDiv.className = 'chat-message user-message';
-        messageDiv.innerHTML = `<div class="message-content">${markdownToHtml(content)}</div>`;
+        messageDiv.innerHTML = `<div class="message-content">${Utils.markdownToHtml(content)}</div>`;
         messageDiv.dataset.role = 'user';
         messageDiv.dataset.timestamp = new Date().toISOString();
       } else if (role === 'assistant') {
@@ -1015,7 +939,7 @@ export class AgentService implements IAgentService {
         messageDiv.dataset.timestamp = new Date().toISOString();
         
         const isLoading = content.includes('class="loading"') && !content.replace(/<div class="loading">.*?<\/div>/g, '').trim();
-        const processedContent = isLoading ? content : markdownToHtml(content);
+        const processedContent = isLoading ? content : Utils.markdownToHtml(content);
         
         if (timing && !isLoading) {
           messageDiv.innerHTML = `
@@ -1137,30 +1061,20 @@ export class AgentService implements IAgentService {
         } else if (step.status === 'running') {
           progressMessage += ' ⏳';
         }
-        
-        // Find the latest assistant message and update it with progress
         const chatContainer = document.getElementById('chatContainer');
         if (chatContainer) {
           const lastMessage = chatContainer.querySelector('.chat-message.assistant-message:last-child .message-content');
           if (lastMessage) {
-            // If it's a loading message, replace it
             if (lastMessage.innerHTML.includes('class="loading"')) {
               lastMessage.innerHTML = progressMessage;
             } else {
-              // Add to existing message
               lastMessage.innerHTML += `<br/>${progressMessage}`;
             }
           }
         }
       });
-      
-      // Show initial loading message
       this.addMessageToChat('assistant', '<div class="loading">🤖 Analyzing page and planning actions with AI...</div>');
-      
-      // Execute the task
       const result = await doAgent.executeTask(taskInstruction);
-      
-      // Remove loading message
       const loadingMessages = document.querySelectorAll('.loading');
       loadingMessages.forEach(message => {
         const parentMessage = message.closest('.chat-message');
@@ -1168,32 +1082,22 @@ export class AgentService implements IAgentService {
           parentMessage.remove();
         }
       });
-      
-      // Display results
       if (result.success) {
         let resultMessage = `✅ **Task completed successfully!**\n⏱️ *Execution time: ${(result.executionTime / 1000).toFixed(2)}s*`;
         
         if (result.data) {
-          // Handle generic extracted content format
           if (typeof result.data === 'string') {
-            // Simple string result (like summaries)
             resultMessage += `\n\n📄 **Result:**\n${result.data}`;
           } else if (result.data.error) {
-            // Error in extraction
             resultMessage += `\n\n⚠️ **Note:** ${result.data.error}`;
           } else if (result.data.url) {
-            // Generic extracted content structure
             resultMessage += `\n\n📄 **Extracted from:** ${result.data.url}`;
-            
-            // Show headings if available
             if (result.data.headings && result.data.headings.length > 0) {
               resultMessage += '\n\n📋 **Page Structure:**\n';
               result.data.headings.slice(0, 5).forEach((heading: any) => {
                 resultMessage += `${'#'.repeat(heading.level === 'h1' ? 1 : heading.level === 'h2' ? 2 : 3)} ${heading.text}\n`;
               });
             }
-            
-            // Show main content if available
             if (result.data.textContent && result.data.textContent.length > 0) {
               resultMessage += '\n\n📝 **Main Content:**\n';
               result.data.textContent.slice(0, 3).forEach((content: any, index: number) => {
@@ -1202,16 +1106,12 @@ export class AgentService implements IAgentService {
                 }
               });
             }
-            
-            // Show links if available
             if (result.data.links && result.data.links.length > 0) {
               resultMessage += '\n\n🔗 **Links found:**\n';
               result.data.links.slice(0, 5).forEach((link: any, index: number) => {
                 resultMessage += `${index + 1}. [${link.text}](${link.href})\n`;
               });
             }
-            
-            // Show lists if available
             if (result.data.lists && result.data.lists.length > 0) {
               resultMessage += '\n\n📝 **Lists found:**\n';
               result.data.lists.slice(0, 2).forEach((list: any, index: number) => {
@@ -1221,8 +1121,6 @@ export class AgentService implements IAgentService {
                 });
               });
             }
-            
-            // Show page type information
             if (result.data.pageStructure) {
               const structure = result.data.pageStructure;
               const pageTypes = [];
@@ -1237,15 +1135,12 @@ export class AgentService implements IAgentService {
                 resultMessage += `\n\n🏷️ **Page Type:** ${pageTypes.join(', ')}`;
               }
             }
-            
-            // Show fallback content if no structured data
             if (result.data.fallbackContent && 
                 (!result.data.textContent || result.data.textContent.length === 0) &&
                 (!result.data.headings || result.data.headings.length === 0)) {
               resultMessage += `\n\n📄 **Page content:**\n${result.data.fallbackContent}`;
             }
           } else {
-            // Unknown result format, show as is
             resultMessage += `\n\n📄 **Result:**\n${JSON.stringify(result.data, null, 2)}`;
           }
         }
@@ -1257,8 +1152,6 @@ export class AgentService implements IAgentService {
       
     } catch (error) {
       console.error('[processDoTask] Error executing task:', error);
-      
-      // Remove loading message
       const loadingMessages = document.querySelectorAll('.loading');
       loadingMessages.forEach(message => {
         const parentMessage = message.closest('.chat-message');
@@ -1269,7 +1162,6 @@ export class AgentService implements IAgentService {
       
       this.addMessageToChat('assistant', `❌ **Task execution failed:** ${(error as Error).message}`);
     } finally {
-      // Always clear execution flag
       this.isExecuting = false;
     }
   }
@@ -1278,28 +1170,19 @@ export class AgentService implements IAgentService {
     const conversationHistory: any[] = [];
     
     try {
-      // Get recent chat messages from the UI
       const chatContainer = document.getElementById('chatContainer');
       if (chatContainer) {
         const messages = chatContainer.querySelectorAll('.chat-message');
-        
-        // Add recent chat messages (last 10)
         const recentMessages = Array.from(messages).slice(-10);
         recentMessages.forEach(message => {
-          // Skip loading messages
           if (message.querySelector('.loading')) return;
-          
-          // Determine role (user or assistant)
           let role = 'assistant';
           if (message.classList.contains('user-message')) {
             role = 'user';
           }
-          
-          // Get text content, stripping HTML
           const contentEl = message.querySelector('.message-content');
           let content = '';
           if (contentEl) {
-            // Create a temporary div to extract text without HTML
             const tempDiv = document.createElement('div');
             tempDiv.innerHTML = contentEl.innerHTML;
             content = tempDiv.textContent || tempDiv.innerText || '';
@@ -1313,34 +1196,23 @@ export class AgentService implements IAgentService {
           }
         });
       }
-      
-      // Get relevant memories from localStorage (simple approach)
       try {
         const allMemories = JSON.parse(localStorage.getItem(CONSTANTS.MEMORY_KEY) || '[]');
         if (allMemories && allMemories.length > 0) {
-          // Simple relevance scoring - get recent memories from same domain or with query keywords
           const relevantMemories = allMemories.slice(0, 10).filter((memory: any) => {
             if (!memory) return false;
-            
-            // Check domain match
             const currentDomain = currentUrl ? new URL(currentUrl).hostname : '';
             const memoryDomain = memory.domain || '';
             if (currentDomain && memoryDomain && currentDomain === memoryDomain) {
               return true;
             }
-            
-            // Check keyword match in question or answer
             const queryLower = query.toLowerCase();
             const questionMatch = memory.question && memory.question.toLowerCase().includes(queryLower);
             const answerMatch = memory.answer && memory.answer.toLowerCase().includes(queryLower);
             
             return questionMatch || answerMatch;
           }).slice(0, 5); // Take top 5 relevant memories
-          
-          
-          // Format memories with proper structure expected by Python agents
           relevantMemories.forEach((memory: any) => {
-            // Add the original question as a user message with memory flag
             conversationHistory.push({
               role: 'user',
               content: memory.question,
@@ -1353,8 +1225,6 @@ export class AgentService implements IAgentService {
                 topic: memory.topic
               }
             });
-            
-            // Add the answer as an assistant message with memory flag  
             conversationHistory.push({
               role: 'assistant',
               content: memory.answer,

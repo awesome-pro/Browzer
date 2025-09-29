@@ -22,7 +22,7 @@ import { McpClientManager } from './services/McpClientService';
 import { DevToolsManager } from './components/DevToolsManager';
 import { MemoryService } from './services/MemoryService';
 import CONSTANTS from './constants';
-import { getBrowserApiKeys } from './utils';
+import { Utils } from './utils';
 
 // ========================= TYPES & INTERFACES =========================
 interface AppState {
@@ -161,7 +161,7 @@ class BrowzerApp {
 
   private async syncApiKeysWithBackend(): Promise<void> {
     try {
-      const apiKeys = getBrowserApiKeys();
+      const apiKeys = Utils.getBrowserApiKeys();
       const provider = 'anthropic';
       
       

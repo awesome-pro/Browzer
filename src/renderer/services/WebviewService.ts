@@ -302,59 +302,7 @@ export class WebviewService implements IWebviewService {
       console.error('[WebviewManager] Failed to setup recording:', error);
     }
   }
-
-  public extractPageContent(webview: any): any {
-    try {
-      const extractScript = `
-        (function() {
-          try {
-            const title = document.title || '';
-            
-            let description = "";
-            try {
-              const metaDesc = document.querySelector('meta[name="description"]');
-              if (metaDesc) description = metaDesc.getAttribute('content') || '';
-            } catch(e) {
-              console.error('Error getting meta description:', e);
-            }
-            
-            const mainContent = document.querySelector('article') || 
-                              document.querySelector('main') || 
-                              document.querySelector('.content') ||
-                              document.querySelector('#content') ||
-                              document.body;
-            
-            const bodyText = mainContent ? mainContent.innerText.replace(/\\s+/g, ' ').trim() : '';
-            const bodyHTML = mainContent ? mainContent.innerHTML : document.body.innerHTML;
-            
-            return {
-              title: title,
-              description: description,
-              content: bodyText,
-              html: bodyHTML,
-              url: window.location.href
-            };
-          } catch(finalError) {
-            console.error('Fatal error in content extraction:', finalError);
-            return {
-              title: document.title || '',
-              description: '',
-              content: 'Error extracting content: ' + finalError.message,
-              html: '',
-              url: window.location.href
-            };
-          }
-        })();
-      `;
-      
-      const result = webview.executeJavaScript(extractScript);
-      return result || { title: '', description: '', content: '', html: '', url: '' };
-    } catch (error) {
-      console.error('Error in extractPageContent:', error);
-      return { title: '', description: '', content: '', html: '', url: '' };
-    }
-  }
-
+  
   private updateUrlBar(webview: any, url: string): void {
     if (this.isActiveWebview(webview)) {
       const urlBar = document.getElementById('urlBar') as HTMLInputElement;

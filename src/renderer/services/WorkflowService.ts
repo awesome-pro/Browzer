@@ -1,6 +1,6 @@
 import { IpcRenderer } from '../types';
 import WorkflowProgressIndicator from '../components/WorkflowProgress';
-import { getExtensionDisplayName } from '../utils';
+import { Utils } from '../utils';
 
 /**
  * WorkflowService handles all workflow-related functionality including
@@ -260,7 +260,7 @@ export class WorkflowService {
       type: 'single_extension',
       steps: [{
         extensionId: extensionId,
-        extensionName: extensionName || getExtensionDisplayName(extensionId)
+        extensionName: extensionName || Utils.getExtensionDisplayName(extensionId)
       }]
     };
     

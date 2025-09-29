@@ -1,5 +1,5 @@
 import { WebpageContext } from '../types';
-import { extractPageContent } from '../utils';
+import { Utils } from '../utils';
 import CONSTANTS from '../constants';
 
 /**
@@ -198,7 +198,7 @@ export class MentionService {
         const webview = document.getElementById(matchingTab.webviewId);
         if (webview) {
           console.log('🔍 [FETCH] Found open tab for URL:', url);
-          return await extractPageContent(webview);
+          return await Utils.extractPageContent(webview);
         }
       }
       
@@ -232,7 +232,7 @@ export class MentionService {
             clearTimeout(timeout);
             
             // Extract content from the hidden webview
-            const content = await extractPageContent(hiddenWebview);
+            const content = await Utils.extractPageContent(hiddenWebview);
             console.log('🔍 [FETCH] Content extracted successfully:', content.title);
             
             // Clean up
