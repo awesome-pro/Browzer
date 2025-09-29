@@ -1,6 +1,13 @@
 import { ActionType, ActionValidator, ExecuteStep } from '../types';
 
 export class ExecuteStepRunner {
+  // Selector normalization constants
+  private readonly SELECTOR_TYPES = {
+    CSS: 'css',
+    XPATH: 'xpath',
+    TEXT: 'text',
+    COMPLEX: 'complex'
+  };
   private webview: any;
   private readonly DEFAULT_TIMEOUT = 30000;
   private readonly ELEMENT_WAIT_TIMEOUT = 15000;
@@ -279,19 +286,117 @@ private async textInput(step: ExecuteStep): Promise<any> {
   const selector = step.target;
   const text = step.value as string;
 
-  if (!selector || !text) {
-    throw new Error('Both selector and text are required for type action');
+  if (!selector) {
+    throw new Error('Selector is required for type action');
   }
 
-  console.log(`[ExecuteStepRunner] Typing "${text}" into ${selector}`);
-  if (this.isMainAppSelector(selector)) {
-    return await this.typeInMainAppElement(selector, text);
+  if (typeof text !== 'string') {
+    throw new Error('Text value must be a string for type action');
+  }
+  
+  // Normalize the selector
+  const { normalizedSelector, selectorType, originalSelector } = this.normalizeSelector(selector);
+
+  console.log(`[ExecuteStepRunner] Typing text in ${normalizedSelector} (type: ${selectorType}): "${text}"`);
+  
+  if (this.isMainAppSelector(normalizedSelector)) {
+    return await this.typeInMainAppElement(normalizedSelector, text);
   }
   const script = `
     (async function() {
       try {
-        console.log('[ExecuteStepRunner] Finding element with selector:', '${selector}');
-        const element = document.querySelector('${selector.replace(/'/g, "\\'")}');
+        console.log('[ExecuteStepRunner] Finding element with selector:', '${originalSelector}');
+        
+        // Handle different selector types
+        const originalSelector = '${originalSelector.replace(/'/g, "\\'")}';
+        const normalizedSelector = '${normalizedSelector.replace(/'/g, "\\'")}';
+        const selectorType = '${selectorType}';
+        
+        // Function to find elements by text content
+        const findElementsByText = (selector, text) => {
+          try {
+            // First try to find elements matching the base selector
+            let elements = [];
+            if (selector && selector !== '') {
+              elements = Array.from(document.querySelectorAll(selector));
+            } else {
+              // If no base selector, search all interactive elements
+              elements = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"]'));
+            }
+            
+            // Filter by text content
+            return elements.filter(el => 
+              el.textContent && el.textContent.trim().includes(text)
+            );
+          } catch (e) {
+            console.error('Error in findElementsByText:', e);
+            return [];
+          }
+        };
+        
+        // Function to handle comma-separated selectors
+        const tryMultipleSelectors = (selectorString) => {
+          if (!selectorString.includes(',')) return null;
+          
+          const selectors = selectorString.split(',').map(s => s.trim());
+          console.log('Trying multiple selectors:', selectors);
+          
+          for (const sel of selectors) {
+            try {
+              const el = document.querySelector(sel);
+              if (el) {
+                console.log('Found element with selector:', sel);
+                return el;
+              }
+            } catch (e) {
+              console.log('Error with selector:', sel, e);
+            }
+          }
+          
+          return null;
+        };
+        
+        // Try to find the element based on selector type
+        let element = null;
+        
+        if (selectorType === 'css') {
+          try {
+            element = document.querySelector(normalizedSelector);
+          } catch (e) {
+            console.error('Error with CSS selector:', e);
+          }
+        } else if (selectorType === 'complex') {
+          element = tryMultipleSelectors(originalSelector);
+        } else if (selectorType === 'text') {
+          // Extract text content from original selector
+          const textMatch = originalSelector.match(/:(has-text|contains)\(['"](.*?)['"]\)/);
+          const textContent = textMatch ? textMatch[2] : '';
+          
+          if (textContent) {
+            const elementsWithText = findElementsByText(normalizedSelector, textContent);
+            if (elementsWithText.length > 0) {
+              element = elementsWithText[0];
+              console.log('Found element by text content:', textContent);
+            }
+          }
+        } else {
+          // Fallback to standard querySelector
+          try {
+            element = document.querySelector(normalizedSelector);
+          } catch (e) {
+            console.error('Selector error:', e);
+          }
+        }
+        
+        // If element still not found, try alternative approaches
+        if (!element) {
+          // Try direct querySelector with original selector as fallback
+          try {
+            element = document.querySelector('${selector.replace(/'/g, "\\'")}')
+          } catch (e) {
+            console.log('Fallback selector failed:', e);
+          }
+        };
         if (!element) {
           return { success: false, error: 'Element not found', selector: '${selector}' };
         }
@@ -812,16 +917,81 @@ private async handleFormButtonClick(selector: string): Promise<any> {
   }
 }
 
+  /**
+   * Normalizes a selector string to be compatible with document.querySelector
+   * Handles complex selectors like comma-separated lists and :has-text() pseudo-selectors
+   */
+  private normalizeSelector(selector: string): { normalizedSelector: string, selectorType: string, originalSelector: string } {
+    if (!selector) {
+      return { normalizedSelector: '', selectorType: this.SELECTOR_TYPES.CSS, originalSelector: selector };
+    }
+    
+    console.log(`[ExecuteStepRunner] Normalizing selector: ${selector}`);
+    const originalSelector = selector;
+    
+    // Check if it's an XPath selector
+    if (selector.startsWith('/') || selector.startsWith('./') || selector.startsWith('//')) {
+      return { normalizedSelector: selector, selectorType: this.SELECTOR_TYPES.XPATH, originalSelector };
+    }
+    
+    // Check for comma-separated selectors (we'll use the first one as primary)
+    if (selector.includes(',')) {
+      const selectors = selector.split(',').map(s => s.trim());
+      console.log(`[ExecuteStepRunner] Found comma-separated selector list with ${selectors.length} options`);
+      return { 
+        normalizedSelector: selectors[0], 
+        selectorType: this.SELECTOR_TYPES.COMPLEX, 
+        originalSelector
+      };
+    }
+    
+    // Handle :has-text() pseudo-selector
+    if (selector.includes(':has-text(')) {
+      const baseSelector = selector.split(':has-text(')[0];
+      const textMatch = selector.match(/:has-text\(['"](.*?)['"]\)/);
+      const textContent = textMatch ? textMatch[1] : '';
+      
+      console.log(`[ExecuteStepRunner] Found :has-text() selector. Base: ${baseSelector}, Text: ${textContent}`);
+      
+      return { 
+        normalizedSelector: baseSelector, 
+        selectorType: this.SELECTOR_TYPES.TEXT, 
+        originalSelector 
+      };
+    }
+    
+    // Handle :contains() pseudo-selector
+    if (selector.includes(':contains(')) {
+      const baseSelector = selector.split(':contains(')[0];
+      const textMatch = selector.match(/:contains\(['"](.*?)['"]\)/);
+      const textContent = textMatch ? textMatch[1] : '';
+      
+      console.log(`[ExecuteStepRunner] Found :contains() selector. Base: ${baseSelector}, Text: ${textContent}`);
+      
+      return { 
+        normalizedSelector: baseSelector, 
+        selectorType: this.SELECTOR_TYPES.TEXT, 
+        originalSelector 
+      };
+    }
+    
+    // Return the original selector if no special handling is needed
+    return { normalizedSelector: selector, selectorType: this.SELECTOR_TYPES.CSS, originalSelector };
+  }
+  
   private async click(step: ExecuteStep): Promise<any> {
     const selector = step.target;
     
     if (!selector) {
       throw new Error('Selector is required for click action');
     }
+    
+    // Normalize the selector
+    const { normalizedSelector, selectorType, originalSelector } = this.normalizeSelector(selector);
 
-    console.log(`[ExecuteStepRunner] Attempting to click element: ${selector}`);
-    if (this.isMainAppSelector(selector)) {
-      return await this.clickMainAppElement(selector);
+    console.log(`[ExecuteStepRunner] Attempting to click element: ${normalizedSelector} (type: ${selectorType})`);
+    if (this.isMainAppSelector(normalizedSelector)) {
+      return await this.clickMainAppElement(normalizedSelector);
     }
     if (selector.includes('button') && 
         (selector.includes('Create Short URL') || 
@@ -832,8 +1002,90 @@ private async handleFormButtonClick(selector: string): Promise<any> {
     const script = `
       (async function() {
         try {
-          console.log('Attempting to find element with selector: ${selector}');
-          let element = document.querySelector('${selector.replace(/'/g, "\\'")}');
+          console.log('Attempting to find element with selector: ${normalizedSelector}');
+          let element = null;
+          
+          // Handle different selector types
+          const originalSelector = '${originalSelector.replace(/'/g, "\\'")}';
+          const normalizedSelector = '${normalizedSelector.replace(/'/g, "\\'")}';
+          const selectorType = '${selectorType}';
+          
+          // Function to find elements by text content
+          const findElementsByText = (selector, text) => {
+            try {
+              // First try to find elements matching the base selector
+              let elements = [];
+              if (selector && selector !== '') {
+                elements = Array.from(document.querySelectorAll(selector));
+              } else {
+                // If no base selector, search all interactive elements
+                elements = Array.from(document.querySelectorAll('a, button, [role="button"], [role="link"], input, select, textarea'));
+              }
+              
+              // Filter by text content
+              return elements.filter(el => 
+                el.textContent && el.textContent.trim().includes(text)
+              );
+            } catch (e) {
+              console.error('Error in findElementsByText:', e);
+              return [];
+            }
+          };
+          
+          // Function to handle comma-separated selectors
+          const tryMultipleSelectors = (selectorString) => {
+            if (!selectorString.includes(',')) return null;
+            
+            const selectors = selectorString.split(',').map(s => s.trim());
+            console.log('Trying multiple selectors:', selectors);
+            
+            for (const sel of selectors) {
+              try {
+                const el = document.querySelector(sel);
+                if (el) {
+                  console.log('Found element with selector:', sel);
+                  return el;
+                }
+              } catch (e) {
+                console.log('Error with selector:', sel, e);
+              }
+            }
+            
+            return null;
+          };
+          
+          // Try to find the element based on selector type
+          if (selectorType === 'css') {
+            try {
+              element = document.querySelector(normalizedSelector);
+            } catch (e) {
+              console.error('Error with CSS selector:', e);
+            }
+          } else if (selectorType === 'complex') {
+            element = tryMultipleSelectors(originalSelector);
+          } else if (selectorType === 'text') {
+            // Extract text content from original selector
+            const textMatch = originalSelector.match(/:(has-text|contains)\(['"](.*?)['"]\)/);
+            const textContent = textMatch ? textMatch[2] : '';
+            
+            if (textContent) {
+              const elementsWithText = findElementsByText(normalizedSelector, textContent);
+              if (elementsWithText.length > 0) {
+                element = elementsWithText[0];
+                console.log('Found element by text content:', textContent);
+              }
+            }
+          } else {
+            // Fallback to standard querySelector
+            try {
+              element = document.querySelector(normalizedSelector);
+            } catch (e) {
+              console.error('Selector error:', e);
+            }
+          }
+          
+          // If element still not found, try alternative approaches
+          if (!element) {;
           
           if (!element) {
             console.log('Primary selector failed, trying alternatives...');
@@ -847,20 +1099,11 @@ private async handleFormButtonClick(selector: string): Promise<any> {
               'a:contains("${selector.replace(/[^a-zA-Z0-9\s]/g, '')}")'
             ];
             
-            for (const alt of alternatives) {
-              try {
-                console.log('Trying alternative selector:', alt);
-                element = document.querySelector(alt);
-                if (element) {
-                  console.log('Found element with alternative selector:', alt);
-                  break;
-                }
-              } catch (e) {
-                console.log('Alternative selector failed:', alt, e.message);
-              }
-            }
+          // Log result of element search
+          if (element) {
+            console.log('Successfully found element:', element.tagName, element.className || '');
           } else {
-            console.log('Found element with primary selector');
+            console.log('Failed to find element with any strategy');
           }
 
           if (!element) {
@@ -878,21 +1121,74 @@ private async handleFormButtonClick(selector: string): Promise<any> {
             return { success: false, error: 'Element has no visible area' };
           }
           
-          if (style.display === 'none' || style.visibility === 'hidden') {
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
             return { success: false, error: 'Element is not visible' };
           }
+          
+          // Check if element is within viewport
+          const isInViewport = (
+            rect.top >= 0 &&
+            rect.left >= 0 &&
+            rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+            rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+          );
+          
+          if (!isInViewport) {
+            console.log('Element is outside viewport, scrolling into view');
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
 
+          // Highlight the element briefly to provide visual feedback
+          const originalOutline = element.style.outline;
+          const originalBoxShadow = element.style.boxShadow;
+          element.style.outline = '2px solid blue';
+          element.style.boxShadow = '0 0 10px rgba(0,0,255,0.5)';
+          
+          // Enhanced click strategies
           const clickStrategies = [
-            () => element.click(),
+            // Strategy 1: Native click
             () => {
+              console.log('Trying native click');
+              element.click();
+              return 'native-click';
+            },
+            // Strategy 2: MouseEvent click
+            () => {
+              console.log('Trying MouseEvent click');
               const event = new MouseEvent('click', {
                 bubbles: true,
                 cancelable: true,
                 view: window
               });
               element.dispatchEvent(event);
+              return 'mouse-event';
             },
+            // Strategy 3: MouseEvent sequence (down+up)
             () => {
+              console.log('Trying MouseEvent sequence');
+              const mouseDown = new MouseEvent('mousedown', {
+                bubbles: true,
+                cancelable: true,
+                view: window
+              });
+              const mouseUp = new MouseEvent('mouseup', {
+                bubbles: true,
+                cancelable: true,
+                view: window
+              });
+              element.dispatchEvent(mouseDown);
+              element.dispatchEvent(mouseUp);
+              element.dispatchEvent(new MouseEvent('click', {
+                bubbles: true,
+                cancelable: true,
+                view: window
+              }));
+              return 'mouse-sequence';
+            },
+            // Strategy 4: Enter key for interactive elements
+            () => {
+              console.log('Trying Enter key');
               if (element.focus) element.focus();
               const enterEvent = new KeyboardEvent('keydown', {
                 key: 'Enter',
@@ -900,21 +1196,73 @@ private async handleFormButtonClick(selector: string): Promise<any> {
                 bubbles: true
               });
               element.dispatchEvent(enterEvent);
+              return 'enter-key';
+            },
+            // Strategy 5: React synthetic event simulation
+            () => {
+              console.log('Trying React synthetic event simulation');
+              // Find React fiber/props
+              const reactKey = Object.keys(element).find(key => 
+                key.startsWith('__reactInternalInstance') ||
+                key.startsWith('__reactFiber') ||
+                key.startsWith('_reactInternalFiber') ||
+                key.startsWith('__reactProps')
+              );
+              
+              if (reactKey) {
+                const reactData = element[reactKey];
+                let currentFiber = reactData;
+                let attempts = 0;
+                
+                while (currentFiber && attempts < 10) {
+                  if (currentFiber.memoizedProps && typeof currentFiber.memoizedProps.onClick === 'function') {
+                    console.log('Found React onClick handler');
+                    
+                    const syntheticEvent = {
+                      target: element,
+                      currentTarget: element,
+                      type: 'click',
+                      bubbles: true,
+                      cancelable: true,
+                      preventDefault: () => {},
+                      stopPropagation: () => {},
+                      persist: () => {},
+                      nativeEvent: new MouseEvent('click', { bubbles: true })
+                    };
+                    
+                    currentFiber.memoizedProps.onClick(syntheticEvent);
+                    return 'react-click';
+                  }
+                  
+                  currentFiber = currentFiber.return || currentFiber._owner || currentFiber.parent;
+                  attempts++;
+                }
+              }
+              throw new Error('No React handler found');
             }
           ];
 
           let clickSuccess = false;
           let lastError = null;
+          let successMethod = null;
 
           for (const strategy of clickStrategies) {
             try {
-              strategy();
+              successMethod = strategy();
               clickSuccess = true;
+              console.log('Click successful with method:', successMethod);
               break;
             } catch (e) {
               lastError = e;
+              console.log('Click strategy failed:', e.message);
             }
           }
+          
+          // Restore original styles after a delay
+          setTimeout(() => {
+            element.style.outline = originalOutline;
+            element.style.boxShadow = originalBoxShadow;
+          }, 1000);
 
           if (!clickSuccess) {
             return { success: false, error: 'All click strategies failed', lastError: lastError?.message };
@@ -922,13 +1270,20 @@ private async handleFormButtonClick(selector: string): Promise<any> {
 
           return {
             success: true,
-            message: 'Click executed successfully',
+            message: 'Click executed successfully using ' + successMethod,
             elementInfo: {
               tagName: element.tagName,
               id: element.id,
               className: element.className,
               text: element.textContent?.substring(0, 100),
-              selector: '${selector}'
+              selector: '${selector}',
+              method: successMethod,
+              rect: {
+                width: rect.width,
+                height: rect.height,
+                top: rect.top,
+                left: rect.left
+              }
             }
           };
         } catch (error) {
@@ -954,25 +1309,224 @@ private async handleFormButtonClick(selector: string): Promise<any> {
     if (!selector) {
       throw new Error('Selector is required for wait_for_element action');
     }
+    
+    // Normalize the selector
+    const { normalizedSelector, selectorType, originalSelector } = this.normalizeSelector(selector);
 
-    console.log(`[ExecuteStepRunner] Waiting for element: ${selector} (timeout: ${timeout}ms)`);
+    console.log(`[ExecuteStepRunner] Waiting for element: ${normalizedSelector} (type: ${selectorType}) (timeout: ${timeout}ms)`);
 
     const script = `
       (function() {
         return new Promise((resolve) => {
           const startTime = Date.now();
           const timeout = ${timeout};
-          const selector = '${selector.replace(/'/g, "\\'")}';
+          const primarySelector = '${normalizedSelector.replace(/'/g, "\\'")}';
+          const originalSelector = '${originalSelector.replace(/'/g, "\\'")}';
+          const selectorType = '${selectorType}';
+          
+          // Generate alternative selectors based on the primary selector
+          const generateAlternativeSelectors = (selector) => {
+            const alternatives = [
+              selector,
+              selector.replace(/"/g, "'"),
+              selector.split(' ')[0]
+            ];
+            
+            // Add data attribute selectors if applicable
+            if (selector.includes('id:')) {
+              const idMatch = selector.match(/id:\s*([^\s|]+)/);
+              if (idMatch && idMatch[1]) {
+                alternatives.push('#' + idMatch[1]);
+              }
+            }
+            
+            // Add class selectors if applicable
+            if (selector.includes('class:')) {
+              const classMatch = selector.match(/class:\s*([^\s|]+)/);
+              if (classMatch && classMatch[1]) {
+                const classes = classMatch[1].split(' ');
+                if (classes.length > 0) {
+                  alternatives.push('.' + classes[0]);
+                }
+              }
+            }
+            
+            // Add button content selectors if looking for a button
+            if (selector.toLowerCase().includes('button') || selector.includes('btn')) {
+              const textMatch = selector.match(/text:\s*"([^"]+)"/i);
+              if (textMatch && textMatch[1]) {
+                alternatives.push('button:contains("' + textMatch[1] + '")');  
+                alternatives.push('[role="button"]:contains("' + textMatch[1] + '")');  
+              }
+            }
+            
+            // Add data attribute selectors
+            if (selector.includes('data-')) {
+              const dataMatch = selector.match(/data-([\w-]+)="([^"]+)"/i);
+              if (dataMatch && dataMatch[1] && dataMatch[2]) {
+                alternatives.push('[data-' + dataMatch[1] + '="' + dataMatch[2] + '"]');
+              }
+            }
+            
+            // Add aria attribute selectors
+            if (selector.includes('aria-')) {
+              const ariaMatch = selector.match(/aria-([\w-]+)="([^"]+)"/i);
+              if (ariaMatch && ariaMatch[1] && ariaMatch[2]) {
+                alternatives.push('[aria-' + ariaMatch[1] + '="' + ariaMatch[2] + '"]');
+              }
+            }
+            
+            // Add common selectors for specific components
+            if (selector.toLowerCase().includes('button')) {
+              alternatives.push('button.btn-primary', 'button.primary', 'button[type="submit"]');
+            }
+            
+            if (selector.toLowerCase().includes('new')) {
+              alternatives.push('[aria-label*="New"]', '[title*="New"]', 'a.btn-primary', 'button.btn-primary');
+            }
+            
+            return alternatives.filter(Boolean);
+          };
+          
+          // Function to find elements by text content
+          const findElementsByText = (text) => {
+            if (!text) return [];
+            
+            const elements = [];
+            const allElements = document.querySelectorAll('a, button, [role="button"], [role="link"]');
+            
+            allElements.forEach(el => {
+              if (el.textContent && el.textContent.trim().includes(text)) {
+                elements.push(el);
+              }
+            });
+            
+            return elements;
+          };
+          
+          const alternativeSelectors = generateAlternativeSelectors(primarySelector);
+          console.log('Generated alternative selectors:', alternativeSelectors);
+          
+          // Extract text content from selector for text-based search
+          const extractTextFromSelector = (selector) => {
+            const textMatch = selector.match(/text:\s*"([^"]+)"/i);
+            return textMatch ? textMatch[1] : '';
+          };
+          
+          const textToFind = extractTextFromSelector(primarySelector);
+          
+          // Function to find elements by text content
+          const findElementsByText = (selector, text) => {
+            try {
+              // First try to find elements matching the base selector
+              let elements = [];
+              if (selector && selector !== '') {
+                elements = Array.from(document.querySelectorAll(selector));
+              } else {
+                // If no base selector, search all interactive elements
+                elements = Array.from(document.querySelectorAll('a, button, [role="button"], [role="link"], input, select, textarea'));
+              }
+              
+              // Filter by text content
+              return elements.filter(el => 
+                el.textContent && el.textContent.trim().includes(text)
+              );
+            } catch (e) {
+              console.error('Error in findElementsByText:', e);
+              return [];
+            }
+          };
+          
+          // Function to handle comma-separated selectors
+          const tryMultipleSelectors = (selectorString) => {
+            if (!selectorString.includes(',')) return null;
+            
+            const selectors = selectorString.split(',').map(s => s.trim());
+            console.log('Trying multiple selectors:', selectors);
+            
+            for (const sel of selectors) {
+              try {
+                const el = document.querySelector(sel);
+                if (el) {
+                  console.log('Found element with selector:', sel);
+                  return el;
+                }
+              } catch (e) {
+                console.log('Error with selector:', sel, e);
+              }
+            }
+            
+            return null;
+          };
           
           const check = () => {
             try {
-              const element = document.querySelector(selector);
+              // Variable to store the found element
+              let element = null;
+              let selectorUsed = primarySelector;
+              
+              // Try to find the element based on selector type
+              if (selectorType === 'css') {
+                try {
+                  element = document.querySelector(primarySelector);
+                  if (element) {
+                    console.log('Found element with CSS selector:', primarySelector);
+                  }
+                } catch (e) {
+                  console.error('Error with CSS selector:', e);
+                }
+              } else if (selectorType === 'complex') {
+                element = tryMultipleSelectors(originalSelector);
+                if (element) {
+                  selectorUsed = 'Complex selector (comma-separated)';
+                }
+              } else if (selectorType === 'text') {
+                // Extract text content from original selector
+                const textMatch = originalSelector.match(/:(has-text|contains)\(['"](.*?)['"]\)/);
+                const textContent = textMatch ? textMatch[2] : '';
+                
+                if (textContent) {
+                  const elementsWithText = findElementsByText(primarySelector, textContent);
+                  if (elementsWithText.length > 0) {
+                    element = elementsWithText[0];
+                    selectorUsed = 'Text match: "' + textContent + '"';
+                    console.log('Found element by text content:', textContent);
+                  }
+                }
+              } else if (selectorType === 'xpath') {
+                try {
+                  const xpathResult = document.evaluate(primarySelector, document, null, XPathResult.ANY_TYPE, null);
+                  if (xpathResult) {
+                    element = xpathResult.iterateNext();
+                    if (element) {
+                      console.log('Found element with XPath selector:', primarySelector);
+                    }
+                  }
+                } catch (e) {
+                  console.error('Error with XPath selector:', e);
+                }
+              }
+              
+              // If element still not found, try alternative approaches
+              if (!element) {
+                // Try alternative selectors
+                for (const altSelector of alternativeSelectors) {
+                  try {
+                    const el = document.querySelector(altSelector);
+                    if (el) {
+                      element = el;
+{{ ... }}
+                    // Ignore invalid selectors
+                  }
+                }
+              }
               
               if (element) {
                 const rect = element.getBoundingClientRect();
                 const style = window.getComputedStyle(element);
                 
                 const isVisible = (
+{{ ... }}
                   rect.width > 0 && 
                   rect.height > 0 && 
                   style.display !== 'none' && 
@@ -981,10 +1535,22 @@ private async handleFormButtonClick(selector: string): Promise<any> {
                 );
                 
                 if (isVisible) {
+                  // Highlight the element briefly
+                  const originalOutline = element.style.outline;
+                  const originalBoxShadow = element.style.boxShadow;
+                  element.style.outline = '2px solid green';
+                  element.style.boxShadow = '0 0 10px rgba(0,255,0,0.5)';
+                  
+                  setTimeout(() => {
+                    element.style.outline = originalOutline;
+                    element.style.boxShadow = originalBoxShadow;
+                  }, 2000);
+                  
                   resolve({
                     success: true,
                     message: 'Element found and visible',
-                    selector: selector,
+                    selector: selectorUsed,
+                    originalSelector: primarySelector,
                     elementInfo: {
                       tagName: element.tagName,
                       id: element.id,
@@ -994,6 +1560,8 @@ private async handleFormButtonClick(selector: string): Promise<any> {
                     }
                   });
                   return;
+                } else {
+                  console.log('Element found but not visible');
                 }
               }
               
@@ -1001,7 +1569,8 @@ private async handleFormButtonClick(selector: string): Promise<any> {
                 resolve({
                   success: false,
                   error: 'Timeout waiting for element',
-                  selector: selector,
+                  selector: primarySelector,
+                  alternativesTried: alternativeSelectors,
                   timeElapsed: Date.now() - startTime
                 });
                 return;
@@ -1009,11 +1578,16 @@ private async handleFormButtonClick(selector: string): Promise<any> {
               
               setTimeout(check, 250);
             } catch (error) {
-              resolve({
-                success: false,
-                error: error.message,
-                selector: selector
-              });
+              console.error('Error in waitForElement check:', error);
+              if (Date.now() - startTime > timeout) {
+                resolve({
+                  success: false,
+                  error: error.message,
+                  selector: primarySelector
+                });
+              } else {
+                setTimeout(check, 250);
+              }
             }
           };
           
@@ -1136,11 +1710,80 @@ private async handleFormButtonClick(selector: string): Promise<any> {
 
   private async submit(step: ExecuteStep): Promise<any> {
     const selector = step.target || 'form';
+    
+    // Normalize the selector
+    const { normalizedSelector, selectorType, originalSelector } = this.normalizeSelector(selector);
+    
+    console.log(`[ExecuteStepRunner] Submitting form with selector: ${normalizedSelector} (type: ${selectorType})`);
 
     const script = `
       (function() {
         try {
-          const element = document.querySelector('${selector.replace(/'/g, "\\'")}');
+          // Handle different selector types
+          const originalSelector = '${originalSelector.replace(/'/g, "\\'")}';
+          const normalizedSelector = '${normalizedSelector.replace(/'/g, "\\'")}';
+          const selectorType = '${selectorType}';
+          
+          // Function to handle comma-separated selectors
+          const tryMultipleSelectors = (selectorString) => {
+            if (!selectorString.includes(',')) return null;
+            
+            const selectors = selectorString.split(',').map(s => s.trim());
+            console.log('Trying multiple selectors:', selectors);
+            
+            for (const sel of selectors) {
+              try {
+                const el = document.querySelector(sel);
+                if (el) {
+                  console.log('Found element with selector:', sel);
+                  return el;
+                }
+              } catch (e) {
+                console.log('Error with selector:', sel, e);
+              }
+            }
+            
+            return null;
+          };
+          
+          // Try to find the element based on selector type
+          let element = null;
+          
+          if (selectorType === 'css') {
+            try {
+              element = document.querySelector(normalizedSelector);
+            } catch (e) {
+              console.error('Error with CSS selector:', e);
+            }
+          } else if (selectorType === 'complex') {
+            element = tryMultipleSelectors(originalSelector);
+          } else {
+            // Fallback to standard querySelector
+            try {
+              element = document.querySelector(normalizedSelector);
+            } catch (e) {
+              console.error('Selector error:', e);
+            }
+          }
+          
+          // If element still not found, try alternative approaches
+          if (!element) {
+            // Try direct querySelector with original selector as fallback
+            try {
+              element = document.querySelector('${selector.replace(/'/g, "\\'")}')
+            } catch (e) {
+              console.log('Fallback selector failed:', e);
+            }
+          }
+          
+          // If still not found, try to find any form on the page
+          if (!element) {
+            const forms = document.querySelectorAll('form');
+            if (forms.length > 0) {
+              element = forms[0];
+              console.log('Found form using fallback search');
+            }
+          };
           if (!element) {
             return { success: false, error: 'Form element not found' };
           }

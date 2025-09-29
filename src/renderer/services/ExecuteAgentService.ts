@@ -553,15 +553,26 @@ I'll now begin executing these steps. You'll see real-time progress updates as e
       ActionType.SUBMIT
     ];
 
+    // Don't continue after critical action failures
     if (criticalActions.includes(step.action)) {
       return false;
     }
 
+    // Don't continue after timeout errors
     if (error.message.includes('timeout')) {
       return false;
     }
 
+    // Continue after verification failures
     if (step.action.toString().includes('VERIFY') && error.message.includes('not found')) {
+      return true;
+    }
+    
+    // Continue after selector errors for non-critical actions
+    if (error.message.includes('selector') || 
+        error.message.includes('Element not found') ||
+        error.message.includes('Failed to execute')) {
+      console.log('[ExecuteAgentService] Continuing after selector error:', error.message);
       return true;
     }
 

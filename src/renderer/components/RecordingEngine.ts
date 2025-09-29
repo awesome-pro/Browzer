@@ -460,29 +460,61 @@ private processClickSequence(url: string, pageTitle: string): void {
 private generateCompleteSelector(element: any): string {
   try {
     if (!element) return '';
-    let selector = '';
-    if (element.tagName && typeof element.tagName === 'string') {
-      selector = `element ${element.tagName.toLowerCase()}| `;
+    
+    // Store all potential selectors
+    const selectorParts: string[] = [];
+    const uniqueIdentifiers: string[] = [];
+    
+    // Basic element info
+    const tagName = element.tagName?.toLowerCase();
+    if (tagName) {
+      selectorParts.push(`element ${tagName}| `);
     }
-    if (element.id && typeof element.id === 'string') {
-       return selector += `id: ${element.id}`;
+    
+    // ID is the most reliable selector
+    if (element.id && typeof element.id === 'string' && element.id.trim()) {
+      selectorParts.push(`id: ${element.id}| `);
+      uniqueIdentifiers.push(`#${element.id}`);
     }
+    
+    // Process attributes (data attributes, name, role, aria)
     if (element.attributes && typeof element.attributes !== 'undefined') {
       try {
         const attributes = Array.from(element.attributes) as Array<{name: string, value: string}>;
         for (const attr of attributes) {
-          if (attr && attr.name && typeof attr.name === 'string' && 
-              (attr.name.startsWith('data-') || 
-               attr.name === 'name' || 
-               attr.name === 'role' || 
-               attr.name === 'aria-label')) {
+          if (!attr || !attr.name || typeof attr.name !== 'string') continue;
+          
+          const attrValue = attr.value && typeof attr.value === 'string' ? attr.value : '';
+          
+          // Prioritize test-related data attributes
+          if (attr.name.startsWith('data-test') || 
+              attr.name.startsWith('data-cy') || 
+              attr.name.startsWith('data-qa') || 
+              attr.name.startsWith('data-testid')) {
+            selectorParts.push(`${attr.name}: ${attrValue}| `);
+            uniqueIdentifiers.push(`[${attr.name}="${attrValue}"]`);
+          }
+          // Other important attributes
+          else if (attr.name.startsWith('data-') || 
+                   attr.name === 'name' || 
+                   attr.name === 'role' || 
+                   attr.name === 'aria-label' ||
+                   attr.name === 'title' ||
+                   attr.name === 'type') {
+            selectorParts.push(`${attr.name}: ${attrValue}| `);
             
-            const attrValue = attr.value && typeof attr.value === 'string' ? attr.value : '';
-            selector += `[${attr.name}="${attrValue}"]| `;
-            if (attr.name.startsWith('data-test') || 
-                attr.name.startsWith('data-cy') || 
-                attr.name.startsWith('data-qa')) {
-              return selector;
+            if (attr.name === 'name') {
+              uniqueIdentifiers.push(`[name="${attrValue}"]`);
+            } else if (attr.name === 'role') {
+              uniqueIdentifiers.push(`[role="${attrValue}"]`);
+            } else if (attr.name === 'aria-label') {
+              uniqueIdentifiers.push(`[aria-label="${attrValue}"]`);
+            } else if (attr.name === 'title') {
+              uniqueIdentifiers.push(`[title="${attrValue}"]`);
+            } else if (attr.name === 'type') {
+              uniqueIdentifiers.push(`${tagName}[type="${attrValue}"]`);
+            } else {
+              uniqueIdentifiers.push(`[${attr.name}="${attrValue}"]`);
             }
           }
         }
@@ -490,27 +522,65 @@ private generateCompleteSelector(element: any): string {
         console.error('[RecordingEngine] Error processing attributes:', attrError);
       }
     }
-    if (element.className && typeof element.className === 'string') {
-      selector += `class: ${element.className}| `;
+    
+    // Class names
+    if (element.className && typeof element.className === 'string' && element.className.trim()) {
+      const classNames = element.className.split(' ').filter(Boolean);
+      if (classNames.length > 0) {
+        selectorParts.push(`class: ${element.className}| `);
+        
+        // Add the most specific class (usually the longest one)
+        const sortedClasses = [...classNames].sort((a, b) => b.length - a.length);
+        if (sortedClasses.length > 0) {
+          uniqueIdentifiers.push(`${tagName}.${sortedClasses[0]}`);
+          
+          // Also add a selector with multiple classes for better specificity
+          if (sortedClasses.length > 1) {
+            uniqueIdentifiers.push(`${tagName}.${sortedClasses[0]}.${sortedClasses[1]}`);
+          }
+        }
+      }
     }
+    
+    // Text content is very useful for buttons and links
+    if (element.textContent && typeof element.textContent === 'string' && element.textContent.trim()) {
+      const text = element.textContent.trim();
+      const shortText = text.length > 30 ? text.substring(0, 30) + '...' : text;
+      selectorParts.push(`text: "${shortText}"| `);
+      
+      // For buttons and links, text content is often a reliable identifier
+      if ((tagName === 'button' || tagName === 'a' || 
+           (element.role && (element.role === 'button' || element.role === 'link')))) {
+        // Store text-based selector for buttons and links
+        uniqueIdentifiers.push(`${tagName}:has(text="${shortText}")`);
+      }
+    }
+    
+    // Add nth-child for position-based selection as a last resort
     try {
       const parent = element.parentElement || element.parentContext;
       if (parent && parent.children && Array.isArray(parent.children)) {
-        try {
-          const siblings = Array.from(parent.children);
-          const index = siblings.indexOf(element);
-          if (index !== -1) {
-            selector += `:nth-child(${index + 1})`;
+        const siblings = Array.from(parent.children);
+        const index = siblings.indexOf(element);
+        if (index !== -1) {
+          selectorParts.push(`:nth-child(${index + 1})| `);
+          
+          // If parent has an ID, create a more specific selector
+          if (parent.id && typeof parent.id === 'string' && parent.id.trim()) {
+            uniqueIdentifiers.push(`#${parent.id} > ${tagName}:nth-child(${index + 1})`);
           }
-        } catch (siblingError) {
-          console.error('[RecordingEngine] Error processing siblings:', siblingError);
         }
       }
     } catch (parentError) {
       console.error('[RecordingEngine] Error accessing parent:', parentError);
     }
     
-    return selector || element.tagName?.toLowerCase() || 'unknown';
+    // Store unique identifiers in the element for later use
+    if (uniqueIdentifiers.length > 0) {
+      element.uniqueIdentifiers = uniqueIdentifiers;
+    }
+    
+    return selectorParts.join('') || tagName || 'unknown';
   } catch (error) {
     console.error('[RecordingEngine] Error in generateCompleteSelector:', error);
     return element.tagName?.toLowerCase() || 'unknown';
