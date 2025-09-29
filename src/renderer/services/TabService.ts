@@ -758,10 +758,14 @@ export class TabService implements ITabService {
           this.webviewsContainer.innerHTML = '';
           
           let activeTabToRestore: string | null = null;
-          const restoredTabIds: string[] = [];
+          
+          // Track the number of tabs we expect to restore
+          const expectedTabCount = savedSession.tabs.length;
+          let tabsProcessed = 0;
           
           // Restore each tab
-          for (const tabData of savedSession.tabs) {
+          for (let i = 0; i < savedSession.tabs.length; i++) {
+            const tabData = savedSession.tabs[i];
             try {
               if (tabData.url && tabData.url !== 'about:blank') {
                 // Use the callback to create tab properly with webview
@@ -789,28 +793,32 @@ export class TabService implements ITabService {
                         latestTab.title = tabData.title;
                       }
                       
-                      restoredTabIds.push(latestTab.id);
                       if (tabData.isActive) {
                         activeTabToRestore = latestTab.id;
                       }
                     }
-                  }, 100);
+                    
+                    tabsProcessed++;
+                    
+                    // When all tabs are processed, select the active one
+                    if (tabsProcessed === expectedTabCount) {
+                      setTimeout(() => {
+                        const tabToSelect = activeTabToRestore || this.tabs[0]?.id;
+                        if (tabToSelect) {
+                          this.selectTab(tabToSelect);
+                          this.showToast(`Restored ${expectedTabCount} tabs from previous session`, 'success');
+                        }
+                      }, 100);
+                    }
+                  }, 100 * (i + 1)); // Stagger the tab creation
                 }
+              } else {
+                tabsProcessed++;
               }
             } catch (tabErr) {
               console.warn('[TabService] Failed to restore individual tab:', tabErr);
+              tabsProcessed++;
             }
-          }
-          
-          // Select the active tab after restoration
-          if (restoredTabIds.length > 0) {
-            setTimeout(() => {
-              const tabToSelect = activeTabToRestore || restoredTabIds[0];
-              this.selectTab(tabToSelect);
-              this.showToast(`Restored ${restoredTabIds.length} tabs from previous session`, 'success');
-            }, 500);
-          } else {
-            this.createDefaultTab();
           }
           
           return;
@@ -820,7 +828,6 @@ export class TabService implements ITabService {
       console.error('[TabService] Error in tab restoration:', err);
     }
     
-    // Create default tab if no tabs were restored
     this.createDefaultTab();
   }
 
