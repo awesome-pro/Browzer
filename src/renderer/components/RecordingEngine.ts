@@ -179,44 +179,46 @@ private handleEvent(eventData: any): void {
         this.handleDropEvent(eventData);
         break;
       case 'modal_open':
-        case 'dialog_open':
+      case 'dialog_open':
+          this.handleModalOpenEvent(eventData);
           break;
-        case 'modal_close':
-        case 'dialog_close':
-        case 'cancel':
-        case 'close':
+      case 'modal_close':
+      case 'dialog_close':
+      case 'cancel':
+      case 'close':
+          this.handleModalCloseEvent(eventData);
           break;
       case 'dom_change':
       case 'dynamic_content_change':
-        case 'dom_significant_change':
-          break;
-        case 'animation_start':
-        case 'animation_end':
-        case 'transition_end':
-          this.handleAnimationEvent(eventData);
-          break;
-        case 'play':
-          break;
-        case 'pause':
-          break;
-        case 'ended':
-          break;
-        case 'touch_start':
-        case 'touch_end':
-        case 'touch_move':
-          break;
-        case 'copy':
-        case 'cut':
-        case 'paste':
-          this.handleClipboardEvent(eventData);
-          break;
-        case 'async_request_start':
-          break;
-        case 'async_request_complete':
-          break;
-        case 'async_request_error':
-          break;
-        default:
+      case 'dom_significant_change':
+        break;
+      case 'animation_start':
+      case 'animation_end':
+      case 'transition_end':
+        this.handleAnimationEvent(eventData);
+        break;
+      case 'play':
+        break;
+      case 'pause':
+        break;
+      case 'ended':
+        break;
+      case 'touch_start':
+      case 'touch_end':
+      case 'touch_move':
+        break;
+      case 'copy':
+      case 'cut':
+      case 'paste':
+        this.handleClipboardEvent(eventData);
+        break;
+      case 'async_request_start':
+        break;
+      case 'async_request_complete':
+        break;
+      case 'async_request_error':
+        break;
+      default:
         this.recordDefaultAction(eventData);
     }
   } catch (error) {
@@ -850,6 +852,66 @@ private handleFormSubmitEvent(eventData: any): void {
     }
   }));
 }
+
+/**
+ * Handle modal open events
+ */
+private handleModalOpenEvent(eventData: any): void {
+  if (!eventData.target) return;
+  
+  const target = eventData.target;
+  const elementContext = this.convertElementContext(target);
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.MODAL_OPEN,
+    timestamp: eventData.timestamp || Date.now(),
+    description: `Modal opened: ${elementContext.description || target.tagName}`,
+    target: elementContext,
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp || Date.now(),
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: 'open_modal'
+  };
+  
+  this.recordAction(action);
+}
+
+
+/**
+ * Handle modal close events
+ */
+private handleModalCloseEvent(eventData: any): void {
+  if (!eventData.target) return;
+  
+  const target = eventData.target;
+  const elementContext = this.convertElementContext(target);
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.MODAL_CLOSE,
+    timestamp: eventData.timestamp || Date.now(),
+    description: `Modal closed: ${elementContext.description || target.tagName}`,
+    target: elementContext,
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp || Date.now(),
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: 'close_modal'
+  };
+  
+  this.recordAction(action);
+}
+
 
 
 private handleReactEvent(eventData: any): void {
