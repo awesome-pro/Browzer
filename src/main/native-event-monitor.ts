@@ -197,14 +197,15 @@ private async injectEventMonitoringScript(webContents: WebContents): Promise<voi
         
         const eventsToMonitor = [
           'click', 'input', 'change', 'submit',
-          'keydown', 'keyup', 'keypress', 'focus', 'contextmenu',
+          'keydown', 'keyup', 'keypress', 'focus', 'blur', 'contextmenu',
           'select', 'reset', 'invalid',
           'copy', 'cut', 'paste',
           'dragstart', 'dragend', 'dragenter', 'dragleave', 'dragover', 'drop',
           'scroll',
           'cancel', 'close',
           'play', 'pause', 'ended', 'volumechange',
-          'touchstart', 'touchend', 'touchmove', 'touchcancel'
+          'touchstart', 'touchend', 'touchmove', 'touchcancel',
+          'mousedown', 'mouseup'
         ];
         window.__nativeEventListeners = new Map();
         
@@ -444,12 +445,28 @@ private async injectEventMonitoringScript(webContents: WebContents): Promise<voi
             return { tagName: element.tagName.toLowerCase() };
           }
         }
+        window.__selectStateTracker = new Map();
+        window.__selectInteractionBuffer = new Map();
+        
         function handleNativeEvent(event) {
           const asyncEvents = ['play', 'pause', 'ended'];
           if (!event.isTrusted && !asyncEvents.includes(event.type)) return;
           
           const target = event.target;
           if (!target) return;
+          
+          if (event.type === 'change' && isSelectElement(target)) {
+            handleSelectChange(event);
+            return;
+          }
+          
+          if (event.type === 'click') {
+            handlePotentialSelectClick(event);
+          }
+          
+          if (event.type === 'input' && isAutocompleteInput(target)) {
+            handleAutocompleteInput(event);
+          }
           if (event.type === 'scroll') {
             if (!window.__lastScrollPosition) {
               window.__lastScrollPosition = { x: window.scrollX, y: window.scrollY };
@@ -498,6 +515,371 @@ private async injectEventMonitoringScript(webContents: WebContents): Promise<voi
           }
 
           console.log('__NATIVE_EVENT__:' + JSON.stringify(eventData));
+        }
+        
+        function isSelectElement(element) {
+          if (!element) return false;
+          
+          if (element.tagName && element.tagName.toLowerCase() === 'select') {
+            return true;
+          }
+          
+          const role = element.getAttribute('role');
+          if (role && ['combobox', 'listbox'].includes(role)) {
+            return true;
+          }
+          
+          const ariaHaspopup = element.getAttribute('aria-haspopup');
+          if (ariaHaspopup === 'listbox' || ariaHaspopup === 'true') {
+            return true;
+          }
+          
+          const className = element.className || '';
+          const selectPatterns = [
+            'select', 'dropdown', 'combobox', 'autocomplete',
+            'react-select', 'mui-select', 'ant-select', 'ng-select',
+            'multiselect', 'chosen', 'select2'
+          ];
+          
+          if (typeof className === 'string') {
+            const lowerClass = className.toLowerCase();
+            if (selectPatterns.some(pattern => lowerClass.includes(pattern))) {
+              return true;
+            }
+          }
+          
+          return false;
+        }
+        
+        function isAutocompleteInput(element) {
+          if (!element || element.tagName?.toLowerCase() !== 'input') return false;
+          
+          const role = element.getAttribute('role');
+          if (role === 'combobox' || role === 'searchbox') return true;
+          
+          const ariaAutocomplete = element.getAttribute('aria-autocomplete');
+          if (ariaAutocomplete === 'list' || ariaAutocomplete === 'both') return true;
+          
+          const className = element.className || '';
+          if (typeof className === 'string') {
+            const lowerClass = className.toLowerCase();
+            const autocompletePatterns = ['autocomplete', 'search', 'typeahead', 'combobox'];
+            if (autocompletePatterns.some(pattern => lowerClass.includes(pattern))) {
+              return true;
+            }
+          }
+          
+          const type = element.getAttribute('type');
+          if (type === 'search') return true;
+          
+          return false;
+        }
+        
+        function findSelectContainer(element) {
+          let current = element;
+          let depth = 0;
+          const maxDepth = 5;
+          
+          while (current && depth < maxDepth) {
+            if (isSelectElement(current)) {
+              return current;
+            }
+            
+            const parent = current.parentElement;
+            if (!parent) break;
+            
+            const className = parent.className || '';
+            if (typeof className === 'string') {
+              const lowerClass = className.toLowerCase();
+              if (lowerClass.includes('select') || lowerClass.includes('dropdown') || 
+                  lowerClass.includes('combobox') || lowerClass.includes('autocomplete')) {
+                return parent;
+              }
+            }
+            
+            current = parent;
+            depth++;
+          }
+          
+          return null;
+        }
+        
+        function captureSelectOptions(selectElement) {
+          const options = [];
+          
+          if (selectElement.tagName && selectElement.tagName.toLowerCase() === 'select') {
+            const optionElements = selectElement.querySelectorAll('option');
+            optionElements.forEach((opt, index) => {
+              options.push({
+                value: opt.value,
+                text: opt.textContent?.trim() || opt.innerText?.trim(),
+                selected: opt.selected,
+                disabled: opt.disabled,
+                index: index
+              });
+            });
+          } else {
+            const listbox = selectElement.querySelector('[role="listbox"]') || 
+                           document.querySelector('[role="listbox"]');
+            
+            if (listbox) {
+              const optionElements = listbox.querySelectorAll('[role="option"]');
+              optionElements.forEach((opt, index) => {
+                const ariaSelected = opt.getAttribute('aria-selected') === 'true';
+                const ariaDisabled = opt.getAttribute('aria-disabled') === 'true';
+                
+                options.push({
+                  value: opt.getAttribute('data-value') || opt.textContent?.trim(),
+                  text: opt.textContent?.trim() || opt.innerText?.trim(),
+                  selected: ariaSelected,
+                  disabled: ariaDisabled,
+                  index: index,
+                  className: opt.className
+                });
+              });
+            } else {
+              const dropdownItems = selectElement.querySelectorAll(
+                '.select-option, .dropdown-item, .option, [data-option], .MuiMenuItem-root, .ant-select-item'
+              );
+              
+              dropdownItems.forEach((item, index) => {
+                const isSelected = item.classList.contains('selected') || 
+                                 item.classList.contains('active') ||
+                                 item.getAttribute('aria-selected') === 'true';
+                
+                options.push({
+                  value: item.getAttribute('data-value') || item.textContent?.trim(),
+                  text: item.textContent?.trim() || item.innerText?.trim(),
+                  selected: isSelected,
+                  disabled: item.classList.contains('disabled'),
+                  index: index,
+                  className: item.className
+                });
+              });
+            }
+          }
+          
+          return options;
+        }
+        
+        function getSelectedValues(selectElement) {
+          const selectedValues = [];
+          
+          if (selectElement.tagName && selectElement.tagName.toLowerCase() === 'select') {
+            if (selectElement.multiple) {
+              const selectedOptions = selectElement.selectedOptions || 
+                                    Array.from(selectElement.options).filter(opt => opt.selected);
+              selectedOptions.forEach(opt => {
+                selectedValues.push({
+                  value: opt.value,
+                  text: opt.textContent?.trim() || opt.innerText?.trim()
+                });
+              });
+            } else {
+              const selectedOption = selectElement.options[selectElement.selectedIndex];
+              if (selectedOption) {
+                selectedValues.push({
+                  value: selectedOption.value,
+                  text: selectedOption.textContent?.trim() || selectedOption.innerText?.trim()
+                });
+              }
+            }
+          } else {
+            const selectedItems = selectElement.querySelectorAll(
+              '[aria-selected="true"], .selected, .active, .is-selected'
+            );
+            
+            selectedItems.forEach(item => {
+              selectedValues.push({
+                value: item.getAttribute('data-value') || item.textContent?.trim(),
+                text: item.textContent?.trim() || item.innerText?.trim(),
+                className: item.className
+              });
+            });
+            
+            if (selectedValues.length === 0) {
+              const valueDisplay = selectElement.querySelector(
+                '.select-value, .selected-value, .value, [class*="singleValue"], [class*="placeholder"]'
+              );
+              
+              if (valueDisplay && valueDisplay.textContent?.trim()) {
+                selectedValues.push({
+                  value: valueDisplay.textContent.trim(),
+                  text: valueDisplay.textContent.trim()
+                });
+              }
+            }
+          }
+          
+          return selectedValues;
+        }
+        
+        function handleSelectChange(event) {
+          const target = event.target;
+          const selectContainer = findSelectContainer(target) || target;
+          
+          const options = captureSelectOptions(selectContainer);
+          const selectedValues = getSelectedValues(selectContainer);
+          const previousValues = window.__selectStateTracker.get(selectContainer) || [];
+          
+          const isMultiSelect = selectContainer.multiple || 
+                               selectContainer.getAttribute('aria-multiselectable') === 'true' ||
+                               selectedValues.length > 1;
+          
+          const selectContext = {
+            isMultiSelect: isMultiSelect,
+            totalOptions: options.length,
+            availableOptions: options,
+            selectedValues: selectedValues,
+            previousValues: previousValues,
+            selectType: detectSelectType(selectContainer),
+            hasSearch: !!selectContainer.querySelector('input[type="search"], input[role="searchbox"]'),
+            isAsync: selectContainer.classList.contains('async') || 
+                    selectContainer.getAttribute('data-async') === 'true'
+          };
+          
+          window.__selectStateTracker.set(selectContainer, selectedValues);
+          
+          console.log('__NATIVE_EVENT__:' + JSON.stringify({
+            type: 'select_change',
+            timestamp: Date.now(),
+            target: captureElement(selectContainer),
+            url: window.location.href,
+            title: document.title,
+            selectContext: selectContext,
+            value: selectedValues
+          }));
+        }
+        
+        function detectSelectType(element) {
+          const className = element.className || '';
+          const classStr = typeof className === 'string' ? className.toLowerCase() : '';
+          
+          if (classStr.includes('react-select')) return 'react-select';
+          if (classStr.includes('mui') || classStr.includes('material')) return 'material-ui';
+          if (classStr.includes('ant-select')) return 'ant-design';
+          if (classStr.includes('ng-select')) return 'angular-select';
+          if (classStr.includes('vue-select')) return 'vue-select';
+          if (classStr.includes('select2')) return 'select2';
+          if (classStr.includes('chosen')) return 'chosen';
+          if (classStr.includes('multiselect')) return 'multiselect';
+          if (element.tagName && element.tagName.toLowerCase() === 'select') return 'native-select';
+          
+          return 'custom-select';
+        }
+        
+        function handlePotentialSelectClick(event) {
+          const target = event.target;
+          const selectContainer = findSelectContainer(target);
+          
+          if (!selectContainer) return;
+          
+          const isOption = target.getAttribute('role') === 'option' ||
+                          target.classList.contains('option') ||
+                          target.classList.contains('select-option') ||
+                          target.classList.contains('dropdown-item') ||
+                          target.classList.contains('MuiMenuItem-root') ||
+                          target.classList.contains('ant-select-item');
+          
+          if (isOption) {
+            const optionValue = target.getAttribute('data-value') || target.textContent?.trim();
+            const optionText = target.textContent?.trim() || target.innerText?.trim();
+            const isSelected = target.getAttribute('aria-selected') === 'true' ||
+                             target.classList.contains('selected') ||
+                             target.classList.contains('active');
+            
+            const allOptions = captureSelectOptions(selectContainer);
+            const currentSelected = getSelectedValues(selectContainer);
+            
+            console.log('__NATIVE_EVENT__:' + JSON.stringify({
+              type: 'select_option_click',
+              timestamp: Date.now(),
+              target: captureElement(target),
+              url: window.location.href,
+              title: document.title,
+              optionContext: {
+                value: optionValue,
+                text: optionText,
+                isSelected: isSelected,
+                allOptions: allOptions,
+                currentSelected: currentSelected,
+                selectContainer: captureElement(selectContainer)
+              }
+            }));
+          }
+          
+          const isSelectTrigger = target.classList.contains('select-trigger') ||
+                                 target.classList.contains('dropdown-toggle') ||
+                                 target.getAttribute('aria-haspopup') === 'listbox';
+          
+          if (isSelectTrigger || selectContainer === target) {
+            const isOpen = selectContainer.classList.contains('open') ||
+                          selectContainer.classList.contains('is-open') ||
+                          selectContainer.getAttribute('aria-expanded') === 'true';
+            
+            setTimeout(() => {
+              const nowOpen = selectContainer.classList.contains('open') ||
+                            selectContainer.classList.contains('is-open') ||
+                            selectContainer.getAttribute('aria-expanded') === 'true';
+              
+              if (nowOpen !== isOpen) {
+                console.log('__NATIVE_EVENT__:' + JSON.stringify({
+                  type: nowOpen ? 'select_open' : 'select_close',
+                  timestamp: Date.now(),
+                  target: captureElement(selectContainer),
+                  url: window.location.href,
+                  title: document.title,
+                  selectContext: {
+                    isOpen: nowOpen,
+                    options: captureSelectOptions(selectContainer),
+                    selectedValues: getSelectedValues(selectContainer)
+                  }
+                }));
+              }
+            }, 50);
+          }
+        }
+        
+        function handleAutocompleteInput(event) {
+          const target = event.target;
+          const searchQuery = target.value;
+          const selectContainer = findSelectContainer(target);
+          
+          if (!selectContainer && !isAutocompleteInput(target)) return;
+          
+          const bufferId = target.id || target.name || 'autocomplete_' + Date.now();
+          
+          if (window.__selectInteractionBuffer.has(bufferId)) {
+            clearTimeout(window.__selectInteractionBuffer.get(bufferId).timeout);
+          }
+          
+          const timeout = setTimeout(() => {
+            const listbox = document.querySelector('[role="listbox"]');
+            const options = listbox ? captureSelectOptions(listbox) : [];
+            
+            console.log('__NATIVE_EVENT__:' + JSON.stringify({
+              type: 'autocomplete_search',
+              timestamp: Date.now(),
+              target: captureElement(target),
+              url: window.location.href,
+              title: document.title,
+              autocompleteContext: {
+                searchQuery: searchQuery,
+                resultsCount: options.length,
+                options: options.slice(0, 10),
+                hasResults: options.length > 0,
+                selectContainer: selectContainer ? captureElement(selectContainer) : null
+              }
+            }));
+            
+            window.__selectInteractionBuffer.delete(bufferId);
+          }, 500);
+          
+          window.__selectInteractionBuffer.set(bufferId, {
+            searchQuery: searchQuery,
+            timeout: timeout,
+            timestamp: Date.now()
+          });
         }
         
         eventsToMonitor.forEach(eventType => {

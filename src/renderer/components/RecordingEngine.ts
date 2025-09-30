@@ -141,11 +141,34 @@ private handleEvent(eventData: any): void {
         break;
         
       case 'input':
-      case 'change':
-      case 'select':
       case 'reset':
       case 'invalid':
         this.handleInputEvent(eventData);
+        break;
+      
+      case 'change':
+        this.handleChangeEvent(eventData);
+        break;
+      
+      case 'select':
+        this.handleSelectEvent(eventData);
+        break;
+      
+      case 'select_change':
+        this.handleSelectChangeEvent(eventData);
+        break;
+      
+      case 'select_option_click':
+        this.handleSelectOptionClickEvent(eventData);
+        break;
+      
+      case 'select_open':
+      case 'select_close':
+        this.handleSelectToggleEvent(eventData);
+        break;
+      
+      case 'autocomplete_search':
+        this.handleAutocompleteSearchEvent(eventData);
         break;
         
       case 'keydown':
@@ -611,6 +634,11 @@ private handleInputEvent(eventData: any): void {
   if (!eventData.value) return;
   
   const target = eventData.target;
+  
+  if (target.tagName?.toLowerCase() === 'select') {
+    return;
+  }
+  
   const elementId = target.id || target.name || `${target.tagName}_${target.type || ''}_${Date.now()}`;
   const inputIdentifier = `${eventData.url}_${elementId}`;
   this.inputBuffer.set(inputIdentifier, {
@@ -621,6 +649,337 @@ private handleInputEvent(eventData: any): void {
   setTimeout(() => {
     this.processInputBuffer(inputIdentifier, eventData.url, eventData.title);
   }, this.SEMANTIC_AGGREGATION_DELAY);
+}
+
+private handleChangeEvent(eventData: any): void {
+  if (!eventData.target) return;
+  
+  const target = eventData.target;
+  const tagName = target.tagName?.toLowerCase();
+  
+  if (tagName === 'select') {
+    return;
+  }
+  
+  if (tagName === 'input') {
+    const inputType = target.type?.toLowerCase();
+    
+    if (inputType === 'checkbox') {
+      this.handleCheckboxChange(eventData);
+    } else if (inputType === 'radio') {
+      this.handleRadioChange(eventData);
+    } else if (inputType === 'file') {
+      this.handleFileChange(eventData);
+    } else if (inputType === 'range') {
+      this.handleRangeChange(eventData);
+    } else {
+      this.handleInputEvent(eventData);
+    }
+  } else if (tagName === 'textarea') {
+    this.handleInputEvent(eventData);
+  }
+}
+
+private handleCheckboxChange(eventData: any): void {
+  const target = eventData.target;
+  const elementContext = this.convertElementContext(target);
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.TOGGLE_CHECKBOX,
+    timestamp: eventData.timestamp || Date.now(),
+    description: `${target.checked ? 'Check' : 'Uncheck'} "${elementContext.description}"`,
+    target: elementContext,
+    value: target.checked,
+    context: this.capturePageContext(),
+    intent: 'toggle_checkbox'
+  };
+  
+  this.recordAction(action);
+  window.dispatchEvent(new CustomEvent('recording-action', {
+    detail: {
+      type: ActionType.TOGGLE_CHECKBOX,
+      description: action.description,
+      timestamp: action.timestamp
+    }
+  }));
+}
+
+private handleRadioChange(eventData: any): void {
+  const target = eventData.target;
+  const elementContext = this.convertElementContext(target);
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.SELECT_RADIO,
+    timestamp: eventData.timestamp || Date.now(),
+    description: `Select radio option "${elementContext.description}"`,
+    target: elementContext,
+    value: target.value,
+    context: this.capturePageContext(),
+    intent: 'select_radio_option'
+  };
+  
+  this.recordAction(action);
+  window.dispatchEvent(new CustomEvent('recording-action', {
+    detail: {
+      type: ActionType.SELECT_RADIO,
+      description: action.description,
+      timestamp: action.timestamp
+    }
+  }));
+}
+
+private handleFileChange(eventData: any): void {
+  const target = eventData.target;
+  const elementContext = this.convertElementContext(target);
+  const files = target.files || [];
+  const fileNames = Array.from(files).map((f: any) => f.name).join(', ');
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.SELECT_FILE,
+    timestamp: eventData.timestamp || Date.now(),
+    description: `Select file(s): ${fileNames}`,
+    target: elementContext,
+    value: fileNames,
+    context: this.capturePageContext(),
+    intent: 'upload_file'
+  };
+  
+  this.recordAction(action);
+  window.dispatchEvent(new CustomEvent('recording-action', {
+    detail: {
+      type: ActionType.SELECT_FILE,
+      description: action.description,
+      timestamp: action.timestamp
+    }
+  }));
+}
+
+private handleRangeChange(eventData: any): void {
+  const target = eventData.target;
+  const elementContext = this.convertElementContext(target);
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.ADJUST_SLIDER,
+    timestamp: eventData.timestamp || Date.now(),
+    description: `Adjust slider to ${target.value}`,
+    target: elementContext,
+    value: target.value,
+    context: this.capturePageContext(),
+    intent: 'adjust_value'
+  };
+  
+  this.recordAction(action);
+  window.dispatchEvent(new CustomEvent('recording-action', {
+    detail: {
+      type: ActionType.ADJUST_SLIDER,
+      description: action.description,
+      timestamp: action.timestamp
+    }
+  }));
+}
+
+private handleSelectEvent(eventData: any): void {
+  console.log('[RecordingEngine] Basic select event:', eventData);
+}
+
+private handleSelectChangeEvent(eventData: any): void {
+  if (!eventData.target || !eventData.selectContext) return;
+  
+  const target = eventData.target;
+  const selectContext = eventData.selectContext;
+  const elementContext = this.convertElementContext(target);
+  
+  const selectedValues = selectContext.selectedValues || [];
+  const previousValues = selectContext.previousValues || [];
+  
+  let description = '';
+  if (selectContext.isMultiSelect) {
+    const selectedTexts = selectedValues.map((v: any) => v.text).join(', ');
+    description = `Select multiple options: ${selectedTexts} in "${elementContext.description}"`;
+  } else {
+    const selectedText = selectedValues[0]?.text || 'unknown';
+    description = `Select "${selectedText}" from "${elementContext.description}"`;
+  }
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.SELECT,
+    timestamp: eventData.timestamp || Date.now(),
+    description: description,
+    target: elementContext,
+    value: JSON.stringify({
+      selectedValues: selectedValues,
+      previousValues: previousValues,
+      selectType: selectContext.selectType,
+      isMultiSelect: selectContext.isMultiSelect,
+      totalOptions: selectContext.totalOptions,
+      hasSearch: selectContext.hasSearch,
+      isAsync: selectContext.isAsync
+    }),
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp || Date.now(),
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: 'choose_option',
+    metadata: {
+      selectContext: selectContext,
+      availableOptions: selectContext.availableOptions?.slice(0, 20)
+    }
+  };
+  
+  this.recordAction(action);
+  window.dispatchEvent(new CustomEvent('recording-action', {
+    detail: {
+      type: ActionType.SELECT,
+      description: action.description,
+      timestamp: action.timestamp
+    }
+  }));
+}
+
+private handleSelectOptionClickEvent(eventData: any): void {
+  if (!eventData.optionContext) return;
+  
+  const optionContext = eventData.optionContext;
+  const target = eventData.target;
+  const elementContext = this.convertElementContext(target);
+  
+  const selectContainer = optionContext.selectContainer;
+  const selectElementContext = selectContainer ? this.convertElementContext(selectContainer) : null;
+  
+  const description = `Click option "${optionContext.text}" in select "${selectElementContext?.description || 'dropdown'}"`;
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.SELECT_OPTION,
+    timestamp: eventData.timestamp || Date.now(),
+    description: description,
+    target: elementContext,
+    value: JSON.stringify({
+      optionValue: optionContext.value,
+      optionText: optionContext.text,
+      isSelected: optionContext.isSelected,
+      currentSelected: optionContext.currentSelected
+    }),
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp || Date.now(),
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: 'choose_dropdown_option',
+    metadata: {
+      selectContainer: selectElementContext,
+      allOptions: optionContext.allOptions?.slice(0, 20)
+    }
+  };
+  
+  this.recordAction(action);
+  window.dispatchEvent(new CustomEvent('recording-action', {
+    detail: {
+      type: ActionType.SELECT_OPTION,
+      description: action.description,
+      timestamp: action.timestamp
+    }
+  }));
+}
+
+private handleSelectToggleEvent(eventData: any): void {
+  if (!eventData.target || !eventData.selectContext) return;
+  
+  const target = eventData.target;
+  const selectContext = eventData.selectContext;
+  const elementContext = this.convertElementContext(target);
+  const isOpen = eventData.type === 'select_open';
+  
+  const description = `${isOpen ? 'Open' : 'Close'} select "${elementContext.description}"`;
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: isOpen ? ActionType.SELECT_OPEN : ActionType.SELECT_CLOSE,
+    timestamp: eventData.timestamp || Date.now(),
+    description: description,
+    target: elementContext,
+    value: JSON.stringify({
+      isOpen: isOpen,
+      selectedValues: selectContext.selectedValues,
+      optionsCount: selectContext.options?.length || 0
+    }),
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp || Date.now(),
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: isOpen ? 'open_dropdown' : 'close_dropdown',
+    metadata: {
+      options: selectContext.options?.slice(0, 20)
+    }
+  };
+  
+  if (this.shouldRecordAction(action)) {
+    this.recordAction(action);
+  }
+}
+
+private handleAutocompleteSearchEvent(eventData: any): void {
+  if (!eventData.autocompleteContext) return;
+  
+  const autocompleteContext = eventData.autocompleteContext;
+  const target = eventData.target;
+  const elementContext = this.convertElementContext(target);
+  
+  const searchQuery = autocompleteContext.searchQuery;
+  const resultsCount = autocompleteContext.resultsCount || 0;
+  
+  const description = `Search "${searchQuery}" in autocomplete (${resultsCount} results)`;
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.AUTOCOMPLETE_SEARCH,
+    timestamp: eventData.timestamp || Date.now(),
+    description: description,
+    target: elementContext,
+    value: JSON.stringify({
+      searchQuery: searchQuery,
+      resultsCount: resultsCount,
+      hasResults: autocompleteContext.hasResults
+    }),
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp || Date.now(),
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: 'search',
+    metadata: {
+      options: autocompleteContext.options,
+      selectContainer: autocompleteContext.selectContainer
+    }
+  };
+  
+  this.recordAction(action);
+  window.dispatchEvent(new CustomEvent('recording-action', {
+    detail: {
+      type: ActionType.AUTOCOMPLETE_SEARCH,
+      description: action.description,
+      timestamp: action.timestamp
+    }
+  }));
 }
 
 private handleKeyEvent(eventData: any): void {
@@ -1482,6 +1841,15 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
 
       case ActionType.SELECT:
         return 'choose_option';
+      
+      case ActionType.SELECT_OPEN:
+        return 'open_dropdown';
+      
+      case ActionType.SELECT_CLOSE:
+        return 'close_dropdown';
+      
+      case ActionType.AUTOCOMPLETE_SEARCH:
+        return 'search';
 
       case ActionType.TOGGLE:
         return 'toggle_checkbox';
@@ -1773,6 +2141,12 @@ private notifyWebviewsRecordingState(commandType: 'start' | 'stop'): void {
     }
     if (action.type === ActionType.DYNAMIC_CONTENT) {
       return action.description.includes('loaded') || action.description.includes('updated');
+    }
+    if ([ActionType.SELECT, ActionType.SELECT_OPTION, ActionType.AUTOCOMPLETE_SEARCH].includes(action.type)) {
+      return true;
+    }
+    if ([ActionType.TOGGLE_CHECKBOX, ActionType.SELECT_RADIO, ActionType.SELECT_FILE, ActionType.ADJUST_SLIDER].includes(action.type)) {
+      return true;
     }
     return false;
   }

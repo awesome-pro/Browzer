@@ -27,6 +27,7 @@ export interface SemanticAction {
   coordinates?: { x: number; y: number }; // For click actions
   context: PageContext; // Page state when action occurred
   intent: string; // Inferred user intent (e.g., 'search', 'login', 'navigate')
+  metadata?: any; // Additional metadata for complex actions
 }
 
 export interface ElementContext {
@@ -210,6 +211,11 @@ export enum ActionType {
     REACT_EVENT = 'react_event',
     MODAL_OPEN = 'modal_open',
     MODAL_CLOSE = 'modal_close',
+    
+    // Modern Select Actions
+    SELECT_OPEN = 'select_open',
+    SELECT_CLOSE = 'select_close',
+    AUTOCOMPLETE_SEARCH = 'autocomplete_search',
 
     UNKNOWN = 'unknown',
   }
