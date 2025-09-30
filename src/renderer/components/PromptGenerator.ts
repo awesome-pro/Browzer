@@ -44,6 +44,22 @@ Each action must be a JSON object with these exact fields:
   - target: Element identifier
   - value: The text to type
   
+- **select**: Select an option from dropdown/combobox/autocomplete
+  - target: Select element identifier (select tag or input with role="combobox")
+  - value: Option value or text to select
+  
+- **select_radio**: Select a radio button
+  - target: Radio button identifier
+  - value: Radio button value
+  
+- **select_checkbox**: Check/uncheck a checkbox
+  - target: Checkbox identifier
+  - value: true (to check) or false (to uncheck)
+  
+- **adjust_slider**: Adjust a range slider
+  - target: Range input identifier
+  - value: Numeric value within slider's min-max range
+  
 - **keypress**: Press a keyboard key
   - target: Element identifier (or empty for active element)
   - value: Key name (Enter, Backspace, Tab, etc.)
@@ -285,6 +301,45 @@ ${this.generateAdditionalGuidelines(session)}`;
         
       case ActionType.WAIT_FOR_ELEMENT:
         return `Wait for element "${this.getElementDescription(action.target)}" to appear`;
+      
+      case ActionType.SELECT:
+        if (action.value && typeof action.value === 'string') {
+          try {
+            const valueObj = JSON.parse(action.value);
+            if (valueObj.selectedText || valueObj.selectedValue) {
+              return `Select "${valueObj.selectedText || valueObj.selectedValue}" from "${this.getElementDescription(action.target)}"`;
+            }
+          } catch (e) {
+            // Not JSON, use as-is
+          }
+        }
+        return `Select option from "${this.getElementDescription(action.target)}"`;
+      
+      case ActionType.SELECT_RADIO:
+        return `Select radio option "${action.value}" in "${this.getElementDescription(action.target)}"`;
+      
+      case ActionType.TOGGLE_CHECKBOX:
+        const checkState = action.value === true || action.value === 'true' ? 'Check' : 'Uncheck';
+        return `${checkState} "${this.getElementDescription(action.target)}"`;
+      
+      case ActionType.SELECT_FILE:
+        return `Select file(s) "${action.value}" for "${this.getElementDescription(action.target)}"`;
+      
+      case ActionType.ADJUST_SLIDER:
+        return `Adjust slider to ${action.value} in "${this.getElementDescription(action.target)}"`;
+      
+      case ActionType.AUTOCOMPLETE_SEARCH:
+        if (action.value && typeof action.value === 'string') {
+          try {
+            const valueObj = JSON.parse(action.value);
+            if (valueObj.searchQuery) {
+              return `Search "${valueObj.searchQuery}" in autocomplete (${valueObj.resultsCount || 0} results)`;
+            }
+          } catch (e) {
+            // Not JSON
+          }
+        }
+        return `Search in autocomplete`;
         
       default:
         return action.description || `Perform ${action.type} action`;

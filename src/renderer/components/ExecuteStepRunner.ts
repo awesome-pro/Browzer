@@ -187,12 +187,30 @@ export class ExecuteStepRunner {
       
       case 'wait_for_element':
         return await this.waitForElement(step, elementInfo);
-        case 'spa_navigation':
-          if (step.target) {
-            return await this.handleSpaNavigation(step.target);
-          } else {
-            throw new Error('SPA navigation requires a target path');
-          }
+      
+      case 'select':
+        return await this.select(step, elementInfo);
+      
+      case 'select_radio':
+        return await this.selectRadio(step, elementInfo);
+      
+      case 'select_checkbox':
+      case 'toggle_checkbox':
+        return await this.toggleCheckbox(step, elementInfo);
+      
+      case 'select_file':
+        return await this.selectFile(step, elementInfo);
+      
+      case 'adjust_slider':
+        return await this.adjustSlider(step, elementInfo);
+      
+      case 'spa_navigation':
+        if (step.target) {
+          return await this.handleSpaNavigation(step.target);
+        } else {
+          throw new Error('SPA navigation requires a target path');
+        }
+      
       default:
         throw new Error(`Unsupported action: ${step.action}`);
     }
@@ -891,5 +909,492 @@ export class ExecuteStepRunner {
 
   private async wait(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private async select(step: ExecuteStep, elementInfo: ElementIdentifier): Promise<any> {
+    const selectors = this.generateSelectors(elementInfo);
+    const optionValue = step.value as string;
+    
+    if (!optionValue) {
+      throw new Error('No option value provided for select action');
+    }
+    
+    if (selectors.length === 0) {
+      throw new Error('No selectors could be generated from target');
+    }
+    
+    console.log(`[ExecuteStepRunner] Select - trying selectors:`, selectors);
+    const findResult = await this.findElement(selectors, elementInfo);
+    
+    if (!findResult.found) {
+      throw new Error(`Element not found for select. Tried selectors: ${selectors.join(', ')}`);
+    }
+    
+    const script = `
+      (async function() {
+        try {
+          const selector = '${findResult.selector.replace(/'/g, "\\'")}';
+          const optionValue = '${optionValue.replace(/'/g, "\\'")}';
+          let element = document.querySelector(selector);
+          
+          if (!element) {
+            return { success: false, error: 'Element not found in select execution' };
+          }
+          
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          const originalOutline = element.style.outline;
+          element.style.outline = '2px solid orange';
+          
+          // Handle native HTML select
+          if (element.tagName.toLowerCase() === 'select') {
+            const options = Array.from(element.options);
+            let optionFound = false;
+            
+            for (let i = 0; i < options.length; i++) {
+              const option = options[i];
+              if (option.value === optionValue || 
+                  option.textContent?.trim() === optionValue ||
+                  option.textContent?.includes(optionValue)) {
+                element.selectedIndex = i;
+                optionFound = true;
+                break;
+              }
+            }
+            
+            if (!optionFound) {
+              return { success: false, error: 'Option not found in select' };
+            }
+            
+            element.dispatchEvent(new Event('change', { bubbles: true }));
+            element.dispatchEvent(new Event('input', { bubbles: true }));
+          } 
+          // Handle custom select/autocomplete (role="combobox")
+          else if (element.getAttribute('role') === 'combobox' || 
+                   element.classList.contains('select') ||
+                   element.classList.contains('autocomplete')) {
+            
+            // Focus and type the value
+            element.focus();
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+            // Clear existing value
+            element.value = '';
+            element.dispatchEvent(new Event('input', { bubbles: true }));
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Type the option value
+            element.value = optionValue;
+            element.dispatchEvent(new Event('input', { bubbles: true }));
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Look for the dropdown/listbox
+            const listbox = document.querySelector('[role="listbox"]');
+            if (listbox) {
+              // Find and click the matching option
+              const options = listbox.querySelectorAll('[role="option"]');
+              let optionFound = false;
+              
+              for (const option of options) {
+                const optionText = option.textContent?.trim();
+                const optionDataValue = option.getAttribute('data-value');
+                
+                if (optionText === optionValue || 
+                    optionDataValue === optionValue ||
+                    optionText?.includes(optionValue)) {
+                  option.click();
+                  optionFound = true;
+                  break;
+                }
+              }
+              
+              if (!optionFound) {
+                // Try pressing Enter to select highlighted option
+                element.dispatchEvent(new KeyboardEvent('keydown', { 
+                  key: 'Enter', 
+                  keyCode: 13, 
+                  bubbles: true 
+                }));
+              }
+            } else {
+              // No listbox found, try pressing Enter
+              element.dispatchEvent(new KeyboardEvent('keydown', { 
+                key: 'Enter', 
+                keyCode: 13, 
+                bubbles: true 
+              }));
+            }
+            
+            element.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          // Handle React Select and similar custom components
+          else {
+            // Try to click the select to open dropdown
+            element.click();
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+            // Look for dropdown menu
+            const dropdownSelectors = [
+              '.select-menu',
+              '.dropdown-menu',
+              '[role="listbox"]',
+              '.options',
+              '.select-options'
+            ];
+            
+            let dropdown = null;
+            for (const sel of dropdownSelectors) {
+              dropdown = document.querySelector(sel);
+              if (dropdown) break;
+            }
+            
+            if (dropdown) {
+              const options = dropdown.querySelectorAll(
+                '[role="option"], .option, .select-option, .dropdown-item'
+              );
+              
+              for (const option of options) {
+                const optionText = option.textContent?.trim();
+                if (optionText === optionValue || optionText?.includes(optionValue)) {
+                  option.click();
+                  break;
+                }
+              }
+            }
+          }
+          
+          setTimeout(() => {
+            element.style.outline = originalOutline;
+          }, 1000);
+          
+          return {
+            success: true,
+            message: 'Option selected successfully',
+            selectedValue: optionValue,
+            elementInfo: {
+              tagName: element.tagName,
+              id: element.id,
+              className: element.className
+            }
+          };
+        } catch (error) {
+          return { success: false, error: error.message };
+        }
+      })();
+    `;
+
+    const result = await this.webview.executeJavaScript(script);
+    
+    if (!result.success) {
+      throw new Error(`Select failed: ${result.error}`);
+    }
+    
+    await this.wait(1000);
+    return result;
+  }
+
+  private async selectRadio(step: ExecuteStep, elementInfo: ElementIdentifier): Promise<any> {
+    const selectors = this.generateSelectors(elementInfo);
+    const radioValue = step.value as string;
+    
+    if (selectors.length === 0) {
+      throw new Error('No selectors could be generated from target');
+    }
+    
+    console.log(`[ExecuteStepRunner] Select Radio - trying selectors:`, selectors);
+    const findResult = await this.findElement(selectors, elementInfo);
+    
+    if (!findResult.found) {
+      throw new Error(`Radio button not found. Tried selectors: ${selectors.join(', ')}`);
+    }
+    
+    const script = `
+      (async function() {
+        try {
+          const selector = '${findResult.selector.replace(/'/g, "\\'")}';
+          const radioValue = '${radioValue.replace(/'/g, "\\'")}';
+          
+          // Try to find radio by value
+          let element = document.querySelector('input[type="radio"][value="' + radioValue + '"]');
+          
+          // If not found, try by name and value
+          if (!element) {
+            const radios = document.querySelectorAll('input[type="radio"]');
+            for (const radio of radios) {
+              if (radio.value === radioValue) {
+                element = radio;
+                break;
+              }
+            }
+          }
+          
+          // Fallback to selector
+          if (!element) {
+            element = document.querySelector(selector);
+          }
+          
+          if (!element || element.type !== 'radio') {
+            return { success: false, error: 'Radio button not found' };
+          }
+          
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          const originalOutline = element.style.outline;
+          element.style.outline = '2px solid blue';
+          
+          element.checked = true;
+          element.dispatchEvent(new Event('change', { bubbles: true }));
+          element.dispatchEvent(new Event('click', { bubbles: true }));
+          
+          setTimeout(() => {
+            element.style.outline = originalOutline;
+          }, 1000);
+          
+          return {
+            success: true,
+            message: 'Radio button selected',
+            value: element.value,
+            elementInfo: {
+              tagName: element.tagName,
+              name: element.name,
+              value: element.value
+            }
+          };
+        } catch (error) {
+          return { success: false, error: error.message };
+        }
+      })();
+    `;
+
+    const result = await this.webview.executeJavaScript(script);
+    
+    if (!result.success) {
+      throw new Error(`Select radio failed: ${result.error}`);
+    }
+    
+    await this.wait(500);
+    return result;
+  }
+
+  private async toggleCheckbox(step: ExecuteStep, elementInfo: ElementIdentifier): Promise<any> {
+    const selectors = this.generateSelectors(elementInfo);
+    const shouldCheck = step.value === 'true' || step.value === '1' || step.value === 1;
+    
+    if (selectors.length === 0) {
+      throw new Error('No selectors could be generated from target');
+    }
+    
+    console.log(`[ExecuteStepRunner] Toggle Checkbox - trying selectors:`, selectors);
+    const findResult = await this.findElement(selectors, elementInfo);
+    
+    if (!findResult.found) {
+      throw new Error(`Checkbox not found. Tried selectors: ${selectors.join(', ')}`);
+    }
+    
+    const script = `
+      (async function() {
+        try {
+          const selector = '${findResult.selector.replace(/'/g, "\\'")}';
+          const shouldCheck = ${shouldCheck};
+          let element = document.querySelector(selector);
+          
+          if (!element || element.type !== 'checkbox') {
+            return { success: false, error: 'Checkbox not found' };
+          }
+          
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          const originalOutline = element.style.outline;
+          element.style.outline = '2px solid purple';
+          
+          // Set the desired state
+          if (shouldCheck !== undefined) {
+            element.checked = shouldCheck;
+          } else {
+            // Toggle if no specific state provided
+            element.checked = !element.checked;
+          }
+          
+          element.dispatchEvent(new Event('change', { bubbles: true }));
+          element.dispatchEvent(new Event('click', { bubbles: true }));
+          
+          setTimeout(() => {
+            element.style.outline = originalOutline;
+          }, 1000);
+          
+          return {
+            success: true,
+            message: element.checked ? 'Checkbox checked' : 'Checkbox unchecked',
+            checked: element.checked,
+            elementInfo: {
+              tagName: element.tagName,
+              name: element.name,
+              id: element.id
+            }
+          };
+        } catch (error) {
+          return { success: false, error: error.message };
+        }
+      })();
+    `;
+
+    const result = await this.webview.executeJavaScript(script);
+    
+    if (!result.success) {
+      throw new Error(`Toggle checkbox failed: ${result.error}`);
+    }
+    
+    await this.wait(500);
+    return result;
+  }
+
+  private async selectFile(step: ExecuteStep, elementInfo: ElementIdentifier): Promise<any> {
+    // Note: File selection requires native file dialog interaction
+    // This is a placeholder that shows the file input was found
+    const selectors = this.generateSelectors(elementInfo);
+    
+    if (selectors.length === 0) {
+      throw new Error('No selectors could be generated from target');
+    }
+    
+    console.log(`[ExecuteStepRunner] Select File - trying selectors:`, selectors);
+    const findResult = await this.findElement(selectors, elementInfo);
+    
+    if (!findResult.found) {
+      throw new Error(`File input not found. Tried selectors: ${selectors.join(', ')}`);
+    }
+    
+    const script = `
+      (async function() {
+        try {
+          const selector = '${findResult.selector.replace(/'/g, "\\'")}';
+          let element = document.querySelector(selector);
+          
+          if (!element || element.type !== 'file') {
+            return { success: false, error: 'File input not found' };
+          }
+          
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          const originalOutline = element.style.outline;
+          element.style.outline = '2px solid red';
+          
+          // Trigger the file dialog
+          element.click();
+          
+          setTimeout(() => {
+            element.style.outline = originalOutline;
+          }, 1000);
+          
+          return {
+            success: true,
+            message: 'File input clicked - file dialog should open',
+            note: 'File selection requires manual interaction with native file dialog',
+            elementInfo: {
+              tagName: element.tagName,
+              name: element.name,
+              id: element.id,
+              accept: element.accept
+            }
+          };
+        } catch (error) {
+          return { success: false, error: error.message };
+        }
+      })();
+    `;
+
+    const result = await this.webview.executeJavaScript(script);
+    
+    if (!result.success) {
+      throw new Error(`Select file failed: ${result.error}`);
+    }
+    
+    console.warn('[ExecuteStepRunner] File selection requires manual interaction');
+    await this.wait(1000);
+    return result;
+  }
+
+  private async adjustSlider(step: ExecuteStep, elementInfo: ElementIdentifier): Promise<any> {
+    const selectors = this.generateSelectors(elementInfo);
+    const sliderValue = step.value as number;
+    
+    if (sliderValue === undefined || sliderValue === null) {
+      throw new Error('No value provided for slider adjustment');
+    }
+    
+    if (selectors.length === 0) {
+      throw new Error('No selectors could be generated from target');
+    }
+    
+    console.log(`[ExecuteStepRunner] Adjust Slider - trying selectors:`, selectors);
+    const findResult = await this.findElement(selectors, elementInfo);
+    
+    if (!findResult.found) {
+      throw new Error(`Slider not found. Tried selectors: ${selectors.join(', ')}`);
+    }
+    
+    const script = `
+      (async function() {
+        try {
+          const selector = '${findResult.selector.replace(/'/g, "\\'")}';
+          const sliderValue = ${sliderValue};
+          let element = document.querySelector(selector);
+          
+          if (!element || element.type !== 'range') {
+            return { success: false, error: 'Range slider not found' };
+          }
+          
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          const originalOutline = element.style.outline;
+          element.style.outline = '2px solid cyan';
+          
+          const min = parseFloat(element.min) || 0;
+          const max = parseFloat(element.max) || 100;
+          
+          // Ensure value is within range
+          let finalValue = sliderValue;
+          if (finalValue < min) finalValue = min;
+          if (finalValue > max) finalValue = max;
+          
+          element.value = finalValue;
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+          element.dispatchEvent(new Event('change', { bubbles: true }));
+          
+          setTimeout(() => {
+            element.style.outline = originalOutline;
+          }, 1000);
+          
+          return {
+            success: true,
+            message: 'Slider adjusted successfully',
+            value: finalValue,
+            elementInfo: {
+              tagName: element.tagName,
+              name: element.name,
+              id: element.id,
+              min: min,
+              max: max
+            }
+          };
+        } catch (error) {
+          return { success: false, error: error.message };
+        }
+      })();
+    `;
+
+    const result = await this.webview.executeJavaScript(script);
+    
+    if (!result.success) {
+      throw new Error(`Adjust slider failed: ${result.error}`);
+    }
+    
+    await this.wait(500);
+    return result;
   }
 }
