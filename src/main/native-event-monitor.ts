@@ -718,9 +718,17 @@ private async injectEventMonitoringScript(webContents: WebContents): Promise<voi
           const target = event.target;
           const selectContainer = findSelectContainer(target) || target;
           
+          if (isAutocompleteInput(target)) {
+            return;
+          }
+          
           const options = captureSelectOptions(selectContainer);
           const selectedValues = getSelectedValues(selectContainer);
           const previousValues = window.__selectStateTracker.get(selectContainer) || [];
+          
+          if (selectedValues.length === 0 && options.length === 0) {
+            return;
+          }
           
           const isMultiSelect = selectContainer.multiple || 
                                selectContainer.getAttribute('aria-multiselectable') === 'true' ||
@@ -882,8 +890,73 @@ private async injectEventMonitoringScript(webContents: WebContents): Promise<voi
           });
         }
         
+        window.__autocompleteSelectionTracker = new Map();
+        
+        function trackAutocompleteKeyboardSelection(event) {
+          if (event.type !== 'keydown') return;
+          if (!['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) return;
+          
+          const target = event.target;
+          if (!isAutocompleteInput(target)) return;
+          
+          const listbox = document.querySelector('[role="listbox"]');
+          if (!listbox) return;
+          
+          if (event.key === 'Enter') {
+            const selectedOption = listbox.querySelector('[role="option"][aria-selected="true"]') ||
+                                  listbox.querySelector('[role="option"].selected') ||
+                                  listbox.querySelector('[role="option"].active') ||
+                                  listbox.querySelector('[role="option"]:focus');
+            
+            if (selectedOption) {
+              const optionValue = selectedOption.getAttribute('data-value') || 
+                                selectedOption.textContent?.trim() || 
+                                selectedOption.innerText?.trim();
+              const optionText = selectedOption.textContent?.trim() || 
+                               selectedOption.innerText?.trim();
+              
+              window.__autocompleteSelectionTracker.set(target, {
+                value: optionValue,
+                text: optionText,
+                timestamp: Date.now()
+              });
+              
+              setTimeout(() => {
+                const currentValue = target.value;
+                const trackedSelection = window.__autocompleteSelectionTracker.get(target);
+                
+                if (trackedSelection) {
+                  console.log('__NATIVE_EVENT__:' + JSON.stringify({
+                    type: 'autocomplete_select',
+                    timestamp: Date.now(),
+                    target: captureElement(target),
+                    url: window.location.href,
+                    title: document.title,
+                    selectedValue: {
+                      value: trackedSelection.value,
+                      text: trackedSelection.text,
+                      inputValue: currentValue
+                    },
+                    autocompleteContext: {
+                      searchQuery: currentValue,
+                      selectedOption: trackedSelection
+                    }
+                  }));
+                  
+                  window.__autocompleteSelectionTracker.delete(target);
+                }
+              }, 100);
+            }
+          }
+        }
+        
         eventsToMonitor.forEach(eventType => {
-          const listener = (event) => handleNativeEvent(event);
+          const listener = (event) => {
+            handleNativeEvent(event);
+            if (eventType === 'keydown') {
+              trackAutocompleteKeyboardSelection(event);
+            }
+          };
           window.__nativeEventListeners.set(eventType, listener);
           originalAddEventListener.call(document, eventType, listener, { capture: true, passive: true });
         });

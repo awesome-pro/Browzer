@@ -170,6 +170,10 @@ private handleEvent(eventData: any): void {
       case 'autocomplete_search':
         this.handleAutocompleteSearchEvent(eventData);
         break;
+      
+      case 'autocomplete_select':
+        this.handleAutocompleteSelectEvent(eventData);
+        break;
         
       case 'keydown':
       case 'keyup':
@@ -666,18 +670,20 @@ private handleChangeEvent(eventData: any): void {
     
     if (inputType === 'checkbox') {
       this.handleCheckboxChange(eventData);
+      return;
     } else if (inputType === 'radio') {
       this.handleRadioChange(eventData);
+      return;
     } else if (inputType === 'file') {
       this.handleFileChange(eventData);
+      return;
     } else if (inputType === 'range') {
       this.handleRangeChange(eventData);
-    } else {
-      this.handleInputEvent(eventData);
+      return;
     }
-  } else if (tagName === 'textarea') {
-    this.handleInputEvent(eventData);
   }
+  
+  this.handleInputEvent(eventData);
 }
 
 private handleCheckboxChange(eventData: any): void {
@@ -795,6 +801,11 @@ private handleSelectChangeEvent(eventData: any): void {
   
   const selectedValues = selectContext.selectedValues || [];
   const previousValues = selectContext.previousValues || [];
+  
+  if (selectedValues.length === 0) {
+    console.log('[RecordingEngine] Skipping select_change with no selected values');
+    return;
+  }
   
   let description = '';
   if (selectContext.isMultiSelect) {
@@ -976,6 +987,52 @@ private handleAutocompleteSearchEvent(eventData: any): void {
   window.dispatchEvent(new CustomEvent('recording-action', {
     detail: {
       type: ActionType.AUTOCOMPLETE_SEARCH,
+      description: action.description,
+      timestamp: action.timestamp
+    }
+  }));
+}
+
+private handleAutocompleteSelectEvent(eventData: any): void {
+  if (!eventData.selectedValue) return;
+  
+  const selectedValue = eventData.selectedValue;
+  const target = eventData.target;
+  const elementContext = this.convertElementContext(target);
+  
+  const description = `Select "${selectedValue.text}" from autocomplete in "${elementContext.description}"`;
+  
+  const action: SemanticAction = {
+    id: this.generateId(),
+    type: ActionType.SELECT,
+    timestamp: eventData.timestamp || Date.now(),
+    description: description,
+    target: elementContext,
+    value: JSON.stringify({
+      selectedValue: selectedValue.value,
+      selectedText: selectedValue.text,
+      inputValue: selectedValue.inputValue,
+      isAutocomplete: true
+    }),
+    context: {
+      url: eventData.url,
+      title: eventData.title || 'Unknown Page',
+      timestamp: eventData.timestamp || Date.now(),
+      viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+      userAgent: navigator.userAgent,
+      keyElements: []
+    },
+    intent: 'choose_option',
+    metadata: {
+      autocompleteContext: eventData.autocompleteContext,
+      selectedOption: selectedValue
+    }
+  };
+  
+  this.recordAction(action);
+  window.dispatchEvent(new CustomEvent('recording-action', {
+    detail: {
+      type: ActionType.SELECT,
       description: action.description,
       timestamp: action.timestamp
     }
