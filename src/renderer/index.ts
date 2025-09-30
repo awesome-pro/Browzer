@@ -406,7 +406,16 @@ class BrowzerApp {
       this.createNewTab();
     });
 
-    this.ipcRenderer.on('menu-new-tab-with-url', (event, url) => {
+    this.ipcRenderer.on('menu-new-tab-with-url', (...args) => {
+      let url = args[0];
+      if (!url && args.length > 1) {
+        url = args[1];
+      }
+      
+      if (!url || url === 'undefined') {
+        url = CONSTANTS.NEW_TAB_URL;
+      }
+      
       this.createNewTab(url);
     });
 
@@ -462,6 +471,7 @@ class BrowzerApp {
   // ========================= PUBLIC API METHODS =========================
   public createNewTab(url: string = CONSTANTS.NEW_TAB_URL): string | null {
     try {
+      console.log('[BrowzerApp] createNewTab called with URL:', url);
       const tabId = this.tabService.createTab(url);
       if (tabId) {
         const webview = this.webviewService.createWebview(tabId, url);
@@ -518,6 +528,7 @@ class BrowzerApp {
     // Listen for new tab requests from webviews
     window.addEventListener('webview-new-tab', (e: any) => {
       const { url } = e.detail;
+      console.log('[BrowzerApp] webview-new-tab event received, URL:', url);
       this.createNewTab(url);
     });
   }

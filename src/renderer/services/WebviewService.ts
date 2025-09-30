@@ -47,7 +47,6 @@ export class WebviewService implements IWebviewService {
       this.webviewsContainer.appendChild(webview);
       this.setupWebviewEvents(webview);
 
-      console.log('[WebviewService] Webview created:', webviewId);
       return webview;
     } catch (error) {
       console.error('🔴 [WebviewService] Error creating webview:', error);
@@ -159,11 +158,17 @@ export class WebviewService implements IWebviewService {
     webview.addEventListener('new-window', (e: any) => {
       this.handleNewWindow(webview, e);
     });
+    
+    webview.addEventListener('will-attach-webview', (e: any) => {
+      e.preventDefault();
+      if (e.params && e.params.src) {
+        window.dispatchEvent(new CustomEvent('webview-new-tab', { detail: { url: e.params.src } }));
+      }
+    });
     webview.addEventListener('permission-request', (e: any) => {
       this.handlePermissionRequest(webview, e);
     });
     webview.addEventListener('certificate-error', (e: any) => {
-      console.log('[WebviewService] Certificate error for:', e.url);
     });
     webview.addEventListener('ipc-message', (event: any) => {
       console.log('[WebviewService] Received ipc-message from webview:', webview.id, 'channel:', event.channel);
@@ -239,6 +244,8 @@ export class WebviewService implements IWebviewService {
   }
 
   private handleNewWindow(webview: any, e: any): void {
+    e.preventDefault();
+    
     const isAuthFlow = e.url && (
       e.url.includes('accounts.google.com') ||
       e.url.includes('login.microsoftonline.com') ||

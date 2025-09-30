@@ -307,13 +307,15 @@ export class WindowManager {
       this.logCrash('Browser window became unresponsive');
     });
 
-    // Handle external links
     this.mainWindow.webContents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith('https://chrome.google.com/webstore')) {
         shell.openExternal(url);
         return { action: 'deny' };
       }
-      return { action: 'allow' };
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send(IPC_CHANNELS.MENU_NEW_TAB_WITH_URL, url);
+      }
+      return { action: 'deny' };
     });
 
     // Setup context menu handling for webviews
@@ -360,19 +362,22 @@ export class WindowManager {
   private setupContextMenuHandling(): void {
     if (!this.mainWindow) return;
 
-    // Listen for context menu events from all webContents (including webviews)
     app.on('web-contents-created', (event, webContents) => {
+      webContents.setWindowOpenHandler(({ url, frameName, disposition }) => {
+        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+          this.mainWindow.webContents.send(IPC_CHANNELS.MENU_NEW_TAB_WITH_URL, url);
+        }
+        return { action: 'deny' };
+      });
+      
       webContents.on('context-menu', (event, params) => {
-        // Create context menu based on what was right-clicked
         const menuTemplate = [];
 
-        // Navigation items
         if (params.linkURL) {
           menuTemplate.push(
             { 
               label: 'Open Link', 
               click: () => {
-                // Navigate current webview to the link
                 webContents.loadURL(params.linkURL);
               }
             },
