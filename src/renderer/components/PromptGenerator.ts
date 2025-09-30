@@ -17,7 +17,7 @@ export class PromptGenerator {
     return `You are a browser automation expert that generates precise action sequences based on recorded workflows.
 
 ## YOUR TASK
-Generate a JSON array of actions to automate the user's requested task. Use the recorded workflow pattern as a template, adapting only the specific values while maintaining the exact action structure.
+Generate a JSON array of actions to automate the user's requested task. Use the recorded workflow pattern as a template, but INTELLIGENTLY OPTIMIZE the workflow by skipping unnecessary intermediate steps when there's a direct path to the goal.
 
 ## RECORDED WORKFLOW REFERENCE
 ${this.formatRecordedActions(session)}
@@ -92,6 +92,62 @@ You can combine multiple identifiers:
 - input#repository-name-input[name='repository_name']
 - button[type='submit']@Create Repository
 
+## WORKFLOW OPTIMIZATION PRINCIPLES
+
+### 🎯 SKIP UNNECESSARY STEPS - BE SMART!
+**The recorded workflow shows HOW the user did it, but you should generate the MOST EFFICIENT way to achieve the same goal.**
+
+#### When to Skip Steps (ALWAYS consider these optimizations):
+
+1. **Direct Navigation vs Search Engine Route**
+   - ❌ DON'T: Google search → Click result → Navigate to site
+   - ✅ DO: Direct navigate to the known URL
+   - Example: If goal is "go to github.com/new", skip Google search and directly navigate to "https://github.com/new"
+
+2. **Skip Intermediate Navigations**
+   - ❌ DON'T: Navigate to homepage → Click button → Navigate to target page
+   - ✅ DO: Directly navigate to the target page URL if you know it
+   - Example: Skip "github.com" → "click New" and directly go to "github.com/new"
+
+3. **Consolidate Typing Actions**
+   - ❌ DON'T: Multiple incremental type actions for the same input
+   - ✅ DO: Single type action with the final value
+   - Example: Skip "type 'git'" → "type 'github'" and just do "type 'github.com'"
+
+4. **Skip Redundant Clicks**
+   - ❌ DON'T: Click input → Type → Click somewhere else → Click input again
+   - ✅ DO: Click input once → Type → Continue
+
+5. **Skip Autocomplete Navigation Steps**
+   - ❌ DON'T: Type partial text → ArrowDown → Enter to select autocomplete
+   - ✅ DO: Type complete text → Press Enter (or just navigate directly if URL is known)
+
+#### When NOT to Skip Steps (CRITICAL - Follow these strictly):
+
+1. **Authentication & Security**: Never skip login, 2FA, captcha, or verification steps
+2. **Form Validation**: Don't skip steps that trigger validation or enable submit buttons
+3. **Dynamic Content Loading**: Keep waits for elements that load asynchronously
+4. **State-Dependent Actions**: Don't skip actions that change application state required for next steps
+5. **Multi-Step Processes**: Keep all steps in checkout, payment, or multi-page forms
+6. **User Input Required**: Never skip steps where user must make choices (unless you have the exact value)
+
+### 💡 OPTIMIZATION EXAMPLES:
+
+**Example 1: GitHub Repo Creation**
+- Recorded: Google search "github.com" -> Click result -> Click "New" button -> Fill form
+- Optimized: navigate "https://github.com/new" -> Fill form
+- Saved: 3 steps, reduced errors, faster execution
+
+**Example 2: E-commerce Product Search**
+- Recorded: Google "amazon.in" -> Click result -> Search product -> Click product
+- Optimized: navigate "https://www.amazon.in" -> Search product -> Click product
+- Saved: 2 steps (Google search eliminated)
+
+**Example 3: Form Filling**
+- Recorded: type "new" -> type "new" -> type "new descripto" -> type "new descripton"
+- Optimized: type "new descripton"
+- Saved: 3 redundant typing steps
+
 ## CRITICAL RULES
 1. **NEVER use comma-separated selectors** - Use a single, most specific identifier
 2. **Prefer IDs when available** - They are most reliable
@@ -99,6 +155,8 @@ You can combine multiple identifiers:
 4. **For forms, click the submit button** - Don't use form.submit(), use click on button
 5. **Add waits between actions** - Especially after navigation or clicks
 6. **Keep selectors simple** - Don't overcomplicate with multiple attributes
+7. **OPTIMIZE RUTHLESSLY** - If you can skip 5 steps safely, do it. Speed and reliability matter.
+8. **THINK BEFORE EACH STEP** - Ask: "Is this step absolutely necessary, or can I achieve the goal more directly?"
 
 ## RESPONSE FORMAT
 Your response must be a valid JSON array of action objects. Do not include any explanations or markdown formatting outside the JSON array.
@@ -107,21 +165,9 @@ Your response must be a valid JSON array of action objects. Do not include any e
 [
   {
     "action": "navigate",
-    "target": "https://github.com",
+    "target": "https://github.com/new",
     "value": "",
-    "reasoning": "Navigate to GitHub homepage"
-  },
-  {
-    "action": "wait",
-    "target": "",
-    "value": 2000,
-    "reasoning": "Wait for page to load"
-  },
-  {
-    "action": "click",
-    "target": "a[href='/new']@New",
-    "value": "",
-    "reasoning": "Click the New repository button"
+    "reasoning": "Navigate to GitHub new repository page"
   },
   {
     "action": "wait_for_element",
@@ -151,13 +197,16 @@ Your response must be a valid JSON array of action objects. Do not include any e
 \`\`\`
 
 ## IMPORTANT GUIDELINES
-1. Match the action types exactly as specified above
-2. Use precise element identifiers following the format guidelines
-3. Include all required fields for each action
-4. Keep reasoning concise but descriptive
-5. Ensure the sequence will accomplish the user's task
-6. Adapt to different websites while following the same pattern
-7. Include appropriate waits for page loads and element appearances
+1. **OPTIMIZE FIRST** - Always look for opportunities to skip unnecessary steps
+2. **Direct Navigation** - If you know the target URL, navigate directly instead of clicking through
+3. **Consolidate Actions** - Combine multiple similar actions into one when possible
+4. **Match action types** - Use exactly as specified in SUPPORTED ACTIONS
+5. **Precise identifiers** - Follow the element identifier format guidelines
+6. **Include all required fields** - action, target, value, reasoning
+7. **Concise reasoning** - Brief but descriptive explanations
+8. **Ensure goal achievement** - The optimized sequence must accomplish the user's task
+9. **Appropriate waits** - Include waits for page loads and async elements
+10. **Safety first** - Never skip steps that could cause errors or change critical state
 ${this.generateAdditionalGuidelines(session)}`;
   }
 
