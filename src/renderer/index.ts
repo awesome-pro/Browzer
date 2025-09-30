@@ -493,7 +493,6 @@ class BrowzerApp {
   }
 
   private setupWebviewEventListeners(): void {
-    // Listen for webview title updates
     window.addEventListener('webview-title-updated', (e: any) => {
       const { webviewId, title } = e.detail;
       const webview = document.getElementById(webviewId) as any;
@@ -535,19 +534,19 @@ class BrowzerApp {
 
   private setupWebviewTitleAndFaviconListeners(webview: any): void {
     try {
-      // Title update listener
       webview.addEventListener('page-title-updated', (e: any) => {
         this.tabService.updateTabTitle(webview, e.title);
       });
 
-      // Favicon update listener
       webview.addEventListener('page-favicon-updated', (e: any) => {
         if (e.favicons && e.favicons.length > 0) {
-          this.tabService.updateTabFavicon(webview, e.favicons[0]);
+          const validFavicon = e.favicons.find((f: string) => f && f !== 'about:blank');
+          if (validFavicon) {
+            this.tabService.updateTabFavicon(webview, validFavicon);
+          }
         }
       });
 
-      // Alternative title listeners for different events
       webview.addEventListener('did-finish-load', async () => {
         try {
           const title = await webview.executeJavaScript('document.title');
@@ -559,7 +558,6 @@ class BrowzerApp {
         }
       });
 
-      // Navigation listeners to update URL and navigation buttons
       webview.addEventListener('did-navigate', (e: any) => {
         this.tabService.updateTabUrl(this.tabService.getTabIdFromWebviewId(webview.id)!, e.url);
         this.browserService.updateNavigationButtons();

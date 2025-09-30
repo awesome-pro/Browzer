@@ -100,21 +100,6 @@ export class WebviewService implements IWebviewService {
         }
       }, 1000);
 
-      setTimeout(async () => {
-        try {
-          const favicon = await webview.executeJavaScript(`
-            (function() {
-              const favicon = document.querySelector('link[rel*="icon"]');
-              return favicon ? favicon.href : null;
-            })()
-          `);
-          if (favicon) {
-            this.handleFaviconUpdate(webview, favicon);
-          }
-        } catch (error) {
-          console.log('[WebviewService] Could not get favicon via JS execution:', error);
-        }
-      }, 1500);
     });
 
 
@@ -182,6 +167,14 @@ export class WebviewService implements IWebviewService {
     const tabElement = this.getTabElementByWebviewId(webview.id);
     if (tabElement) {
       tabElement.classList.add('loading');
+      
+      // Clear the favicon when starting to load a new page
+      const tabId = webview.id.replace('webview-', '');
+      const faviconContainer = tabElement.querySelector('.tab-favicon') as HTMLElement;
+      if (faviconContainer) {
+        // Keep the old favicon visible while loading, but prepare to replace it
+        faviconContainer.classList.remove('favicon-error');
+      }
     }
   }
 
@@ -192,10 +185,54 @@ export class WebviewService implements IWebviewService {
     window.dispatchEvent(titleEvent);
   }
   private handleFaviconUpdate(webview: any, faviconUrl: string): void {
+    // Validate favicon URL
+    if (!faviconUrl || faviconUrl === 'about:blank') {
+      return;
+    }
+    
     const faviconEvent = new CustomEvent('webview-favicon-updated', {
       detail: { webviewId: webview.id, faviconUrl: faviconUrl }
     });
     window.dispatchEvent(faviconEvent);
+  }
+  
+  private async extractFavicon(webview: any): Promise<void> {
+    try {
+      // Wait a bit for the page to fully load
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      const favicon = await webview.executeJavaScript(`
+        (function() {
+          // Try multiple methods to get favicon
+          let faviconUrl = null;
+          
+          // Method 1: Look for link tags with rel="icon" or rel="shortcut icon"
+          const iconLink = document.querySelector('link[rel~="icon"]') || 
+                          document.querySelector('link[rel~="shortcut icon"]') ||
+                          document.querySelector('link[rel~="apple-touch-icon"]');
+          
+          if (iconLink && iconLink.href) {
+            faviconUrl = iconLink.href;
+          }
+          
+          // Method 2: Try default /favicon.ico
+          if (!faviconUrl) {
+            const origin = window.location.origin;
+            if (origin && origin !== 'null') {
+              faviconUrl = origin + '/favicon.ico';
+            }
+          }
+          
+          return faviconUrl;
+        })()
+      `);
+      
+      if (favicon) {
+        this.handleFaviconUpdate(webview, favicon);
+      }
+    } catch (error) {
+      // Silently fail - favicon is not critical
+    }
   }
 
   private notifyTabUrlChange(webview: any, url: string): void {
@@ -222,7 +259,11 @@ export class WebviewService implements IWebviewService {
 
     if (url && url !== 'about:blank' && !url.startsWith('file://')) {
       this.historyService.addVisit(url, webviewTitle);
-    } 
+    }
+    
+    // Try to get favicon after page loads
+    this.extractFavicon(webview);
+    
     setTimeout(() => {
       if (webview && !webview.isDestroyed && webview.executeJavaScript) {
         this.adBlockService.injectAdBlockCSS(webview);

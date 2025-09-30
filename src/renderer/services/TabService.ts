@@ -186,7 +186,7 @@ export class TabService implements ITabService {
   
       const initialTitle = title || this.getInitialTitle(url);
       tab.innerHTML = `
-        <div class="tab-favicon loading"></div>
+        <div class="tab-favicon"></div>
         <span class="tab-title">${initialTitle}</span>
         <button class="tab-close">×</button>
       `;
@@ -460,18 +460,40 @@ export class TabService implements ITabService {
       if (!tabId) return;
       
       const faviconContainer = document.querySelector(`#${tabId} .tab-favicon`) as HTMLElement;
+      const tabElement = document.getElementById(tabId);
+      
       if (faviconContainer && faviconUrl) {
-        faviconContainer.style.backgroundImage = `url(${faviconUrl})`;
-        faviconContainer.style.backgroundSize = '16px 16px';
-        faviconContainer.style.backgroundRepeat = 'no-repeat';
-        faviconContainer.style.backgroundPosition = 'center';
-        faviconContainer.classList.add('has-favicon');
-        
-        // Remove any default favicon styles
-        faviconContainer.classList.remove('loading');
+        // Create an image to test if the favicon loads successfully
+        const img = new Image();
+        img.onload = () => {
+          // Favicon loaded successfully
+          faviconContainer.style.backgroundImage = `url(${faviconUrl})`;
+          faviconContainer.classList.add('has-favicon');
+          faviconContainer.classList.remove('favicon-error');
+        };
+        img.onerror = () => {
+          // Favicon failed to load, use default
+          faviconContainer.style.backgroundImage = '';
+          faviconContainer.classList.remove('has-favicon');
+          faviconContainer.classList.add('favicon-error');
+        };
+        img.src = faviconUrl;
       }
     } catch (error) {
       console.error('[TabService] Error updating favicon:', error);
+    }
+  }
+  
+  public clearTabFavicon(tabId: string): void {
+    try {
+      const faviconContainer = document.querySelector(`#${tabId} .tab-favicon`) as HTMLElement;
+      if (faviconContainer) {
+        faviconContainer.style.backgroundImage = '';
+        faviconContainer.classList.remove('has-favicon');
+        faviconContainer.classList.remove('favicon-error');
+      }
+    } catch (error) {
+      console.error('[TabService] Error clearing favicon:', error);
     }
   }
 
