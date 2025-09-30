@@ -777,7 +777,11 @@ export class ExecuteStepRunner {
           if (!element) {
             return { success: false, error: 'No element found for keypress' };
           }
+          
+          // Ensure element is focused
           element.focus();
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
           const keyCodes = {
             'Enter': 13,
             'Tab': 9,
@@ -792,27 +796,125 @@ export class ExecuteStepRunner {
           };
           
           const keyCode = keyCodes[key] || key.charCodeAt(0);
-          const keydownEvent = new KeyboardEvent('keydown', {
-            key: key,
-            keyCode: keyCode,
-            bubbles: true,
-            cancelable: true
-          });
+          const code = key === 'Enter' ? 'Enter' : key;
           
-          const keyupEvent = new KeyboardEvent('keyup', {
+          // Create comprehensive keyboard events with all necessary properties
+          const eventOptions = {
             key: key,
+            code: code,
             keyCode: keyCode,
+            which: keyCode,
+            charCode: keyCode,
             bubbles: true,
-            cancelable: true
-          });
+            cancelable: true,
+            composed: true,
+            view: window
+          };
           
+          // Dispatch keydown event
+          const keydownEvent = new KeyboardEvent('keydown', eventOptions);
           element.dispatchEvent(keydownEvent);
+          
+          // Dispatch keypress event (for older browsers/libraries)
+          try {
+            const keypressEvent = new KeyboardEvent('keypress', eventOptions);
+            element.dispatchEvent(keypressEvent);
+          } catch (e) {
+            console.warn('[Keypress] keypress event not supported:', e);
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, 50));
+          
+          // Dispatch keyup event
+          const keyupEvent = new KeyboardEvent('keyup', eventOptions);
           element.dispatchEvent(keyupEvent);
-          if (key === 'Enter' && element.tagName === 'INPUT') {
+          
+          // Special handling for Enter key
+          if (key === 'Enter') {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Try multiple submission strategies
+            let submitted = false;
+            
+            // Strategy 1: Find and click submit button in the form
             const form = element.closest('form');
             if (form) {
-              form.dispatchEvent(new Event('submit', { bubbles: true }));
+              const submitButton = form.querySelector('button[type="submit"], input[type="submit"]');
+              if (submitButton && !submitButton.disabled) {
+                console.log('[Keypress] Clicking submit button');
+                submitButton.click();
+                submitted = true;
+              } else {
+                // Strategy 2: Dispatch submit event on form
+                console.log('[Keypress] Dispatching submit event on form');
+                const submitEvent = new Event('submit', { 
+                  bubbles: true, 
+                  cancelable: true 
+                });
+                form.dispatchEvent(submitEvent);
+                submitted = true;
+              }
             }
+            
+            // Strategy 3: Look for search buttons near the input (Amazon/Flipkart pattern)
+            if (!submitted) {
+              const searchButtonSelectors = [
+                'input[type="submit"]',
+                'button[type="submit"]',
+                'input[value*="Search"]',
+                'input[value*="search"]',
+                'button.nav-search-submit-button',
+                'input.nav-input',
+                'button[aria-label*="Search"]',
+                'button[aria-label*="search"]',
+                '.search-button',
+                '.submit-button'
+              ];
+              
+              for (const selector of searchButtonSelectors) {
+                const searchButton = document.querySelector(selector);
+                if (searchButton && !searchButton.disabled) {
+                  const rect = searchButton.getBoundingClientRect();
+                  const elementRect = element.getBoundingClientRect();
+                  
+                  // Check if button is near the input (within 200px)
+                  const distance = Math.abs(rect.left - elementRect.right) + Math.abs(rect.top - elementRect.top);
+                  if (distance < 200) {
+                    console.log('[Keypress] Clicking nearby search button:', selector);
+                    searchButton.click();
+                    submitted = true;
+                    break;
+                  }
+                }
+              }
+            }
+            
+            // Strategy 4: Trigger React/Vue synthetic events
+            if (!submitted) {
+              console.log('[Keypress] Triggering React/Vue synthetic events');
+              
+              // Trigger input event (for React controlled components)
+              element.dispatchEvent(new Event('input', { bubbles: true }));
+              
+              // Trigger change event
+              element.dispatchEvent(new Event('change', { bubbles: true }));
+              
+              // Try to trigger form submission again
+              if (form) {
+                // Create a more comprehensive submit event
+                const nativeSubmit = form.submit;
+                if (typeof nativeSubmit === 'function') {
+                  try {
+                    nativeSubmit.call(form);
+                    submitted = true;
+                  } catch (e) {
+                    console.warn('[Keypress] Native form.submit() failed:', e);
+                  }
+                }
+              }
+            }
+            
+            console.log('[Keypress] Enter key handling completed, submitted:', submitted);
           }
           
           return {
@@ -821,7 +923,8 @@ export class ExecuteStepRunner {
             key: key,
             element: {
               tagName: element.tagName,
-              id: element.id
+              id: element.id,
+              name: element.name
             }
           };
         } catch (error) {
@@ -836,7 +939,13 @@ export class ExecuteStepRunner {
       throw new Error(`Keypress failed: ${result.error}`);
     }
     
-    await this.wait(500);
+    // Wait longer for search results to load
+    if (key === 'Enter') {
+      await this.wait(2000);
+    } else {
+      await this.wait(500);
+    }
+    
     return result;
   }
 
