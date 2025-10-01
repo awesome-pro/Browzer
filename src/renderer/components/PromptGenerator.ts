@@ -207,6 +207,7 @@ Your response must be a valid JSON array of action objects. Do not include any e
 8. **Ensure goal achievement** - The optimized sequence must accomplish the user's task
 9. **Appropriate waits** - Include waits for page loads and async elements
 10. **Safety first** - Never skip steps that could cause errors or change critical state
+11. **Navigation over click** - If a click leads to navigation and you are confirmed of target URL, navigate directly instead of clicking.
 ${this.generateAdditionalGuidelines(session)}`;
   }
 

@@ -383,6 +383,8 @@ export class ExecuteStepRunner {
         const textContent = ${JSON.stringify(elementInfo.text || '')};
         
         console.log('[FindElement] Trying selectors:', selectors);
+        
+        // First, try all provided selectors
         for (const selector of selectors) {
           try {
             const elements = document.querySelectorAll(selector);
@@ -403,20 +405,62 @@ export class ExecuteStepRunner {
             console.warn('[FindElement] Selector failed:', selector, e.message);
           }
         }
+        
+        // If selector has ID, try alternative element types (input -> button, button -> input)
+        const idMatch = selectors[0]?.match(/#([^.\\[\\s@]+)/);
+        if (idMatch) {
+          const id = idMatch[1];
+          const alternativeSelectors = [
+            '#' + id,
+            'button#' + id,
+            'input#' + id,
+            'a#' + id,
+            '[id="' + id + '"]'
+          ];
+          
+          console.log('[FindElement] Trying alternative selectors for ID:', alternativeSelectors);
+          for (const altSelector of alternativeSelectors) {
+            try {
+              const element = document.querySelector(altSelector);
+              if (element) {
+                const rect = element.getBoundingClientRect();
+                const style = window.getComputedStyle(element);
+                
+                // Check if element is visible
+                if (rect.width > 0 && rect.height > 0 && 
+                    style.display !== 'none' && style.visibility !== 'hidden') {
+                  console.log('[FindElement] Found element with alternative selector:', altSelector);
+                  return { found: true, selector: altSelector, hasText: false, isAlternative: true };
+                }
+              }
+            } catch (e) {
+              console.warn('[FindElement] Alternative selector failed:', altSelector);
+            }
+          }
+        }
+        
+        // Try finding by text content
         if (textContent) {
           const allElements = document.querySelectorAll('*');
           for (const el of allElements) {
             if (el.textContent && el.textContent.trim() === textContent.trim()) {
-              console.log('[FindElement] Found element by text only');
-              const tag = el.tagName.toLowerCase();
-              const id = el.id ? '#' + el.id : '';
-              const className = el.className ? '.' + el.className.split(' ')[0] : '';
-              return { 
-                found: true, 
-                selector: tag + id + className,
-                hasText: true,
-                byTextOnly: true 
-              };
+              const rect = el.getBoundingClientRect();
+              const style = window.getComputedStyle(el);
+              
+              // Check if element is visible
+              if (rect.width > 0 && rect.height > 0 && 
+                  style.display !== 'none' && style.visibility !== 'hidden') {
+                console.log('[FindElement] Found element by text only');
+                const tag = el.tagName.toLowerCase();
+                const id = el.id ? '#' + el.id : '';
+                const className = el.className ? '.' + el.className.split(' ')[0] : '';
+                return { 
+                  found: true, 
+                  selector: tag + id + className,
+                  hasText: true,
+                  byTextOnly: true 
+                };
+              }
             }
           }
         }
@@ -970,6 +1014,7 @@ export class ExecuteStepRunner {
           const selectors = ${JSON.stringify(selectors)};
           
           const check = () => {
+            // Try original selectors first
             for (const selector of selectors) {
               try {
                 const element = document.querySelector(selector);
@@ -991,10 +1036,47 @@ export class ExecuteStepRunner {
               }
             }
             
+            // Try alternative element types if ID is present
+            const idMatch = selectors[0]?.match(/#([^.\\[\\s@]+)/);
+            if (idMatch) {
+              const id = idMatch[1];
+              const alternativeSelectors = [
+                '#' + id,
+                'button#' + id,
+                'input#' + id,
+                'a#' + id,
+                '[id="' + id + '"]'
+              ];
+              
+              for (const altSelector of alternativeSelectors) {
+                try {
+                  const element = document.querySelector(altSelector);
+                  if (element) {
+                    const rect = element.getBoundingClientRect();
+                    const style = window.getComputedStyle(element);
+                    
+                    if (rect.width > 0 && rect.height > 0 && 
+                        style.display !== 'none' && style.visibility !== 'hidden') {
+                      console.log('[WaitForElement] Found with alternative selector:', altSelector);
+                      resolve({
+                        success: true,
+                        message: 'Element found with alternative selector',
+                        selector: altSelector,
+                        isAlternative: true
+                      });
+                      return;
+                    }
+                  }
+                } catch (e) {
+                }
+              }
+            }
+            
             if (Date.now() - startTime > timeout) {
               resolve({
                 success: false,
-                error: 'Timeout waiting for element'
+                error: 'Timeout waiting for element',
+                triedSelectors: selectors
               });
               return;
             }
@@ -1010,7 +1092,7 @@ export class ExecuteStepRunner {
     const result = await this.webview.executeJavaScript(script);
     
     if (!result.success) {
-      throw new Error(`Wait for element failed: ${result.error}`);
+      throw new Error(`Wait for element failed: ${result.error}. Tried selectors: ${result.triedSelectors?.join(', ')}`);
     }
     
     return result;
