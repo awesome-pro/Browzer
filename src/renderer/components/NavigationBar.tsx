@@ -5,6 +5,8 @@ import { cn } from '../lib/utils';
 import { useSidebarStore } from '../store/useSidebarStore';
 import { useRecording } from '../hooks/useRecording';
 import { Input } from '../ui/input';
+import ThemeToggle from '../ui/theme-toggle';
+import { Button } from '../ui/button';
 
 interface NavigationBarProps {
   activeTab: TabInfo | null;
@@ -107,63 +109,39 @@ export function NavigationBar({
       </div>
 
       {/* Record Button */}
-      <button
-        onClick={toggleRecording}
-        className={cn(
-          'flex items-center justify-center w-8 h-8 rounded-full  transition-colors text-red-500',
-          isRecording ? 'animate-pulse' : ''
-        )}
-        title={isRecording ? 'Stop Recording' : 'Start Recording'}
-      >
+      <Button variant="outline" size="icon" onClick={toggleRecording} title={isRecording ? 'Stop Recording' : 'Start Recording'}>
         {isRecording ? (
           <Square className="w-4 h-4 fill-current" />
         ) : (
           <Circle className="w-4 h-4 bg-red-500 rounded-full hover:bg-red-700" />
         )}
-      </button>
+      </Button>
 
       {/* History Button */}
-      <button
-        onClick={() => onNavigate('browzer://history')}
-        className="flex items-center justify-center w-8 h-8 rounded-full transition-colors hover:text-gray-700 text-gray-500"
-        title="History"
-      >
+      <Button variant="outline" size="icon" onClick={() => onNavigate('browzer://history')} title="History">
         <Clock className="w-4 h-4" />
-      </button>
+      </Button>
 
       {/* Profile Button */}
-      <button
-        onClick={() => onNavigate('browzer://profile')}
-        className="flex items-center justify-center w-8 h-8 rounded-full transition-colors hover:text-gray-700 text-gray-500"
-        title="Profile"
-      >
+      <Button variant="outline" size="icon" onClick={() => onNavigate('browzer://profile')} title="Profile">
         <User className="w-4 h-4" />
-      </button>
+      </Button>
 
       {/* Settings Button */}
-      <button
-        onClick={() => onNavigate('browzer://settings')}
-        className="flex items-center justify-center w-8 h-8 rounded-full transition-colors hover:text-gray-700 text-gray-500"
-        title="Settings"
-      >
+      <Button variant="outline" size="icon" onClick={() => onNavigate('browzer://settings')} title="Settings">
         <Settings className="w-4 h-4" />
-      </button>
+      </Button>
+
+      <ThemeToggle />
 
       {/* Sidebar Toggle Button */}
-      <button
-        onClick={toggleSidebar}
-        className={cn(
-          'flex items-center justify-center w-8 h-8 rounded-full transition-colors hover:text-blue-500',
-          isSidebarVisible ? 'text-blue-400' : 'text-gray-400'
-        )}
-        title={isSidebarVisible ? 'Hide Agent Panel' : 'Show Agent Panel'}
-      >
+      <Button variant="outline" size="icon" onClick={toggleSidebar} title={isSidebarVisible ? 'Hide Agent Panel' : 'Show Agent Panel'}>
         {isSidebarVisible ? (
           <PanelRightClose className="w-4 h-4" />
         ) : (
           <PanelRightOpen className="w-4 h-4" />
         )}
-      </button>
+      </Button>
     </div>
   );
 }

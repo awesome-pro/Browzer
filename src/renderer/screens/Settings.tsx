@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2Icon } from 'lucide-react';
 import type { AppSettings } from '../../preload';
+import ThemeToggle from '../ui/theme-toggle';
 
 export function Settings() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -51,6 +52,7 @@ export function Settings() {
   return (
     <main className='flex items-center justify-center'>
       <h1>Settings</h1>
+      <ThemeToggle />
     </main>
   );
 }
