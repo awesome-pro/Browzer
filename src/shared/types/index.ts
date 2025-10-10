@@ -1,145 +1,305 @@
-// Shared types across main and renderer processes
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
-export interface Tab {
-  id: string;
-  url: string;
-  title: string;
-  favicon?: string;
-  isActive: boolean;
-  webviewId?: string;
-  canGoBack?: boolean;
-  canGoForward?: boolean;
+/**
+ * Shared types for recording functionality
+ * Used across main process, preload, and renderer
+ */
+
+/**
+ * Selector strategy with confidence score
+ */
+export interface SelectorStrategy {
+  strategy: 'id' | 'data-testid' | 'data-cy' | 'aria-label' | 'role' | 'text' | 'css' | 'xpath';
+  selector: string;
+  score: number; // 0-100, higher is more reliable
+  description?: string;
 }
 
-export interface Extension {
+/**
+ * Enhanced target information with multiple selector strategies
+ */
+export interface ElementTarget {
+  // Primary selector (best one)
+  selector: string;
+  
+  // Multiple selector strategies for fallback
+  selectors?: SelectorStrategy[];
+  
+  // Element identification
+  tagName: string;
+  id?: string;
+  className?: string;
+  name?: string;
+  type?: string; // input type, button type, etc.
+  
+  // Semantic attributes
+  role?: string;
+  ariaLabel?: string;
+  ariaDescribedBy?: string;
+  title?: string;
+  placeholder?: string;
+  
+  // Content
+  text?: string;
+  value?: string;
+  href?: string; // for links
+  
+  // Data attributes (for testing)
+  dataTestId?: string;
+  dataCy?: string;
+  
+  // Visual properties
+  boundingRect?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+  };
+  isVisible?: boolean;
+  
+  // Computed properties
+  isInteractive?: boolean; // Is this element clickable/interactive?
+  interactiveParent?: ElementTarget; // If clicked element is non-interactive, this is the interactive parent
+}
+
+export interface RecordedAction {
+  type: 'click' | 'input' | 'navigate' | 'keypress' | 'submit' | 'select' | 'checkbox' | 'radio' | 'toggle' | 'file-upload';
+  timestamp: number;
+  target?: ElementTarget;
+  value?: string | string[] | boolean;
+  url?: string;
+  position?: { x: number; y: number };
+  metadata?: Record<string, any>;
+
+  // Verification metadata (added by ActionRecorder)
+  verified?: boolean;
+  verificationTime?: number;
+  effects?: ClickEffects;
+}
+
+/**
+ * Comprehensive click effect tracking
+ */
+export interface ClickEffects {
+  // Navigation effects
+  navigation?: {
+    occurred: boolean;
+    url?: string;
+    type?: 'full' | 'spa' | 'hash'; // Full page reload, SPA navigation, or hash change
+    timing?: number; // ms after click
+  };
+  
+  // Network activity
+  network?: {
+    requestCount: number;
+    requests?: Array<{
+      url: string;
+      method: string;
+      status?: number;
+      type?: string; // xhr, fetch, document, etc.
+      timing: number; // ms after click
+    }>;
+  };
+  
+  // DOM changes
+  dom?: {
+    mutationCount: number;
+    addedNodes?: number;
+    removedNodes?: number;
+    attributeChanges?: number;
+    significantChanges?: boolean; // Large structural changes
+  };
+  
+  // Modal/Overlay/Dialog detection
+  modal?: {
+    appeared: boolean;
+    type?: 'modal' | 'dialog' | 'dropdown' | 'popover' | 'sheet' | 'toast';
+    selector?: string;
+    role?: string;
+    ariaLabel?: string;
+    timing?: number;
+  };
+  
+  // Form submission
+  formSubmit?: {
+    occurred: boolean;
+    formSelector?: string;
+    method?: string;
+    action?: string;
+    timing?: number;
+  };
+  
+  // Element state changes
+  stateChange?: {
+    occurred: boolean;
+    type?: 'toggle' | 'expand' | 'collapse' | 'select' | 'activate' | 'disable';
+    targetChanged?: boolean; // Did the clicked element itself change?
+    ariaExpanded?: boolean;
+    ariaSelected?: boolean;
+    ariaChecked?: boolean;
+    classChanges?: string[]; // Classes added/removed
+  };
+  
+  // Focus changes
+  focus?: {
+    changed: boolean;
+    newFocusSelector?: string;
+    newFocusTagName?: string;
+  };
+  
+  // Scroll behavior
+  scroll?: {
+    occurred: boolean;
+    direction?: 'vertical' | 'horizontal' | 'both';
+    distance?: number;
+  };
+  
+  // Download triggered
+  download?: {
+    occurred: boolean;
+    filename?: string;
+  };
+  
+  // New window/tab
+  newWindow?: {
+    occurred: boolean;
+    url?: string;
+  };
+  
+  // Summary
+  summary?: string; // Human-readable effect description for LLM
+}
+
+export interface RecordingSession {
   id: string;
   name: string;
-  enabled: boolean;
-  path?: string;
+  description?: string;
+  actions: RecordedAction[];
+  createdAt: number;
+  duration: number; // in milliseconds
+  actionCount: number;
+  url?: string; // Starting URL
 }
 
-export interface AgentParams {
-  query: string;
-  pageContent?: PageContent;
-  urls?: string[];
-  modelInfo?: ModelInfo;
-  conversationHistory?: ConversationMessage[];
-  isQuestion?: boolean;
+// -------- USER MODEL --------
+
+/**
+ * User Model
+ * Represents a user with all standard attributes
+ */
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  avatar?: string;
+  isVerified: boolean;
+
+  createdAt: number;
+  verifiedAt?: number;
+  lastLoginAt?: number;
+  
+  subscription: Subscription;
+  preferences: UserPreferences;
+  metadata?: Record<string, unknown>;
 }
 
-export interface PageContent {
-  title: string;
-  content: string;
-  url: string;
-  metadata?: Record<string, any>;
-}
-
-export interface ModelInfo {
-  provider: string;
-  model: string;
-  apiKey?: string;
-}
-
-export interface ConversationMessage {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp: number;
-}
-
-export interface AgentResult {
-  success: boolean;
-  data?: any;
-  error?: string;
-  timing?: {
-    start: number;
-    end: number;
-    duration: number;
+/**
+ * Session Model
+ * Represents an active user session
+ */
+export interface Session {
+  sessionId: string;
+  userId: string;
+  createdAt: number;
+  expiresAt: number;
+  lastActivityAt: number;
+  deviceInfo?: {
+    platform: string;
+    version: string;
   };
 }
 
-export interface CacheItem {
-  data: any;
-  originalType: string;
-  type: string;
-  identifier: string;
-  params: Record<string, any>;
-  createdAt: number;
-  expiresAt: number;
-  accessCount: number;
-  lastAccessed: number;
-  size: number;
+export enum SubscriptionStatus {
+  ACTIVE = 'active',
+  INACTIVE = 'inactive',
+  EXPIRED = 'expired',
+  CANCELLED = 'cancelled',
 }
 
-export interface CacheSettings {
-  maxSize: number;
-  maxItems: number;
-  defaultTTL: number;
-  enableCompression: boolean;
-  enableAutoCleanup: boolean;
-  cleanupInterval: number;
-  typeTTLs: Record<string, number>;
+export enum SubscriptionPlan {
+  FREE = 'free',
+  PREMIUM = 'premium',
 }
 
-export interface HistoryItem {
+export interface Subscription {
+  status: SubscriptionStatus;
+  plan: SubscriptionPlan;
+  startnumber?: number;
+  endnumber?: number;
+  trialEndsAt?: number;
+}
+
+export interface UserPreferences {
+  theme: 'light' | 'dark' | 'system';
+  language: string;
+  notifications: boolean;
+}
+
+// -------- HISTORY MODEL --------
+
+/**
+ * History Entry
+ * Represents a single browsing history entry
+ */
+export interface HistoryEntry {
   id: string;
   url: string;
   title: string;
   visitTime: number;
+  visitCount: number;
+  lastVisitTime: number;
   favicon?: string;
+  typedCount: number; // How many times user typed this URL
+  transition: HistoryTransition;
 }
 
-export interface Memory {
-  id: string;
-  url: string;
-  question: string;
-  answer: string;
-  title: string;
-  timestamp: number;
-  keywords: string[];
-  topic: string;
+/**
+ * History Transition Types
+ * Similar to Chrome's transition types
+ */
+export enum HistoryTransition {
+  LINK = 'link',           // User clicked a link
+  TYPED = 'typed',         // User typed URL in address bar
+  AUTO_BOOKMARK = 'auto_bookmark', // Auto-generated bookmark
+  AUTO_SUBFRAME = 'auto_subframe', // Subframe navigation
+  MANUAL_SUBFRAME = 'manual_subframe', // Manual subframe navigation
+  GENERATED = 'generated', // Generated by browser
+  RELOAD = 'reload',       // Page reload
+  KEYWORD = 'keyword',     // Keyword search
+  FORM_SUBMIT = 'form_submit', // Form submission
 }
 
-export const CACHE_TYPES = {
-  PAGE_CONTENT: 'page_content',
-  API_RESPONSE: 'api_response',
-  METADATA: 'metadata',
-  RESOURCES: 'resources',
-  AI_ANALYSIS: 'ai_analysis'
-} as const;
+/**
+ * History Query Options
+ */
+export interface HistoryQuery {
+  text?: string;           // Search text
+  startTime?: number;      // Start timestamp
+  endTime?: number;        // End timestamp
+  maxResults?: number;     // Maximum results to return
+}
 
-export type CacheType = typeof CACHE_TYPES[keyof typeof CACHE_TYPES];
-
-// IPC channel names
-export const IPC_CHANNELS = {
-  // Extension management
-  INSTALL_EXTENSION: 'install-extension',
-  REMOVE_EXTENSION: 'remove-extension',
-  GET_EXTENSIONS: 'get-extensions',
-  INSTALL_FROM_STORE: 'install-from-store',
-  ENABLE_DEVELOPER_MODE: 'enable-developer-mode',
-  
-  // Agent execution (legacy)
-  EXECUTE_AGENT: 'execute-agent',
-  
-  // Extension execution (new framework)
-  EXECUTE_PYTHON_EXTENSION: 'execute-python-extension',
-  
-  // Logging
-  RENDERER_LOG: 'renderer-log',
-  
-  // Menu actions
-  MENU_NEW_TAB: 'menu-new-tab',
-  MENU_NEW_TAB_WITH_URL: 'menu-new-tab-with-url',
-  MENU_CLOSE_TAB: 'menu-close-tab',
-  MENU_RELOAD: 'menu-reload',
-  MENU_BACK: 'menu-back',
-  MENU_FORWARD: 'menu-forward',
-  
-  // Settings menu actions
-  MENU_SETTINGS_API_KEYS: 'menu-settings-api-keys',
-  MENU_SETTINGS_INTERFACE: 'menu-settings-interface',
-  MENU_SETTINGS_AI_MEMORY: 'menu-settings-ai-memory',
-  MENU_SETTINGS_PRIVACY: 'menu-settings-privacy',
-  MENU_SETTINGS_CACHE: 'menu-settings-cache',
-  MENU_SETTINGS_GENERAL: 'menu-settings-general'
-} as const; 
+/**
+ * History Stats
+ */
+export interface HistoryStats {
+  totalEntries: number;
+  totalVisits: number;
+  topDomains: Array<{ domain: string; count: number }>;
+  todayVisits: number;
+  weekVisits: number;
+}
