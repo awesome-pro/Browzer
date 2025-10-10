@@ -4,7 +4,7 @@ import { LayoutManager } from '../window/LayoutManager';
 import { WindowManager } from '../window/WindowManager';
 import { SettingsStore, AppSettings } from '../SettingsStore';
 import { UserService } from '../UserService';
-import { RecordedAction, HistoryQuery } from '../../shared/types';
+import { RecordedAction, HistoryQuery, VideoRecordingMetadata } from '../../shared/types';
 
 /**
  * IPCHandlers - Centralized IPC communication setup
@@ -93,30 +93,37 @@ export class IPCHandlers {
   }
 
   private setupRecordingHandlers(): void {
-    ipcMain.handle('browser:start-recording', async () => {
-      return this.browserManager.startRecording();
+    // Start recording with optional video
+    ipcMain.handle('browser:start-recording', async (_, enableVideo = true) => {
+      return this.browserManager.startRecording(enableVideo);
     });
 
+    // Stop recording - returns actions and video metadata
     ipcMain.handle('browser:stop-recording', async () => {
       return this.browserManager.stopRecording();
     });
 
-    ipcMain.handle('browser:save-recording', async (_, name: string, description: string, actions: RecordedAction[]) => {
-      return this.browserManager.saveRecording(name, description, actions);
+    // Save recording with video metadata
+    ipcMain.handle('browser:save-recording', async (_, name: string, description: string, actions: RecordedAction[], video?: VideoRecordingMetadata) => {
+      return this.browserManager.saveRecording(name, description, actions, video);
     });
 
+    // Get all recordings (includes video metadata)
     ipcMain.handle('browser:get-all-recordings', async () => {
       return this.browserManager.getAllRecordings();
     });
 
+    // Delete recording (includes video file)
     ipcMain.handle('browser:delete-recording', async (_, id: string) => {
       return this.browserManager.deleteRecording(id);
     });
 
+    // Check if recording is active
     ipcMain.handle('browser:is-recording', async () => {
       return this.browserManager.isRecordingActive();
     });
 
+    // Get recorded actions
     ipcMain.handle('browser:get-recorded-actions', async () => {
       return this.browserManager.getRecordedActions();
     });

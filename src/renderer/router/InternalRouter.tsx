@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Settings } from '../screens/Settings';
 import { History } from '../screens/History';
+import { Recordings } from '../screens/Recordings';
 import { Profile } from '../screens/Profile';
 import { SignIn } from '../screens/SignIn';
 import { SignUp } from '../screens/SignUp';
@@ -19,6 +20,11 @@ export const INTERNAL_ROUTES = {
     path: '/history',
     component: History,
     title: 'History',
+  },
+  recordings: {
+    path: '/recordings',
+    component: Recordings,
+    title: 'Recordings',
   },
   profile: {
     path: '/profile',

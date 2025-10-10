@@ -17,7 +17,7 @@ export function SessionsListView({ sessions, onRefresh, onDelete }: SessionsList
     <div className="h-full flex flex-col">
       {/* Header with refresh */}
       <div className="flex items-center justify-between px-4 py-3">
-        <h3 className="text-sm font-medium text-gray-200">Saved Recordings</h3>
+        <h3 className="text-sm font-medium text-black dark:text-white">Saved Recordings</h3>
         <Button
           onClick={onRefresh}
           title="Refresh"

@@ -2,7 +2,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { TabInfo } from './main/BrowserManager';
 import type { AppSettings } from './main/SettingsStore';
-import { User, UserPreferences, HistoryEntry, HistoryQuery, HistoryStats } from './shared/types';
+import { User, UserPreferences, HistoryEntry, HistoryQuery, HistoryStats, RecordingSession, RecordedAction, VideoRecordingMetadata } from './shared/types';
 
 /**
  * Preload script for Agent UI (Browser Chrome)
@@ -34,13 +34,13 @@ export interface BrowserAPI {
   setSidebarState: (visible: boolean, widthPercent: number) => Promise<boolean>;
 
   // Recording Management
-  startRecording: () => Promise<boolean>;
-  stopRecording: () => Promise<{ actions: any[]; duration: number; startUrl: string }>;
-  saveRecording: (name: string, description: string, actions: any[]) => Promise<string>;
-  getAllRecordings: () => Promise<any[]>;
+  startRecording: (enableVideo?: boolean) => Promise<boolean>;
+  stopRecording: () => Promise<{ actions: RecordedAction[]; video?: VideoRecordingMetadata; duration: number; startUrl: string }>;
+  saveRecording: (name: string, description: string, actions: RecordedAction[], video?: VideoRecordingMetadata) => Promise<string>;
+  getAllRecordings: () => Promise<RecordingSession[]>;
   deleteRecording: (id: string) => Promise<boolean>;
   isRecording: () => Promise<boolean>;
-  getRecordedActions: () => Promise<any[]>;
+  getRecordedActions: () => Promise<RecordedAction[]>;
 
   // Settings Management
   getAllSettings: () => Promise<AppSettings>;
@@ -105,10 +105,10 @@ const browserAPI: BrowserAPI = {
   setSidebarState: (visible: boolean, widthPercent: number) => 
     ipcRenderer.invoke('browser:set-sidebar-state', visible, widthPercent),
 
-  startRecording: () => ipcRenderer.invoke('browser:start-recording'),
+  startRecording: (enableVideo?: boolean) => ipcRenderer.invoke('browser:start-recording', enableVideo),
   stopRecording: () => ipcRenderer.invoke('browser:stop-recording'),
-  saveRecording: (name: string, description: string, actions: any[]) => 
-    ipcRenderer.invoke('browser:save-recording', name, description, actions),
+  saveRecording: (name: string, description: string, actions: RecordedAction[], video?: VideoRecordingMetadata) => 
+    ipcRenderer.invoke('browser:save-recording', name, description, actions, video),
   getAllRecordings: () => ipcRenderer.invoke('browser:get-all-recordings'),
   deleteRecording: (id: string) => ipcRenderer.invoke('browser:delete-recording', id),
   isRecording: () => ipcRenderer.invoke('browser:is-recording'),

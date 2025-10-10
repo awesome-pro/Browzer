@@ -1,5 +1,6 @@
 import Store from 'electron-store';
 import { RecordingSession } from '../shared/types';
+import fs from 'node:fs/promises';
 
 interface StoreSchema {
   recordings: RecordingSession[];
@@ -49,19 +50,32 @@ export class RecordingStore {
   }
 
   /**
-   * Delete recording by ID
+   * Delete recording by ID (including video file)
    */
-  deleteRecording(id: string): boolean {
+  async deleteRecording(id: string): Promise<boolean> {
     const recordings = this.store.get('recordings', []);
-    const filtered = recordings.filter(r => r.id !== id);
+    const recording = recordings.find(r => r.id === id);
     
-    if (filtered.length < recordings.length) {
-      this.store.set('recordings', filtered);
-      console.log('🗑️ Recording deleted:', id);
-      return true;
+    if (!recording) {
+      return false;
     }
-    
-    return false;
+
+    // Delete video file if exists
+    if (recording.video?.filePath) {
+      try {
+        await fs.unlink(recording.video.filePath);
+        console.log('🗑️ Video file deleted:', recording.video.fileName);
+      } catch (error) {
+        console.error('Failed to delete video file:', error);
+        // Continue with metadata deletion even if video deletion fails
+      }
+    }
+
+    // Delete metadata
+    const filtered = recordings.filter(r => r.id !== id);
+    this.store.set('recordings', filtered);
+    console.log('🗑️ Recording deleted:', id);
+    return true;
   }
 
   /**
@@ -82,9 +96,22 @@ export class RecordingStore {
   }
 
   /**
-   * Clear all recordings
+   * Clear all recordings (including video files)
    */
-  clearAll(): void {
+  async clearAll(): Promise<void> {
+    const recordings = this.store.get('recordings', []);
+    
+    // Delete all video files
+    for (const recording of recordings) {
+      if (recording.video?.filePath) {
+        try {
+          await fs.unlink(recording.video.filePath);
+        } catch (error) {
+          console.error('Failed to delete video file:', error);
+        }
+      }
+    }
+
     this.store.set('recordings', []);
     console.log('🗑️ All recordings cleared');
   }
@@ -92,15 +119,36 @@ export class RecordingStore {
   /**
    * Get storage statistics
    */
-  getStats(): { count: number; totalActions: number; totalSize: number } {
+  getStats(): { 
+    count: number; 
+    totalActions: number; 
+    totalSize: number;
+    videoCount: number;
+    totalVideoSize: number;
+  } {
     const recordings = this.store.get('recordings', []);
     const totalActions = recordings.reduce((sum, r) => sum + r.actionCount, 0);
     const totalSize = JSON.stringify(recordings).length;
     
+    const videoCount = recordings.filter(r => r.video).length;
+    const totalVideoSize = recordings.reduce((sum, r) => {
+      return sum + (r.video?.fileSize || 0);
+    }, 0);
+    
     return {
       count: recordings.length,
       totalActions,
-      totalSize
+      totalSize,
+      videoCount,
+      totalVideoSize
     };
+  }
+
+  /**
+   * Get video file path for a recording
+   */
+  getVideoPath(id: string): string | null {
+    const recording = this.getRecording(id);
+    return recording?.video?.filePath || null;
   }
 }
