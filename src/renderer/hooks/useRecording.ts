@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useSidebarStore } from '../store/useSidebarStore';
+import { toast } from 'sonner';
 
 /**
  * React hook for action recording
@@ -19,7 +20,7 @@ export function useRecording() {
     if (success) {
       setIsRecording(true);
       setActions([]);
-      
+      toast.success('Recording started successfully');
       // Auto-open sidebar when recording starts
       showSidebar();
     }
@@ -30,6 +31,7 @@ export function useRecording() {
     const recordedActions = await window.browserAPI.stopRecording();
     setIsRecording(false);
     setActions(recordedActions.actions);
+    toast.success('Recording stopped successfully');
     return recordedActions;
   }, []);
 
