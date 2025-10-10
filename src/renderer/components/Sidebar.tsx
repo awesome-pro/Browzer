@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { Bot, Video } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { RecordingView } from './RecordingView';
+import { useSidebarStore } from '../store/useSidebarStore';
 
 /**
  * Sidebar - Agent UI with tabbed interface
@@ -11,23 +12,23 @@ import { RecordingView } from './RecordingView';
  * - Recording tab: Live recording and session history
  */
 export function Sidebar() {
-  const [mainTab, setMainTab] = useState('agent');
+  const { activeTab, setActiveTab } = useSidebarStore();
   
   // Listen for recording events to auto-switch tabs
   useEffect(() => {
     const unsubStart = window.browserAPI.onRecordingStarted(() => {
-      setMainTab('recording');
+      setActiveTab('recording');
     });
     
     return () => unsubStart();
-  }, []);
+  }, [setActiveTab]);
 
   return (
     <div className="h-full w-full flex flex-col ">
       {/* Sidebar Header */}
 
       {/* Main Tabs */}
-      <Tabs value={mainTab} onValueChange={setMainTab} className="flex-1 flex flex-col">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
         <TabsList className="w-full rounded-none p-0 h-auto">
           <TabsTrigger 
             value="agent" 
