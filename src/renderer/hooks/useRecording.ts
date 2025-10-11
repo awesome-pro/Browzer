@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 export function useRecording() {
   const [isRecording, setIsRecording] = useState(false);
   const [actions, setActions] = useState<any[]>([]);
-  const { showSidebar } = useSidebarStore();
+  const { showSidebar, setActiveTab } = useSidebarStore();
 
   // Check recording status on mount
   useEffect(() => {
@@ -21,11 +21,12 @@ export function useRecording() {
       setIsRecording(true);
       setActions([]);
       toast.success('Recording started successfully');
-      // Auto-open sidebar when recording starts
+      // Auto-open sidebar and switch to recording tab when recording starts
+      setActiveTab('recording');
       showSidebar();
     }
     return success;
-  }, [showSidebar]);
+  }, [showSidebar, setActiveTab]);
 
   const stopRecording = useCallback(async () => {
     const recordedActions = await window.browserAPI.stopRecording();
