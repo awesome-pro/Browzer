@@ -185,39 +185,10 @@ export interface RecordingSession {
   url?: string; // Starting URL
   
   // Video recording metadata
-  video?: VideoRecordingMetadata;
-}
-
-/**
- * Video Recording Metadata
- * Contains information about the screen recording
- */
-export interface VideoRecordingMetadata {
-  // File information
-  filePath: string;           // Absolute path to video file
-  fileName: string;           // Video file name
-  fileSize: number;           // Size in bytes
-  
-  // Video properties
-  format: 'webm' | 'mp4';     // Video format
-  codec: string;              // Video codec (e.g., 'vp8', 'vp9', 'h264')
-  duration: number;           // Video duration in milliseconds
-  fps: number;                // Frames per second
-  
-  // Recording metadata
-  startTimestamp: number;     // When recording started (Unix timestamp)
-  endTimestamp: number;       // When recording ended (Unix timestamp)
-  
-  // Display information
-  displayInfo: {
-    width: number;            // Video width
-    height: number;           // Video height
-    scaleFactor: number;      // Display scale factor
-  };
-  
-  // Status
-  status: 'recording' | 'completed' | 'failed' | 'processing';
-  error?: string;             // Error message if failed
+  videoPath?: string; // Absolute path to the video file
+  videoSize?: number; // Video file size in bytes
+  videoFormat?: string; // Video format (e.g., 'webm')
+  videoDuration?: number; // Actual video duration in milliseconds
 }
 
 // -------- USER MODEL --------

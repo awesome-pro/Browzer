@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, desktopCapturer } from 'electron';
 import type { TabInfo } from './main/BrowserManager';
 import type { AppSettings } from './main/SettingsStore';
 import { User, UserPreferences, HistoryEntry, HistoryQuery, HistoryStats, RecordingSession, RecordedAction, VideoRecordingMetadata } from './shared/types';
@@ -32,6 +32,9 @@ export interface BrowserAPI {
 
   // Sidebar Management
   setSidebarState: (visible: boolean, widthPercent: number) => Promise<boolean>;
+  
+  // Desktop Capturer (for video recording)
+  getDesktopSources: () => Promise<Array<{ id: string; name: string; thumbnail: any }>>;
 
   // Recording Management
   startRecording: (enableVideo?: boolean) => Promise<boolean>;
@@ -192,6 +195,22 @@ const browserAPI: BrowserAPI = {
   getHistoryStats: () => ipcRenderer.invoke('history:get-stats'),
   getMostVisited: (limit?: number) => ipcRenderer.invoke('history:get-most-visited', limit),
   getRecentlyVisited: (limit?: number) => ipcRenderer.invoke('history:get-recently-visited', limit),
+  
+  // Desktop Capturer API
+  getDesktopSources: async () => {
+    const sources = await desktopCapturer.getSources({ 
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 150, height: 150 }
+    });
+    return sources.map(source => ({
+      id: source.id,
+      name: source.name,
+      thumbnail: source.thumbnail.toDataURL()
+    }));
+  },
 };
 
 contextBridge.exposeInMainWorld('browserAPI', browserAPI);
+contextBridge.exposeInMainWorld('electronAPI', {
+  getDesktopSources: browserAPI.getDesktopSources
+});

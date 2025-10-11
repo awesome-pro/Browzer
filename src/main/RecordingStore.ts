@@ -1,6 +1,7 @@
 import Store from 'electron-store';
 import { RecordingSession } from '../shared/types';
-import fs from 'node:fs/promises';
+import { unlink } from 'fs/promises';
+import { existsSync } from 'fs';
 
 interface StoreSchema {
   recordings: RecordingSession[];
@@ -54,24 +55,17 @@ export class RecordingStore {
    */
   async deleteRecording(id: string): Promise<boolean> {
     const recordings = this.store.get('recordings', []);
-    const recording = recordings.find(r => r.id === id);
+    const recordingToDelete = recordings.find(r => r.id === id);
     
-    if (!recording) {
+    if (!recordingToDelete) {
       return false;
     }
-
-    // Delete video file if exists
-    if (recording.video?.filePath) {
-      try {
-        await fs.unlink(recording.video.filePath);
-        console.log('🗑️ Video file deleted:', recording.video.fileName);
-      } catch (error) {
-        console.error('Failed to delete video file:', error);
-        // Continue with metadata deletion even if video deletion fails
-      }
+    
+    // Delete video file if it exists
+    if (recordingToDelete.videoPath) {
+      await this.deleteVideoFile(recordingToDelete.videoPath);
     }
-
-    // Delete metadata
+    
     const filtered = recordings.filter(r => r.id !== id);
     this.store.set('recordings', filtered);
     console.log('🗑️ Recording deleted:', id);
@@ -79,14 +73,17 @@ export class RecordingStore {
   }
 
   /**
-   * Update recording metadata
+   * Update recording metadata (cannot update videoPath)
    */
   updateRecording(id: string, updates: Partial<RecordingSession>): boolean {
     const recordings = this.store.get('recordings', []);
     const index = recordings.findIndex(r => r.id === id);
     
     if (index !== -1) {
-      recordings[index] = { ...recordings[index], ...updates };
+      // Prevent updating video-related fields
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { videoPath, videoSize, videoFormat, videoDuration, ...safeUpdates } = updates;
+      recordings[index] = { ...recordings[index], ...safeUpdates };
       this.store.set('recordings', recordings);
       console.log('✏️ Recording updated:', id);
       return true;
@@ -103,15 +100,11 @@ export class RecordingStore {
     
     // Delete all video files
     for (const recording of recordings) {
-      if (recording.video?.filePath) {
-        try {
-          await fs.unlink(recording.video.filePath);
-        } catch (error) {
-          console.error('Failed to delete video file:', error);
-        }
+      if (recording.videoPath) {
+        await this.deleteVideoFile(recording.videoPath);
       }
     }
-
+    
     this.store.set('recordings', []);
     console.log('🗑️ All recordings cleared');
   }
@@ -119,36 +112,41 @@ export class RecordingStore {
   /**
    * Get storage statistics
    */
-  getStats(): { 
-    count: number; 
-    totalActions: number; 
-    totalSize: number;
-    videoCount: number;
-    totalVideoSize: number;
-  } {
+  getStats(): { count: number; totalActions: number; totalSize: number; totalVideoSize: number } {
     const recordings = this.store.get('recordings', []);
     const totalActions = recordings.reduce((sum, r) => sum + r.actionCount, 0);
     const totalSize = JSON.stringify(recordings).length;
-    
-    const videoCount = recordings.filter(r => r.video).length;
-    const totalVideoSize = recordings.reduce((sum, r) => {
-      return sum + (r.video?.fileSize || 0);
-    }, 0);
+    const totalVideoSize = recordings.reduce((sum, r) => sum + (r.videoSize || 0), 0);
     
     return {
       count: recordings.length,
       totalActions,
       totalSize,
-      videoCount,
       totalVideoSize
     };
   }
-
+  
   /**
-   * Get video file path for a recording
+   * Delete video file from disk
    */
-  getVideoPath(id: string): string | null {
-    const recording = this.getRecording(id);
-    return recording?.video?.filePath || null;
+  private async deleteVideoFile(videoPath: string): Promise<void> {
+    try {
+      if (existsSync(videoPath)) {
+        await unlink(videoPath);
+        console.log('🎥 Video file deleted:', videoPath);
+      }
+    } catch (error) {
+      console.error('Failed to delete video file:', videoPath, error);
+    }
+  }
+  
+  /**
+   * Clean up orphaned video files (videos without corresponding recordings)
+   */
+  async cleanupOrphanedVideos(): Promise<number> {
+    // This could be implemented to scan the recordings directory
+    // and remove videos that don't have corresponding recording sessions
+    // For now, we'll keep it simple and rely on deleteRecording to clean up
+    return 0;
   }
 }
