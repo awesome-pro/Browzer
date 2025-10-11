@@ -68,7 +68,6 @@ export class HistoryService {
       entries[existingId] = entry;
       this.store.set('entries', entries);
 
-      console.log(`Updated history entry: ${url} (visits: ${entry.visitCount})`);
       return entry;
     } else {
       // Create new entry
@@ -91,7 +90,6 @@ export class HistoryService {
       this.store.set('entries', entries);
       this.store.set('urlToId', urlToId);
 
-      console.log(`Added history entry: ${url}`);
       return entry;
     }
   }

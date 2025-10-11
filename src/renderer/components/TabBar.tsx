@@ -1,6 +1,7 @@
 import { X, Plus, Loader2 } from 'lucide-react';
 import type { TabInfo } from '../../preload';
 import { cn } from '../lib/utils';
+import { Button } from '../ui/button';
 
 interface TabBarProps {
   tabs: TabInfo[];
@@ -25,13 +26,14 @@ export function TabBar({ tabs, activeTabId, onTabClick, onTabClose, onNewTab }: 
       ))}
 
       {/* New Tab Button */}
-      <button
+      <Button
         onClick={onNewTab}
-        className="flex items-center justify-center w-7 h-7 rounded-full hover:bg-[#dde3e7] transition-colors"
         title="New Tab"
+        size='icon-sm'
+        variant='outline'
       >
         <Plus className="w-4 h-4" />
-      </button>
+      </Button>
     </div>
   );
 }

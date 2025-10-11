@@ -4,6 +4,7 @@ import { ItemGroup } from '../../ui/item';
 import { RecordedAction } from '../../../shared/types';
 import { SaveRecordingForm } from './SaveRecordingForm';
 import { ActionItem } from './ActionItem';
+import { Label } from '../../ui/label';
 
 interface LiveRecordingViewProps {
   actions: RecordedAction[];
@@ -30,12 +31,12 @@ export function LiveRecordingView({
           {isRecording ? (
             <>
               <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-              <span className="text-xs font-medium text-gray-200">Recording</span>
+              <span className="text-xs font-medium">Recording</span>
             </>
           ) : showSaveForm ? (
             <>
               <div className="w-2 h-2 bg-blue-500 rounded-full" />
-              <span className="text-xs font-medium text-gray-200">Save Recording</span>
+              <span className="text-xs font-medium">Save Recording</span>
             </>
           ) : (
             <>
@@ -60,13 +61,13 @@ export function LiveRecordingView({
           />
         ) : actions.length === 0 ? (
           /* Empty State */
-          <div className="text-center py-12">
-            <Play className="w-12 h-12 mx-auto text-gray-600 mb-3" />
-            <h3 className="text-sm font-semibold text-gray-300 mb-2">No Actions Recorded</h3>
-            <p className="text-xs text-gray-500">
-              {isRecording ? 'Perform actions to see them here' : 'Start recording to capture actions'}
-            </p>
-          </div>
+          <section className='text-center py-12'>
+             <Play className="w-12 h-12 mx-auto text-gray-600 mb-3" />
+              <h3 className="text-sm font-semibold text-gray-300 mb-2">No Actions Recorded</h3>
+              <p className="text-xs text-gray-500">
+                {isRecording ? 'Perform actions to see them here' : 'Start recording to capture actions'}
+              </p>
+          </section>
         ) : (
           /* Actions List */
           <ItemGroup>

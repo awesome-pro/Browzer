@@ -4,7 +4,7 @@ import { ActionRecorder } from './ActionRecorder';
 import { RecordingStore } from './RecordingStore';
 import { BrowserAutomation } from './automation/BrowserAutomation';
 import { HistoryService } from './HistoryService';
-import { RecordedAction, RecordingSession, HistoryTransition } from '../shared/types';
+import { RecordedAction, RecordingSession, HistoryTransition, VideoRecordingMetadata } from '../shared/types';
 import { INTERNAL_PAGES } from './constants';
 
 // Data that can be sent through IPC (serializable)
@@ -251,9 +251,9 @@ export class BrowserManager {
   }
 
   /**
-   * Start recording actions on active tab
+   * Start recording actions and video on active tab
    */
-  public async startRecording(): Promise<boolean> {
+  public async startRecording(enableVideo = true): Promise<boolean> {
     if (!this.activeTabId) {
       console.error('No active tab to record');
       return false;
@@ -266,6 +266,9 @@ export class BrowserManager {
     }
 
     try {
+      // Generate recording ID
+      const recordingId = `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
       tab.recorder.setActionCallback((action) => {
         if (action.verified) {
           if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
@@ -274,15 +277,16 @@ export class BrowserManager {
         }
       });
 
-      await tab.recorder.startRecording();
+      await tab.recorder.startRecording(recordingId, enableVideo);
       this.isRecording = true;
       this.recordingStartTime = Date.now();
       this.recordingStartUrl = tab.info.url;
       
       console.log('🎬 Recording started with verification on tab:', this.activeTabId);
+      console.log('🎥 Video recording:', enableVideo ? 'enabled' : 'disabled');
       
       if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
-        this.agentUIView.webContents.send('recording:started');
+        this.agentUIView.webContents.send('recording:started', { enableVideo });
       }
       
       return true;
@@ -293,42 +297,47 @@ export class BrowserManager {
   }
 
   /**
-   * Stop recording and return actions (don't save yet)
+   * Stop recording and return actions with video metadata (don't save yet)
    */
-  public stopRecording(): RecordedAction[] {
+  public async stopRecording(): Promise<{ actions: RecordedAction[]; video?: VideoRecordingMetadata }> {
     if (!this.activeTabId) {
       console.error('No active tab');
-      return [];
+      return { actions: [] };
     }
 
     const tab = this.tabs.get(this.activeTabId);
     if (!tab || !tab.recorder) {
       console.error('Tab or recorder not found');
-      return [];
+      return { actions: [] };
     }
 
-    const actions = tab.recorder.stopRecording();
+    const result = await tab.recorder.stopRecording();
     this.isRecording = false;
     
     const duration = Date.now() - this.recordingStartTime;
-    console.log('⏹️ Recording stopped. Duration:', duration, 'ms, Actions:', actions.length);
+    console.log('⏹️ Recording stopped. Duration:', duration, 'ms, Actions:', result.actions.length);
     
-    // Notify renderer that recording stopped (with actions for preview)
+    if (result.video) {
+      console.log('🎥 Video recorded:', result.video.fileName, `(${(result.video.fileSize / 1024 / 1024).toFixed(2)} MB)`);
+    }
+    
+    // Notify renderer that recording stopped (with actions and video for preview)
     if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
       this.agentUIView.webContents.send('recording:stopped', {
-        actions,
+        actions: result.actions,
+        video: result.video,
         duration,
         startUrl: this.recordingStartUrl
       });
     }
     
-    return actions;
+    return result;
   }
 
   /**
-   * Save recording session
+   * Save recording session with video
    */
-  public saveRecording(name: string, description: string, actions: RecordedAction[]): string {
+  public saveRecording(name: string, description: string, actions: RecordedAction[], video?: VideoRecordingMetadata): string {
     const session: RecordingSession = {
       id: `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       name,
@@ -337,11 +346,15 @@ export class BrowserManager {
       createdAt: this.recordingStartTime,
       duration: Date.now() - this.recordingStartTime,
       actionCount: actions.length,
-      url: this.recordingStartUrl
+      url: this.recordingStartUrl,
+      video: video || undefined
     };
 
     this.recordingStore.saveRecording(session);
     console.log('💾 Recording saved:', session.id, session.name);
+    if (video) {
+      console.log('🎥 Video included:', video.fileName);
+    }
     
     // Notify renderer
     if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
@@ -359,10 +372,10 @@ export class BrowserManager {
   }
 
   /**
-   * Delete recording
+   * Delete recording (including video)
    */
-  public deleteRecording(id: string): boolean {
-    const success = this.recordingStore.deleteRecording(id);
+  public async deleteRecording(id: string): Promise<boolean> {
+    const success = await this.recordingStore.deleteRecording(id);
     
     if (success && this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
       this.agentUIView.webContents.send('recording:deleted', id);

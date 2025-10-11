@@ -1,10 +1,19 @@
 import { useState, useEffect, KeyboardEvent } from 'react';
-import { ArrowLeft, ArrowRight, RotateCw, X, Lock, Globe, PanelRightOpen, PanelRightClose, Circle, Square, Settings, Clock, User } from 'lucide-react';
+import { ArrowLeft, ArrowRight, RotateCw, X, Lock, Globe, PanelRightOpen, PanelRightClose, Circle, Square, Settings, Clock, User, MoreVertical, Video } from 'lucide-react';
 import type { TabInfo } from '../../preload';
 import { cn } from '../lib/utils';
 import { useSidebarStore } from '../store/useSidebarStore';
 import { useRecording } from '../hooks/useRecording';
 import { Input } from '../ui/input';
+import ThemeToggle from '../ui/theme-toggle';
+import { Button } from '../ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '../ui/dropdown-menu';
 
 interface NavigationBarProps {
   activeTab: TabInfo | null;
@@ -107,55 +116,28 @@ export function NavigationBar({
       </div>
 
       {/* Record Button */}
-      <button
-        onClick={toggleRecording}
-        className={cn(
-          'flex items-center justify-center w-8 h-8 rounded-full  transition-colors text-red-500',
-          isRecording ? 'animate-pulse' : ''
-        )}
+      <Button 
+        variant="outline" 
+        size="icon" 
+        onClick={toggleRecording} 
         title={isRecording ? 'Stop Recording' : 'Start Recording'}
+        className={cn(isRecording && 'border-red-500 bg-red-50 dark:bg-red-950')}
       >
         {isRecording ? (
-          <Square className="w-4 h-4 fill-current" />
+          <Square className="w-4 h-4 fill-red-600" />
         ) : (
-          <Circle className="w-4 h-4 bg-red-500 rounded-full hover:bg-red-700" />
+          <Circle className="w-4 h-4 text-red-500" />
         )}
-      </button>
+      </Button>
 
-      {/* History Button */}
-      <button
-        onClick={() => onNavigate('browzer://history')}
-        className="flex items-center justify-center w-8 h-8 rounded-full transition-colors hover:text-gray-700 text-gray-500"
-        title="History"
-      >
-        <Clock className="w-4 h-4" />
-      </button>
-
-      {/* Profile Button */}
-      <button
-        onClick={() => onNavigate('browzer://profile')}
-        className="flex items-center justify-center w-8 h-8 rounded-full transition-colors hover:text-gray-700 text-gray-500"
-        title="Profile"
-      >
-        <User className="w-4 h-4" />
-      </button>
-
-      {/* Settings Button */}
-      <button
-        onClick={() => onNavigate('browzer://settings')}
-        className="flex items-center justify-center w-8 h-8 rounded-full transition-colors hover:text-gray-700 text-gray-500"
-        title="Settings"
-      >
-        <Settings className="w-4 h-4" />
-      </button>
+      {/* Theme Toggle */}
+      <ThemeToggle />
 
       {/* Sidebar Toggle Button */}
-      <button
-        onClick={toggleSidebar}
-        className={cn(
-          'flex items-center justify-center w-8 h-8 rounded-full transition-colors hover:text-blue-500',
-          isSidebarVisible ? 'text-blue-400' : 'text-gray-400'
-        )}
+      <Button 
+        variant="outline" 
+        size="icon" 
+        onClick={toggleSidebar} 
         title={isSidebarVisible ? 'Hide Agent Panel' : 'Show Agent Panel'}
       >
         {isSidebarVisible ? (
@@ -163,7 +145,35 @@ export function NavigationBar({
         ) : (
           <PanelRightOpen className="w-4 h-4" />
         )}
-      </button>
+      </Button>
+
+      {/* Menu Dropdown */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="icon" title="More options">
+            <MoreVertical className="w-4 h-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem onClick={() => onNavigate('browzer://recordings')}>
+            <Video className="w-4 h-4 mr-2" />
+            Recordings
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onNavigate('browzer://history')}>
+            <Clock className="w-4 h-4 mr-2" />
+            History
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => onNavigate('browzer://profile')}>
+            <User className="w-4 h-4 mr-2" />
+            Profile
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onNavigate('browzer://settings')}>
+            <Settings className="w-4 h-4 mr-2" />
+            Settings
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
@@ -182,7 +192,7 @@ function NavButton({ onClick, disabled, title, children }: NavButtonProps) {
       disabled={disabled}
       title={title}
       className={cn(
-        'flex items-center justify-center w-8 h-8 rounded-full hover:bg-gray-200 transition-colors',
+        'flex items-center justify-center w-8 h-8 rounded-full hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors',
         disabled && 'opacity-30 cursor-not-allowed hover:bg-transparent'
       )}
     >

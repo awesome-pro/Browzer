@@ -90,8 +90,9 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/awesome-pro/browzer.git
-cd browzer
+git clone https://github.com/BrowzerLabs/Browzer.git
+cd Browzer
+git checkout cdp-revamp
 
 # Install dependencies
 pnpm install
@@ -529,8 +530,8 @@ copies or substantial portions of the Software.
 ## 👨‍💻 Author
 
 **Abhinandan Verma**
-- Email: abhinandanverma551@gmail.com
-- GitHub: [@awesome-pro](https://github.com/awesome-pro)
+- Email: abhinandan@trybrowzer.com
+- GitHub: [@BrowzerLabs](https://github.com/BrowzerLabs)
 
 ---
 
@@ -551,9 +552,9 @@ copies or substantial portions of the Software.
 ### Get Help
 
 - 📖 **Documentation** - Check the `/docs` folder
-- 🐛 **Bug Reports** - [Open an issue](https://github.com/awesome-pro/browzer/issues)
-- 💬 **Discussions** - [GitHub Discussions](https://github.com/awesome-pro/browzer/discussions)
-- 📧 **Email** - abhinandanverma551@gmail.com
+- 🐛 **Bug Reports** - [Open an issue](https://github.com/BrowzerLabs/Browzer/issues)
+- 💬 **Discussions** - [GitHub Discussions](https://github.com/BrowzerLabs/Browzer/discussions)
+- 📧 **Email** - abhinandan@trybrowzer.com
 
 ### FAQ
 
@@ -578,13 +579,13 @@ A: Absolutely! Check the [Contributing](#-contributing) section.
 
 If you find this project useful, please consider giving it a star! ⭐
 
-[![Star History Chart](https://api.star-history.com/svg?repos=awesome-pro/browzer&type=Date)](https://star-history.com/#awesome-pro/browzer&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=BrowzerLabs/Browzer&type=Date)](https://star-history.com/#BrowzerLabs/Browzer&Date)
 
 ---
 
 <div align="center">
 
-**Built with ❤️ by [Abhinandan Verma](https://github.com/awesome-pro)**
+**Built with ❤️ by [Abhinandan Verma](https://github.com/abhi-browzer)**
 
 [⬆ Back to Top](#-browzer)
 
