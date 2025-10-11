@@ -5,7 +5,7 @@ import { VideoRecorder } from './VideoRecorder';
 import { RecordingStore } from './RecordingStore';
 import { BrowserAutomation } from './automation/BrowserAutomation';
 import { HistoryService } from './HistoryService';
-import { RecordedAction, RecordingSession, HistoryTransition, VideoRecordingMetadata } from '../shared/types';
+import { RecordedAction, RecordingSession, HistoryTransition } from '../shared/types';
 import { INTERNAL_PAGES } from './constants';
 import { stat } from 'fs/promises';
 
@@ -258,7 +258,7 @@ export class BrowserManager {
   /**
    * Start recording actions and video on active tab
    */
-  public async startRecording(enableVideo = true): Promise<boolean> {
+  public async startRecording(): Promise<boolean> {
     if (!this.activeTabId) {
       console.error('No active tab to record');
       return false;
@@ -300,7 +300,7 @@ export class BrowserManager {
       console.log('🎬 Recording started (actions + video) on tab:', this.activeTabId);
       
       if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
-        this.agentUIView.webContents.send('recording:started', { enableVideo });
+        this.agentUIView.webContents.send('recording:started');
       }
       
       return true;
@@ -311,18 +311,18 @@ export class BrowserManager {
   }
 
   /**
-   * Stop recording and return actions with video metadata (don't save yet)
+   * Stop recording and return actions (don't save yet)
    */
   public async stopRecording(): Promise<RecordedAction[]> {
     if (!this.activeTabId) {
       console.error('No active tab');
-      return { actions: [] };
+      return [];
     }
 
     const tab = this.tabs.get(this.activeTabId);
     if (!tab || !tab.recorder) {
       console.error('Tab or recorder not found');
-      return { actions: [] };
+      return [];
     }
 
     // Stop action recording
@@ -338,24 +338,19 @@ export class BrowserManager {
     this.isRecording = false;
     
     const duration = Date.now() - this.recordingStartTime;
-    console.log('⏹️ Recording stopped. Duration:', duration, 'ms, Actions:', result.actions.length);
+    console.log('⏹️ Recording stopped. Duration:', duration, 'ms, Actions:', actions.length);
     
-    if (result.video) {
-      console.log('🎥 Video recorded:', result.video.fileName, `(${(result.video.fileSize / 1024 / 1024).toFixed(2)} MB)`);
-    }
-    
-    // Notify renderer that recording stopped (with actions and video for preview)
+    // Notify renderer that recording stopped (with actions for preview)
     if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
       this.agentUIView.webContents.send('recording:stopped', {
-        actions: result.actions,
-        video: result.video,
+        actions,
         duration,
         startUrl: this.recordingStartUrl,
         videoPath
       });
     }
     
-    return result;
+    return actions;
   }
 
   /**
