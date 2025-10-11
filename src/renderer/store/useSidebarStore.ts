@@ -9,10 +9,12 @@ const notifyMainProcess = (visible: boolean, widthPercent: number) => {
 interface SidebarState {
   isVisible: boolean;
   widthPercent: number;
+  activeTab: 'agent' | 'recording';
   toggleSidebar: () => void;
   showSidebar: () => void;
   hideSidebar: () => void;
   setWidth: (widthPercent: number) => void;
+  setActiveTab: (tab: 'agent' | 'recording') => void;
 }
 
 /**
@@ -28,6 +30,7 @@ export const useSidebarStore = create<SidebarState>()(
     (set, get) => ({
       isVisible: false,
       widthPercent: 30,
+      activeTab: 'agent',
       toggleSidebar: () => {
         const currentVisibility = get().isVisible;
         const newVisibility = !currentVisibility;
@@ -51,6 +54,9 @@ export const useSidebarStore = create<SidebarState>()(
         if (isVisible) {
           notifyMainProcess(true, widthPercent);
         }
+      },
+      setActiveTab: (tab: 'agent' | 'recording') => {
+        set({ activeTab: tab });
       },
     }),
     {
