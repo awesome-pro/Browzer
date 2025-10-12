@@ -1,7 +1,6 @@
-import { WebContentsView, desktopCapturer, BrowserWindow } from 'electron';
+import { WebContentsView, desktopCapturer, BrowserWindow, app } from 'electron';
 import { mkdir } from 'fs/promises';
 import { join } from 'path';
-import { homedir } from 'os';
 import { pathToFileURL } from 'url';
 
 /**
@@ -22,9 +21,9 @@ export class VideoRecorder {
 
   constructor(view: WebContentsView) {
     this.view = view;
-    // Set up recordings directory on Desktop
-    const desktopPath = join(homedir(), 'Desktop');
-    this.recordingDir = join(desktopPath, 'Browzer-Recordings');
+    // Set up recordings directory in Application Support
+    const userDataPath = app.getPath('userData');
+    this.recordingDir = join(userDataPath, 'Recordings');
   }
 
   /**
@@ -194,6 +193,14 @@ export class VideoRecorder {
    */
   public getVideoPath(): string | null {
     return this.videoPath;
+  }
+
+  /**
+   * Get the recordings directory path
+   * Useful for showing users where their recordings are stored
+   */
+  public getRecordingsDirectory(): string {
+    return this.recordingDir;
   }
 
   /**
