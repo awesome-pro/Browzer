@@ -29,7 +29,7 @@ export function SaveRecordingForm({ actionCount, duration, onSave, onDiscard }: 
     setDescription('');
     setError('');
 
-    toast.success('Recording saved');
+    toast.success('Recording saved successfully');
   };
 
   const handleDiscardClick = () => {

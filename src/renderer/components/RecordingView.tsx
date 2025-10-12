@@ -64,7 +64,6 @@ export function RecordingView() {
   const loadSessions = async () => {
     const allSessions = await window.browserAPI.getAllRecordings();
     setSessions(allSessions);
-    toast.success('Sessions loaded successfully');
   };
 
   const handleSaveRecording = async (name: string, description: string) => {
@@ -74,7 +73,6 @@ export function RecordingView() {
       setRecordingData(null);
       setActions([]);
       setRecordingTab('sessions');
-      toast.success('Recording saved successfully');
     }
   };
 
