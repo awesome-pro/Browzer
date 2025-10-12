@@ -1,5 +1,5 @@
 import { useState, useEffect, KeyboardEvent } from 'react';
-import { ArrowLeft, ArrowRight, RotateCw, X, Lock, Globe, PanelRightOpen, PanelRightClose, Circle, Square, Settings, Clock, User, MoreVertical, Video } from 'lucide-react';
+import { ArrowLeft, ArrowRight, RotateCw, X, Lock, Globe, Circle, Square, Settings, Clock, User, MoreVertical, Video, ChevronRight, ChevronLeft } from 'lucide-react';
 import type { TabInfo } from '../../preload';
 import { cn } from '../lib/utils';
 import { useSidebarStore } from '../store/useSidebarStore';
@@ -141,9 +141,9 @@ export function NavigationBar({
         title={isSidebarVisible ? 'Hide Agent Panel' : 'Show Agent Panel'}
       >
         {isSidebarVisible ? (
-          <PanelRightClose className="w-4 h-4" />
+          <ChevronRight className="w-4 h-4" />
         ) : (
-          <PanelRightOpen className="w-4 h-4" />
+          <ChevronLeft className="w-4 h-4" />
         )}
       </Button>
 
