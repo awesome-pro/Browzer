@@ -1,65 +1,29 @@
 import { useState, useEffect } from 'react';
 import { Circle, Clock } from 'lucide-react';
-import { RecordedAction, RecordingSession } from '../../shared/types';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { LiveRecordingView, SessionsListView } from './recording';
 import { toast } from 'sonner';
+import { useRecordingStore } from '../store/useRecordingStore';
 
 export function RecordingView() {
   const [recordingTab, setRecordingTab] = useState('live');
-  const [actions, setActions] = useState<RecordedAction[]>([]);
-  const [isRecording, setIsRecording] = useState(false);
-  const [sessions, setSessions] = useState<RecordingSession[]>([]);
-  const [showSaveForm, setShowSaveForm] = useState(false);
-  const [recordingData, setRecordingData] = useState<{ 
-    actions: RecordedAction[]; 
-    duration: number; 
-    startUrl: string 
-  } | null>(null);
+  
+  // Get state from global store
+  const {
+    actions,
+    isRecording,
+    sessions,
+    showSaveForm,
+    recordingData,
+    clearActions,
+    setSessions,
+    initializeFromIPC
+  } = useRecordingStore();
 
   useEffect(() => {
-    // Initialize state
-    window.browserAPI.isRecording().then(setIsRecording);
-    loadSessions();
-
-    // Setup event listeners
-    const unsubStart = window.browserAPI.onRecordingStarted(() => {
-      setIsRecording(true);
-      setActions([]);
-      setShowSaveForm(false);
-      setRecordingTab('live');
-    });
-
-    const unsubStop = window.browserAPI.onRecordingStopped((data) => {
-      setIsRecording(false);
-      setRecordingData(data);
-      if (data.actions && data.actions.length > 0) {
-        setShowSaveForm(true);
-      }
-    });
-
-    const unsubAction = window.browserAPI.onRecordingAction((action: RecordedAction) => {
-      setActions(prev => [action, ...prev]);
-    });
-
-    const unsubSaved = window.browserAPI.onRecordingSaved(() => {
-      setActions([]);
-      loadSessions();
-    });
-
-    const unsubDeleted = window.browserAPI.onRecordingDeleted(() => {
-      setActions([]);
-      loadSessions();
-    });
-    
-    return () => {
-      unsubStart();
-      unsubStop();
-      unsubAction();
-      unsubSaved();
-      unsubDeleted();
-    };
-  }, []);
+    // Initialize state from IPC on mount
+    initializeFromIPC();
+  }, [initializeFromIPC]);
 
   const loadSessions = async () => {
     const allSessions = await window.browserAPI.getAllRecordings();
@@ -69,17 +33,12 @@ export function RecordingView() {
   const handleSaveRecording = async (name: string, description: string) => {
     if (recordingData) {
       await window.browserAPI.saveRecording(name, description, recordingData.actions);
-      setShowSaveForm(false);
-      setRecordingData(null);
-      setActions([]);
       setRecordingTab('sessions');
     }
   };
 
   const handleDiscardRecording = () => {
-    setShowSaveForm(false);
-    setRecordingData(null);
-    setActions([]);
+    clearActions();
   };
 
   const handleDeleteSession = async (id: string) => {

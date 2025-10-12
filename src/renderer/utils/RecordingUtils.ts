@@ -1,5 +1,5 @@
 /* eslint-disable no-case-declarations */
-import { MousePointer2, Keyboard, List, CheckCircle, RadioTower, Upload, Command, Navigation, CheckSquare, Circle } from "lucide-react";
+import { MousePointer2, Keyboard, List, CheckCircle, RadioTower, Upload, Command, Navigation, CheckSquare, Circle, ArrowRightLeft } from "lucide-react";
 import { RecordedAction } from "../../shared/types";
 
 export class RecordingUtils {
@@ -94,6 +94,15 @@ export class RecordingUtils {
               title: 'Form Submit',
               description: triggerText ? `Via: ${triggerText}` : 'Form submitted',
               color: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+            };
+      
+          case 'tab-switch':
+            const toTabTitle = action.metadata?.toTabTitle || 'Unknown Tab';
+            return {
+              icon: ArrowRightLeft,
+              title: 'Tab Switch',
+              description: `Switched to: ${toTabTitle}`,
+              color: 'bg-violet-500/10 text-violet-400 border-violet-500/20',
             };
       
           default:

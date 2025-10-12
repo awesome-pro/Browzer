@@ -3,6 +3,7 @@ import { Bot, Video } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { RecordingView } from './RecordingView';
 import { useSidebarStore } from '../store/useSidebarStore';
+import { setupRecordingListeners } from '../store/useRecordingStore';
 
 /**
  * Sidebar - Agent UI with tabbed interface
@@ -13,6 +14,11 @@ import { useSidebarStore } from '../store/useSidebarStore';
  */
 export function Sidebar() {
   const { activeTab, setActiveTab } = useSidebarStore();
+  
+  // Setup global recording listeners once
+  useEffect(() => {
+    setupRecordingListeners();
+  }, []);
   
   // Listen for recording events to auto-switch tabs
   useEffect(() => {

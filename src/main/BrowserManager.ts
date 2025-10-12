@@ -2,6 +2,7 @@ import { BaseWindow, WebContentsView } from 'electron';
 import path from 'node:path';
 import { ActionRecorder } from './ActionRecorder';
 import { VideoRecorder } from './VideoRecorder';
+import { MultiTabRecorder } from './MultiTabRecorder';
 import { RecordingStore } from './RecordingStore';
 import { BrowserAutomation } from './automation/BrowserAutomation';
 import { HistoryService } from './HistoryService';
@@ -49,6 +50,9 @@ export class BrowserManager {
   private recordingStartTime = 0;
   private recordingStartUrl = '';
   private currentRecordingId: string | null = null;
+  private multiTabRecorder: MultiTabRecorder;
+  private videoRecorder: VideoRecorder | null = null;
+  private lastVideoPath: string | null = null;
 
   constructor(baseWindow: BaseWindow, chromeHeight: number, agentUIView?: WebContentsView) {
     this.baseWindow = baseWindow;
@@ -56,6 +60,14 @@ export class BrowserManager {
     this.agentUIView = agentUIView;
     this.recordingStore = new RecordingStore();
     this.historyService = new HistoryService();
+    this.multiTabRecorder = new MultiTabRecorder();
+    
+    // Set up action callback for live updates
+    this.multiTabRecorder.setActionCallback((action) => {
+      if (action.verified && this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
+        this.agentUIView.webContents.send('recording:action-captured', action);
+      }
+    });
     
     // Create initial tab
     this.createTab('https://www.google.com');
@@ -115,6 +127,11 @@ export class BrowserManager {
     // Store tab
     this.tabs.set(tabId, tab);
 
+    // Register tab with multi-tab recorder (pass the existing recorder)
+    if (tab.recorder) {
+      this.multiTabRecorder.registerTabRecorder(tabId, tab.recorder);
+    }
+
     // Setup WebContents event listeners
     this.setupTabEvents(tab);
 
@@ -140,6 +157,9 @@ export class BrowserManager {
   public closeTab(tabId: string): boolean {
     const tab = this.tabs.get(tabId);
     if (!tab) return false;
+
+    // Unregister from multi-tab recorder
+    this.multiTabRecorder.unregisterTabRecorder(tabId);
 
     // Remove view from window
     this.baseWindow.contentView.removeChildView(tab.view);
@@ -172,6 +192,8 @@ export class BrowserManager {
     const tab = this.tabs.get(tabId);
     if (!tab) return false;
 
+    const oldTabId = this.activeTabId;
+
     // Hide current active tab
     if (this.activeTabId && this.activeTabId !== tabId) {
       const currentTab = this.tabs.get(this.activeTabId);
@@ -188,6 +210,18 @@ export class BrowserManager {
     this.baseWindow.contentView.removeChildView(tab.view);
     this.baseWindow.contentView.addChildView(tab.view);
     // Note: updateLayout will be called with proper sidebar width
+
+    // If recording, notify multi-tab recorder about tab switch
+    if (this.isRecording && oldTabId !== tabId) {
+      this.multiTabRecorder.switchToTab(
+        tabId,
+        tab.info.title,
+        tab.info.url,
+        oldTabId
+      ).catch(error => {
+        console.error('Failed to switch recording to new tab:', error);
+      });
+    }
 
     // Notify renderer
     this.notifyTabsChanged();
@@ -256,7 +290,7 @@ export class BrowserManager {
   }
 
   /**
-   * Start recording actions and video on active tab
+   * Start recording actions and video across all tabs
    */
   public async startRecording(): Promise<boolean> {
     if (!this.activeTabId) {
@@ -265,39 +299,39 @@ export class BrowserManager {
     }
 
     const tab = this.tabs.get(this.activeTabId);
-    if (!tab || !tab.recorder || !tab.videoRecorder) {
-      console.error('Tab or recorders not found');
+    if (!tab) {
+      console.error('Active tab not found');
       return false;
     }
 
     try {
+      // Clean up any previous recording state
+      this.lastVideoPath = null;
+      this.videoRecorder = null;
+      
       // Generate unique recording ID
       this.currentRecordingId = `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
-      // Set up action callback
-      tab.recorder.setActionCallback((action) => {
-        if (action.verified) {
-          if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
-            this.agentUIView.webContents.send('recording:action-captured', action);
-          }
+      // Start multi-tab action recording
+      await this.multiTabRecorder.startRecording(
+        this.activeTabId,
+        tab.info.title,
+        tab.info.url
+      );
+      
+      // Start video recording (screen capture - captures all tabs)
+      if (tab.videoRecorder) {
+        this.videoRecorder = tab.videoRecorder;
+        const videoStarted = await this.videoRecorder.startRecording(this.currentRecordingId);
+        
+        if (!videoStarted) {
+          console.warn('⚠️ Video recording failed to start, continuing with action recording only');
         }
-      });
-
-      // Start action recording
-      await tab.recorder.startRecording();
-      
-      // Start video recording
-      const videoStarted = await tab.videoRecorder.startRecording(this.currentRecordingId);
-      
-      if (!videoStarted) {
-        console.warn('⚠️ Video recording failed to start, continuing with action recording only');
       }
       
       this.isRecording = true;
       this.recordingStartTime = Date.now();
       this.recordingStartUrl = tab.info.url;
-      
-      console.log('🎬 Recording started (actions + video) on tab:', this.activeTabId);
       
       if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
         this.agentUIView.webContents.send('recording:started');
@@ -311,34 +345,31 @@ export class BrowserManager {
   }
 
   /**
-   * Stop recording and return actions (don't save yet)
+   * Stop recording and return actions from all tabs
    */
   public async stopRecording(): Promise<RecordedAction[]> {
-    if (!this.activeTabId) {
-      console.error('No active tab');
+    if (!this.multiTabRecorder.isActive()) {
+      console.error('No recording in progress');
       return [];
     }
 
-    const tab = this.tabs.get(this.activeTabId);
-    if (!tab || !tab.recorder) {
-      console.error('Tab or recorder not found');
-      return [];
-    }
-
-    // Stop action recording
-    const actions = tab.recorder.stopRecording();
+    // Stop multi-tab action recording
+    const actions = this.multiTabRecorder.stopRecording();
     
-    // Stop video recording
+    // Stop video recording and save the path
     let videoPath: string | null = null;
-    if (tab.videoRecorder && tab.videoRecorder.isActive()) {
-      videoPath = await tab.videoRecorder.stopRecording();
+    if (this.videoRecorder && this.videoRecorder.isActive()) {
+      videoPath = await this.videoRecorder.stopRecording();
+      this.lastVideoPath = videoPath; // Store for later use in saveRecording
       console.log('🎥 Video recording stopped:', videoPath || 'no video');
     }
     
     this.isRecording = false;
     
     const duration = Date.now() - this.recordingStartTime;
-    console.log('⏹️ Recording stopped. Duration:', duration, 'ms, Actions:', actions.length);
+    const tabContexts = this.multiTabRecorder.getTabContexts();
+    
+    console.log('⏹️ Multi-tab recording stopped. Duration:', duration, 'ms, Actions:', actions.length, 'Tabs:', tabContexts.length);
     
     // Notify renderer that recording stopped (with actions for preview)
     if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
@@ -346,7 +377,8 @@ export class BrowserManager {
         actions,
         duration,
         startUrl: this.recordingStartUrl,
-        videoPath
+        videoPath,
+        tabs: tabContexts
       });
     }
     
@@ -354,11 +386,11 @@ export class BrowserManager {
   }
 
   /**
-   * Save recording session with video
+   * Save recording session with video and multi-tab context
    */
   public async saveRecording(name: string, description: string, actions: RecordedAction[]): Promise<string> {
-    const tab = this.tabs.get(this.activeTabId || '');
-    const videoPath = tab?.videoRecorder?.getVideoPath();
+    // Use the stored video path from stopRecording
+    const videoPath = this.lastVideoPath;
     
     // Get video metadata if available
     let videoSize: number | undefined;
@@ -374,6 +406,10 @@ export class BrowserManager {
       }
     }
     
+    // Get tab contexts from multi-tab recorder
+    const tabContexts = this.multiTabRecorder.getTabContexts();
+    const startTabId = this.multiTabRecorder.getStartTabId();
+    
     const session: RecordingSession = {
       id: this.currentRecordingId || `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       name,
@@ -383,6 +419,8 @@ export class BrowserManager {
       duration: Date.now() - this.recordingStartTime,
       actionCount: actions.length,
       url: this.recordingStartUrl,
+      tabs: tabContexts,
+      startTabId: startTabId || undefined,
       videoPath,
       videoSize,
       videoFormat: videoPath ? 'webm' : undefined,
@@ -390,7 +428,8 @@ export class BrowserManager {
     };
 
     this.recordingStore.saveRecording(session);
-    console.log('💾 Recording saved:', session.id, session.name);
+    console.log('💾 Multi-tab recording saved:', session.id, session.name);
+    console.log('📊 Tabs involved:', tabContexts.length, 'Actions:', actions.length);
     if (videoPath && videoSize) {
       console.log('🎥 Video included:', videoPath, `(${(videoSize / 1024 / 1024).toFixed(2)} MB)`);
     }
@@ -400,8 +439,10 @@ export class BrowserManager {
       this.agentUIView.webContents.send('recording:saved', session);
     }
     
-    // Reset recording ID
+    // Reset recording state
     this.currentRecordingId = null;
+    this.lastVideoPath = null;
+    this.videoRecorder = null;
     
     return session.id;
   }
@@ -434,13 +475,10 @@ export class BrowserManager {
   }
 
   /**
-   * Get recorded actions from active tab
+   * Get all recorded actions from multi-tab recorder (without stopping)
    */
   public getRecordedActions(): RecordedAction[] {
-    if (!this.activeTabId) return [];
-    
-    const tab = this.tabs.get(this.activeTabId);
-    return tab?.recorder?.getActions() || [];
+    return this.multiTabRecorder.getActions();
   }
 
   /**

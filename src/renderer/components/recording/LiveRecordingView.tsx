@@ -4,7 +4,6 @@ import { ItemGroup } from '../../ui/item';
 import { RecordedAction } from '../../../shared/types';
 import { SaveRecordingForm } from './SaveRecordingForm';
 import { ActionItem } from './ActionItem';
-import { Label } from '../../ui/label';
 
 interface LiveRecordingViewProps {
   actions: RecordedAction[];

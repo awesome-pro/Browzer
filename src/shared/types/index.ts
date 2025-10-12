@@ -67,13 +67,18 @@ export interface ElementTarget {
 }
 
 export interface RecordedAction {
-  type: 'click' | 'input' | 'navigate' | 'keypress' | 'submit' | 'select' | 'checkbox' | 'radio' | 'toggle' | 'file-upload';
+  type: 'click' | 'input' | 'navigate' | 'keypress' | 'submit' | 'select' | 'checkbox' | 'radio' | 'toggle' | 'file-upload' | 'tab-switch';
   timestamp: number;
   target?: ElementTarget;
   value?: string | string[] | boolean;
   url?: string;
   position?: { x: number; y: number };
   metadata?: Record<string, any>;
+
+  // Tab context - which tab this action occurred in
+  tabId?: string;
+  tabTitle?: string;
+  tabUrl?: string;
 
   // Verification metadata (added by ActionRecorder)
   verified?: boolean;
@@ -184,11 +189,28 @@ export interface RecordingSession {
   actionCount: number;
   url?: string; // Starting URL
   
+  // Multi-tab context
+  tabs?: TabContext[]; // All tabs that were active during recording
+  startTabId?: string; // Tab where recording started
+  
   // Video recording metadata
   videoPath?: string; // Absolute path to the video file
   videoSize?: number; // Video file size in bytes
   videoFormat?: string; // Video format (e.g., 'webm')
   videoDuration?: number; // Actual video duration in milliseconds
+}
+
+/**
+ * Tab context during recording
+ * Tracks which tabs were used during the recording session
+ */
+export interface TabContext {
+  tabId: string;
+  title: string;
+  url: string;
+  firstAccessTime: number; // When this tab was first accessed during recording
+  lastAccessTime: number; // When this tab was last accessed during recording
+  actionCount: number; // Number of actions performed in this tab
 }
 
 // -------- USER MODEL --------

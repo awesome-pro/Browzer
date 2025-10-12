@@ -1,6 +1,7 @@
 import { Item, ItemMedia, ItemContent, ItemTitle, ItemDescription } from '../../ui/item';
 import { RecordedAction } from '../../../shared/types';
 import { RecordingUtils } from '../../utils';
+import { Badge } from '../../ui/badge';
 
 interface ActionItemProps {
   action: RecordedAction;
@@ -17,7 +18,14 @@ export function ActionItem({ action }: ActionItemProps) {
       </ItemMedia>
       
       <ItemContent>
-        <ItemTitle className="text-xs font-semibold text-black">{title}</ItemTitle>
+        <div className="flex items-center gap-2">
+          <ItemTitle className="text-xs font-semibold text-black">{title}</ItemTitle>
+          {action.tabId && action.type !== 'tab-switch' && (
+            <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">
+              {action.tabTitle || action.tabId}
+            </Badge>
+          )}
+        </div>
         <ItemDescription className="text-xs">{description}</ItemDescription>
       </ItemContent>
       
