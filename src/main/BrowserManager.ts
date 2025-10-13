@@ -50,7 +50,7 @@ export class BrowserManager {
   private currentRecordingId: string | null = null;
   private currentSidebarWidth = 0;
 
-  // Centralized recorder for multi-tab recording
+   // Centralized recorder for multi-tab recording
   private centralRecorder: ActionRecorder;
   private recordingTabs: Map<string, RecordingTabInfo> = new Map();
   private lastActiveTabId: string | null = null;
@@ -65,7 +65,6 @@ export class BrowserManager {
     
     // Initialize centralized recorder (without view initially)
     this.centralRecorder = new ActionRecorder();
-    
     // Create initial tab
     this.createTab('https://www.google.com');
   }
@@ -281,7 +280,7 @@ export class BrowserManager {
 
     const tab = this.tabs.get(this.activeTabId);
     if (!tab || !tab.videoRecorder) {
-      console.error('Tab or video recorder not found');
+      console.error('Tab or recorders not found');
       return false;
     }
 
@@ -303,8 +302,8 @@ export class BrowserManager {
         lastActiveAt: Date.now(),
         actionCount: 0
       });
-      
-      // Set up centralized recorder with current tab
+
+       // Set up centralized recorder with current tab
       this.centralRecorder.setView(tab.view);
       this.centralRecorder.setActionCallback((action) => {
         if (action.verified) {
@@ -328,13 +327,11 @@ export class BrowserManager {
         tab.view.webContents.id
       );
       
-      // Start video recording on active tab
-      this.activeVideoRecorder = tab.videoRecorder;
-      const videoStarted = await this.activeVideoRecorder.startRecording(this.currentRecordingId);
+      // Start video recording
+      const videoStarted = await tab.videoRecorder.startRecording(this.currentRecordingId);
       
       if (!videoStarted) {
         console.warn('⚠️ Video recording failed to start, continuing with action recording only');
-        this.activeVideoRecorder = null;
       }
       
       this.isRecording = true;
@@ -342,7 +339,6 @@ export class BrowserManager {
       this.recordingStartUrl = tab.info.url;
       
       console.log('🎬 Recording started (actions + video) on tab:', this.activeTabId);
-      console.log('📊 Multi-tab recording enabled');
       
       if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
         this.agentUIView.webContents.send('recording:started');
@@ -365,18 +361,18 @@ export class BrowserManager {
     }
 
     const tab = this.tabs.get(this.activeTabId);
-    if (!tab) {
-      console.error('Tab not found');
+    if (!tab || !tab.videoRecorder) {
+      console.error('Tab or recorder not found');
       return [];
     }
 
-    // Stop centralized action recording
+    // Stop action recording
     const actions = this.centralRecorder.stopRecording();
     
-    // Stop video recording from active video recorder
+    // Stop video recording
     let videoPath: string | null = null;
-    if (this.activeVideoRecorder && this.activeVideoRecorder.isActive()) {
-      videoPath = await this.activeVideoRecorder.stopRecording();
+    if (tab.videoRecorder && tab.videoRecorder.isActive()) {
+      videoPath = await tab.videoRecorder.stopRecording();
       console.log('🎥 Video recording stopped:', videoPath || 'no video');
       this.activeVideoRecorder = null;
     }
@@ -384,10 +380,9 @@ export class BrowserManager {
     this.isRecording = false;
     
     const duration = Date.now() - this.recordingStartTime;
-    const tabSwitchCount = this.countTabSwitchActions(actions);
-    
     console.log('⏹️ Recording stopped. Duration:', duration, 'ms, Actions:', actions.length);
-    console.log('📊 Tabs involved:', this.recordingTabs.size, 'Tab switches:', tabSwitchCount);
+
+    const tabSwitchCount = this.countTabSwitchActions(actions);
     
     // Notify renderer that recording stopped (with actions for preview)
     if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
@@ -405,11 +400,11 @@ export class BrowserManager {
   }
 
   /**
-   * Save recording session with video and multi-tab metadata
+   * Save recording session with video
    */
   public async saveRecording(name: string, description: string, actions: RecordedAction[]): Promise<string> {
-    // Get video path from active video recorder (not from tab's video recorder)
-    const videoPath = this.activeVideoRecorder?.getVideoPath();
+    const tab = this.tabs.get(this.activeTabId || '');
+    const videoPath = tab?.videoRecorder?.getVideoPath();
     
     // Get video metadata if available
     let videoSize: number | undefined;
@@ -424,7 +419,7 @@ export class BrowserManager {
         console.error('Failed to get video stats:', error);
       }
     }
-    
+
     const tabSwitchCount = this.countTabSwitchActions(actions);
     const firstTab = this.recordingTabs.values().next().value;
     
@@ -437,12 +432,11 @@ export class BrowserManager {
       duration: Date.now() - this.recordingStartTime,
       actionCount: actions.length,
       url: this.recordingStartUrl,
-      
+
       // Multi-tab metadata
       startTabId: firstTab?.tabId,
       tabs: Array.from(this.recordingTabs.values()),
       tabSwitchCount,
-      
       videoPath,
       videoSize,
       videoFormat: videoPath ? 'webm' : undefined,
@@ -451,7 +445,6 @@ export class BrowserManager {
 
     this.recordingStore.saveRecording(session);
     console.log('💾 Recording saved:', session.id, session.name);
-    console.log('📊 Multi-tab session:', this.recordingTabs.size, 'tabs,', tabSwitchCount, 'switches');
     if (videoPath && videoSize) {
       console.log('🎥 Video included:', videoPath, `(${(videoSize / 1024 / 1024).toFixed(2)} MB)`);
     }
@@ -461,7 +454,7 @@ export class BrowserManager {
       this.agentUIView.webContents.send('recording:saved', session);
     }
     
-    // Reset recording state
+    // Reset recording ID
     this.currentRecordingId = null;
     this.recordingTabs.clear();
     this.lastActiveTabId = null;
@@ -600,15 +593,6 @@ export class BrowserManager {
    * Clean up all tabs
    */
   public destroy(): void {
-    // Stop recording if active
-    if (this.isRecording) {
-      this.centralRecorder.stopRecording();
-      if (this.activeVideoRecorder) {
-        this.activeVideoRecorder.stopRecording();
-        this.activeVideoRecorder = null;
-      }
-    }
-    
     this.tabs.forEach(tab => {
       this.baseWindow.contentView.removeChildView(tab.view);
       tab.view.webContents.close();
