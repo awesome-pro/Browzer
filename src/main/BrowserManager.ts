@@ -49,6 +49,7 @@ export class BrowserManager {
   private recordingStartTime = 0;
   private recordingStartUrl = '';
   private currentRecordingId: string | null = null;
+  private currentSidebarWidth = 0;
 
   constructor(baseWindow: BaseWindow, chromeHeight: number, agentUIView?: WebContentsView) {
     this.baseWindow = baseWindow;
@@ -121,8 +122,8 @@ export class BrowserManager {
     // Add view to window (hidden initially)
     this.baseWindow.contentView.addChildView(view);
     
-    // Position the view (sidebar width will be 0 initially)
-    this.updateTabViewBounds(view, 0);
+    // Position the view with current sidebar width
+    this.updateTabViewBounds(view, this.currentSidebarWidth);
 
     // Load URL (always load, even if no URL provided, use default)
     const urlToLoad = url || 'https://www.google.com';
@@ -447,6 +448,9 @@ export class BrowserManager {
    * Update layout when window resizes or sidebar changes
    */
   public updateLayout(_windowWidth: number, _windowHeight: number, sidebarWidth = 0): void {
+    // Store current sidebar width
+    this.currentSidebarWidth = sidebarWidth;
+    
     // Update all tab views with sidebar offset
     this.tabs.forEach(tab => {
       this.updateTabViewBounds(tab.view, sidebarWidth);

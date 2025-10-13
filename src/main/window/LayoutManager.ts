@@ -5,7 +5,7 @@ import { BaseWindow } from 'electron';
  * Manages sidebar state and view positioning
  */
 export class LayoutManager {
-  private sidebarVisible = false;
+  private sidebarVisible = true;
   private sidebarWidthPercent = 30;
 
   constructor(
