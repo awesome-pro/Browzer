@@ -30,6 +30,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../ui/dialog';
+import ThemeToggle from '../ui/theme-toggle';
 
 export function Recordings() {
   const [recordings, setRecordings] = useState<RecordingSession[]>([]);
@@ -75,7 +76,7 @@ export function Recordings() {
         (rec) =>
           rec.name.toLowerCase().includes(query) ||
           rec.description?.toLowerCase().includes(query) ||
-          rec.url.toLowerCase().includes(query)
+          rec.url?.toLowerCase().includes(query)
       );
     }
 
@@ -172,7 +173,8 @@ export function Recordings() {
             </p>
           </div>
 
-          <Button 
+          <section className='flex items-center gap-2'>
+            <Button 
             onClick={() => { 
               loadRecordings(); 
               toast.success('Recordings refreshed'); 
@@ -182,11 +184,13 @@ export function Recordings() {
             <RefreshCcw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
+          <ThemeToggle />
+          </section>
         </div>
 
         {/* Search and Filters */}
         <div className="flex gap-4 mb-6">
-          <div className="flex-1 relative bg-white">
+          <div className="flex-1 relative bg-white dark:bg-slate-700 rounded-md">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
             <Input
               type="text"
