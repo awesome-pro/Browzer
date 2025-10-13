@@ -8,6 +8,7 @@ import { RecordedAction } from '../../shared/types';
  */
 export function useRecording() {
   const [isRecording, setIsRecording] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [actions, setActions] = useState<RecordedAction[]>([]);
   const { showSidebar, setActiveTab } = useSidebarStore();
 
@@ -17,24 +18,50 @@ export function useRecording() {
   }, []);
 
   const startRecording = useCallback(async () => {
-    const success = await window.browserAPI.startRecording();
-    if (success) {
-      setIsRecording(true);
-      setActions([]);
-      toast.success('Recording started successfully');
-      // Auto-open sidebar and switch to recording tab when recording starts
-      setActiveTab('recording');
-      showSidebar();
+    setIsLoading(true);
+    
+    const promise = window.browserAPI.startRecording();
+    
+    toast.promise(promise, {
+      loading: 'Starting recording...',
+      success: 'Recording started successfully',
+      error: 'Failed to start recording',
+    });
+    
+    try {
+      const success = await promise;
+      if (success) {
+        setIsRecording(true);
+        setActions([]);
+        // Auto-open sidebar and switch to recording tab when recording starts
+        setActiveTab('recording');
+        showSidebar();
+      }
+      return success;
+    } finally {
+      setIsLoading(false);
     }
-    return success;
   }, [showSidebar, setActiveTab]);
 
   const stopRecording = useCallback(async () => {
-    const recordedActions = await window.browserAPI.stopRecording();
-    setIsRecording(false);
-    setActions(recordedActions.actions);
-    toast.success('Recording stopped successfully');
-    return recordedActions;
+    setIsLoading(true);
+    
+    const promise = window.browserAPI.stopRecording();
+    
+    toast.promise(promise, {
+      loading: 'Stopping recording...',
+      success: 'Recording stopped successfully',
+      error: 'Failed to stop recording',
+    });
+    
+    try {
+      const recordedActions = await promise;
+      setIsRecording(false);
+      setActions(recordedActions.actions);
+      return recordedActions;
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   const toggleRecording = useCallback(async () => {
@@ -53,6 +80,7 @@ export function useRecording() {
 
   return {
     isRecording,
+    isLoading,
     actions,
     startRecording,
     stopRecording,

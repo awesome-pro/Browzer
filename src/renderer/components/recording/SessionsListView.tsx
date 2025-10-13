@@ -39,7 +39,7 @@ export function SessionsListView({ sessions, onRefresh, onDelete }: SessionsList
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-2 p-2 overflow-y-auto">
             {sessions.map((session) => (
               <Card key={session.id}>
                 <CardHeader className="pb-3">

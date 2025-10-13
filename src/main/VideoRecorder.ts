@@ -131,13 +131,17 @@ export class VideoRecorder {
     }
 
     try {
-      // Stop recording and get video data
-      const videoBlob = await this.offscreenWindow.webContents.executeJavaScript(
-        'window.stopRecording()'
-      );
+      // Stop recording and get video data with timeout
+      const videoBlob = await Promise.race([
+        this.offscreenWindow.webContents.executeJavaScript('window.stopRecording()'),
+        new Promise<null>((_, reject) => 
+          setTimeout(() => reject(new Error('Video stop timeout after 10s')), 10000)
+        )
+      ]);
 
       if (!videoBlob || !Array.isArray(videoBlob) || videoBlob.length === 0) {
-        console.warn('No video data received');
+        console.error('❌ No video data received from recorder');
+        console.error('   This usually means no video chunks were captured');
         this.isRecording = false;
         this.offscreenWindow.close();
         this.offscreenWindow = null;
@@ -158,13 +162,7 @@ export class VideoRecorder {
       await writeFile(this.videoPath, buffer);
 
       this.isRecording = false;
-      const duration = Date.now() - this.startTime;
       
-      console.log('✅ Video saved:', this.videoPath);
-      console.log('📊 Video size:', (buffer.length / 1024 / 1024).toFixed(2), 'MB');
-      console.log('⏱️ Duration:', duration, 'ms');
-
-      // Clean up offscreen window
       this.offscreenWindow.close();
       this.offscreenWindow = null;
 
