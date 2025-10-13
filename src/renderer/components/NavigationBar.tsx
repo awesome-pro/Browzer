@@ -1,5 +1,5 @@
 import { useState, useEffect, KeyboardEvent } from 'react';
-import { ArrowLeft, ArrowRight, RotateCw, X, Lock, Globe, Circle, Square, Settings, Clock, User, MoreVertical, Video, ChevronRight, ChevronLeft } from 'lucide-react';
+import { ArrowLeft, ArrowRight, RotateCw, X, Lock, Globe, Circle, Square, Settings, Clock, User, MoreVertical, Video, ChevronRight, ChevronLeft, Loader2 } from 'lucide-react';
 import type { TabInfo } from '../../preload';
 import { cn } from '../lib/utils';
 import { useSidebarStore } from '../store/useSidebarStore';
@@ -35,7 +35,7 @@ export function NavigationBar({
   const [urlInput, setUrlInput] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const { isVisible: isSidebarVisible, toggleSidebar } = useSidebarStore();
-  const { isRecording, toggleRecording } = useRecording();
+  const { isRecording, isLoading, toggleRecording } = useRecording();
 
   // Update URL input when active tab changes
   useEffect(() => {
@@ -119,12 +119,18 @@ export function NavigationBar({
       <Button 
         variant="outline" 
         size="icon" 
-        onClick={toggleRecording} 
-        title={isRecording ? 'Stop Recording' : 'Start Recording'}
-        className={cn(isRecording && 'border-red-500 bg-red-50 dark:bg-red-950')}
+        onClick={toggleRecording}
+        disabled={isLoading}
+        title={isLoading ? 'Processing...' : isRecording ? 'Stop Recording' : 'Start Recording'}
+        className={cn(
+          isRecording && 'border-red-500 bg-red-50 dark:bg-red-950',
+          isLoading && 'opacity-70'
+        )}
       >
-        {isRecording ? (
-          <Square className="w-4 h-4 fill-red-600" />
+        {isLoading ? (
+          <Loader2 className="w-4 h-4 animate-spin text-red-500" />
+        ) : isRecording ? (
+          <Square className="w-4 h-4 fill-red-600 animate-pulse" />
         ) : (
           <Circle className="w-4 h-4 text-red-500" />
         )}

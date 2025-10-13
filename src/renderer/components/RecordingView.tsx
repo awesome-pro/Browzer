@@ -4,6 +4,7 @@ import { RecordedAction, RecordingSession } from '../../shared/types';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { LiveRecordingView, SessionsListView } from './recording';
 import { toast } from 'sonner';
+import { cn } from '../lib/utils';
 
 export function RecordingView() {
   const [recordingTab, setRecordingTab] = useState('live');
@@ -39,7 +40,23 @@ export function RecordingView() {
     });
 
     const unsubAction = window.browserAPI.onRecordingAction((action: RecordedAction) => {
-      setActions(prev => [action, ...prev]);
+      setActions(prev => {
+        // Check for duplicates based on timestamp and type
+        const isDuplicate = prev.some(a => 
+          a.timestamp === action.timestamp && 
+          a.type === action.type &&
+          JSON.stringify(a.target) === JSON.stringify(action.target)
+        );
+        
+        if (isDuplicate) {
+          console.warn('Duplicate action detected, skipping:', action);
+          return prev;
+        }
+        
+        // Add new action and sort by timestamp (newest first)
+        const updated = [...prev, action];
+        return updated.sort((a, b) => b.timestamp - a.timestamp);
+      });
     });
 
     const unsubSaved = window.browserAPI.onRecordingSaved(() => {
@@ -96,7 +113,7 @@ export function RecordingView() {
         <TabsTrigger 
           value="live" 
         >
-          <Circle className="w-3 h-3 mr-1.5" />
+          <Circle className={cn('size-3 rounded-full bg-red-300', isRecording && 'bg-red-600 animate-pulse')} />
           Live
         </TabsTrigger>
         <TabsTrigger 

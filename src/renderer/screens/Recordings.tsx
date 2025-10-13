@@ -26,11 +26,11 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '../ui/dialog';
+import ThemeToggle from '../ui/theme-toggle';
 
 export function Recordings() {
   const [recordings, setRecordings] = useState<RecordingSession[]>([]);
@@ -76,7 +76,7 @@ export function Recordings() {
         (rec) =>
           rec.name.toLowerCase().includes(query) ||
           rec.description?.toLowerCase().includes(query) ||
-          rec.url.toLowerCase().includes(query)
+          rec.url?.toLowerCase().includes(query)
       );
     }
 
@@ -173,7 +173,8 @@ export function Recordings() {
             </p>
           </div>
 
-          <Button 
+          <section className='flex items-center gap-2'>
+            <Button 
             onClick={() => { 
               loadRecordings(); 
               toast.success('Recordings refreshed'); 
@@ -183,11 +184,13 @@ export function Recordings() {
             <RefreshCcw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
+          <ThemeToggle />
+          </section>
         </div>
 
         {/* Search and Filters */}
         <div className="flex gap-4 mb-6">
-          <div className="flex-1 relative bg-white">
+          <div className="flex-1 relative bg-white dark:bg-slate-700 rounded-md">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
             <Input
               type="text"
@@ -399,7 +402,7 @@ export function Recordings() {
 
       {/* Recording Details Dialog */}
       <Dialog open={isPlayDialogOpen} onOpenChange={setIsPlayDialogOpen}>
-        <DialogContent className="max-w-[95vw] w-[1400px] max-h-[95vh] overflow-hidden flex flex-col p-0">
+        <DialogContent className="max-w-[90vw] w-[1250px] max-h-[90vh] overflow-hidden flex flex-col p-0">
           <DialogHeader className="px-6 pt-6 pb-4 border-b">
             <DialogTitle className="flex items-center gap-2 text-xl">
               <Video className="w-6 h-6 text-blue-600" />
