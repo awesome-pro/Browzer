@@ -1,4 +1,4 @@
-import { BaseWindow, WebContentsView } from 'electron';
+import { BaseWindow, WebContentsView, Menu } from 'electron';
 import path from 'node:path';
 import { ActionRecorder } from './ActionRecorder';
 import { VideoRecorder } from './VideoRecorder';
@@ -696,6 +696,44 @@ export class BrowserManager {
     webContents.setWindowOpenHandler(({ url }) => {
       this.createTab(url);
       return { action: 'deny' }; // Deny the default window creation
+    });
+
+    // Add context menu for right-click
+    webContents.on('context-menu', (_event: any, params: any) => {
+      const menu = Menu.buildFromTemplate([
+        {
+          label: 'Inspect Element',
+          click: () => {
+            webContents.inspectElement(params.x, params.y);
+          }
+        },
+        { type: 'separator' },
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { type: 'separator' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ]);
+      menu.popup();
+    });
+
+    // Handle keyboard shortcuts
+    webContents.on('before-input-event', (event: any, input: any) => {
+      // Cmd/Ctrl + Shift + I to open DevTools
+      if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'i') {
+        event.preventDefault();
+        if (webContents.isDevToolsOpened()) {
+          webContents.closeDevTools();
+        } else {
+          webContents.openDevTools({ mode: 'right' });
+        }
+      }
+      // Cmd/Ctrl + Shift + C to open DevTools in inspect mode
+      else if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'c') {
+        event.preventDefault();
+        webContents.openDevTools({ mode: 'right', activate: true });
+      }
     });
 
     // Error handling
