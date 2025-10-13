@@ -843,6 +843,11 @@ export class ActionRecorder {
   private setupEventListeners(): void {
     if (!this.debugger) return;
 
+    // Remove all existing listeners to prevent duplicates
+    this.debugger.removeAllListeners('message');
+    this.debugger.removeAllListeners('detach');
+
+    // Add fresh listeners
     this.debugger.on('message', async (_event, method, params) => {
       if (!this.isRecording) return;
 

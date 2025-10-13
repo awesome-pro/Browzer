@@ -198,8 +198,8 @@ export class BrowserManager {
     this.baseWindow.contentView.addChildView(tab.view);
     // Note: updateLayout will be called with proper sidebar width
 
-    // Handle recording tab switch
-    if (this.isRecording && previousTabId !== tabId) {
+    // Handle recording tab switch (only if actually switching between different tabs)
+    if (this.isRecording && previousTabId && previousTabId !== tabId) {
       this.handleRecordingTabSwitch(previousTabId, tabId, tab);
     }
 
@@ -327,11 +327,13 @@ export class BrowserManager {
         tab.view.webContents.id
       );
       
-      // Start video recording
-      const videoStarted = await tab.videoRecorder.startRecording(this.currentRecordingId);
+      // Start video recording on active tab
+      this.activeVideoRecorder = tab.videoRecorder;
+      const videoStarted = await this.activeVideoRecorder.startRecording(this.currentRecordingId);
       
       if (!videoStarted) {
         console.warn('⚠️ Video recording failed to start, continuing with action recording only');
+        this.activeVideoRecorder = null;
       }
       
       this.isRecording = true;
