@@ -5,7 +5,7 @@ import { VideoRecorder } from './VideoRecorder';
 import { RecordingStore } from './RecordingStore';
 import { BrowserAutomation } from './automation/BrowserAutomation';
 import { HistoryService } from './HistoryService';
-import { RecordedAction, RecordingSession, HistoryTransition } from '../shared/types';
+import { RecordedAction, RecordingSession, HistoryTransition, RecordingTabInfo } from '../shared/types';
 import { INTERNAL_PAGES } from './constants';
 import { stat } from 'fs/promises';
 
@@ -25,7 +25,6 @@ interface Tab {
   id: string;
   view: WebContentsView;
   info: TabInfo;
-  recorder?: ActionRecorder;
   videoRecorder?: VideoRecorder;
   automation?: BrowserAutomation;
 }
@@ -51,12 +50,21 @@ export class BrowserManager {
   private currentRecordingId: string | null = null;
   private currentSidebarWidth = 0;
 
+  // Centralized recorder for multi-tab recording
+  private centralRecorder: ActionRecorder;
+  private recordingTabs: Map<string, RecordingTabInfo> = new Map();
+  private lastActiveTabId: string | null = null;
+  private activeVideoRecorder: VideoRecorder | null = null;
+
   constructor(baseWindow: BaseWindow, chromeHeight: number, agentUIView?: WebContentsView) {
     this.baseWindow = baseWindow;
     this.agentUIHeight = chromeHeight;
     this.agentUIView = agentUIView;
     this.recordingStore = new RecordingStore();
     this.historyService = new HistoryService();
+    
+    // Initialize centralized recorder (without view initially)
+    this.centralRecorder = new ActionRecorder();
     
     // Create initial tab
     this.createTab('https://www.google.com');
@@ -108,7 +116,6 @@ export class BrowserManager {
       id: tabId,
       view,
       info: tabInfo,
-      recorder: new ActionRecorder(view),
       videoRecorder: new VideoRecorder(view),
       automation: new BrowserAutomation(view),
     };
@@ -173,6 +180,8 @@ export class BrowserManager {
     const tab = this.tabs.get(tabId);
     if (!tab) return false;
 
+    const previousTabId = this.activeTabId;
+
     // Hide current active tab
     if (this.activeTabId && this.activeTabId !== tabId) {
       const currentTab = this.tabs.get(this.activeTabId);
@@ -189,6 +198,11 @@ export class BrowserManager {
     this.baseWindow.contentView.removeChildView(tab.view);
     this.baseWindow.contentView.addChildView(tab.view);
     // Note: updateLayout will be called with proper sidebar width
+
+    // Handle recording tab switch
+    if (this.isRecording && previousTabId !== tabId) {
+      this.handleRecordingTabSwitch(previousTabId, tabId, tab);
+    }
 
     // Notify renderer
     this.notifyTabsChanged();
@@ -266,8 +280,8 @@ export class BrowserManager {
     }
 
     const tab = this.tabs.get(this.activeTabId);
-    if (!tab || !tab.recorder || !tab.videoRecorder) {
-      console.error('Tab or recorders not found');
+    if (!tab || !tab.videoRecorder) {
+      console.error('Tab or video recorder not found');
       return false;
     }
 
@@ -275,23 +289,52 @@ export class BrowserManager {
       // Generate unique recording ID
       this.currentRecordingId = `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
-      // Set up action callback
-      tab.recorder.setActionCallback((action) => {
+      // Initialize recording tabs map
+      this.recordingTabs.clear();
+      this.lastActiveTabId = this.activeTabId;
+      
+      // Add initial tab to recording tabs
+      this.recordingTabs.set(this.activeTabId, {
+        tabId: this.activeTabId,
+        webContentsId: tab.view.webContents.id,
+        title: tab.info.title,
+        url: tab.info.url,
+        firstActiveAt: Date.now(),
+        lastActiveAt: Date.now(),
+        actionCount: 0
+      });
+      
+      // Set up centralized recorder with current tab
+      this.centralRecorder.setView(tab.view);
+      this.centralRecorder.setActionCallback((action) => {
         if (action.verified) {
+          // Update action count for the tab
+          const tabInfo = this.recordingTabs.get(action.tabId || this.activeTabId || '');
+          if (tabInfo) {
+            tabInfo.actionCount++;
+          }
+          
           if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
             this.agentUIView.webContents.send('recording:action-captured', action);
           }
         }
       });
 
-      // Start action recording
-      await tab.recorder.startRecording();
+      // Start action recording with tab context
+      await this.centralRecorder.startRecording(
+        this.activeTabId,
+        tab.info.url,
+        tab.info.title,
+        tab.view.webContents.id
+      );
       
-      // Start video recording
-      const videoStarted = await tab.videoRecorder.startRecording(this.currentRecordingId);
+      // Start video recording on active tab
+      this.activeVideoRecorder = tab.videoRecorder;
+      const videoStarted = await this.activeVideoRecorder.startRecording(this.currentRecordingId);
       
       if (!videoStarted) {
         console.warn('⚠️ Video recording failed to start, continuing with action recording only');
+        this.activeVideoRecorder = null;
       }
       
       this.isRecording = true;
@@ -299,6 +342,7 @@ export class BrowserManager {
       this.recordingStartUrl = tab.info.url;
       
       console.log('🎬 Recording started (actions + video) on tab:', this.activeTabId);
+      console.log('📊 Multi-tab recording enabled');
       
       if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
         this.agentUIView.webContents.send('recording:started');
@@ -321,25 +365,29 @@ export class BrowserManager {
     }
 
     const tab = this.tabs.get(this.activeTabId);
-    if (!tab || !tab.recorder) {
-      console.error('Tab or recorder not found');
+    if (!tab) {
+      console.error('Tab not found');
       return [];
     }
 
-    // Stop action recording
-    const actions = tab.recorder.stopRecording();
+    // Stop centralized action recording
+    const actions = this.centralRecorder.stopRecording();
     
-    // Stop video recording
+    // Stop video recording from active video recorder
     let videoPath: string | null = null;
-    if (tab.videoRecorder && tab.videoRecorder.isActive()) {
-      videoPath = await tab.videoRecorder.stopRecording();
+    if (this.activeVideoRecorder && this.activeVideoRecorder.isActive()) {
+      videoPath = await this.activeVideoRecorder.stopRecording();
       console.log('🎥 Video recording stopped:', videoPath || 'no video');
+      this.activeVideoRecorder = null;
     }
     
     this.isRecording = false;
     
     const duration = Date.now() - this.recordingStartTime;
+    const tabSwitchCount = this.countTabSwitchActions(actions);
+    
     console.log('⏹️ Recording stopped. Duration:', duration, 'ms, Actions:', actions.length);
+    console.log('📊 Tabs involved:', this.recordingTabs.size, 'Tab switches:', tabSwitchCount);
     
     // Notify renderer that recording stopped (with actions for preview)
     if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
@@ -347,7 +395,9 @@ export class BrowserManager {
         actions,
         duration,
         startUrl: this.recordingStartUrl,
-        videoPath
+        videoPath,
+        tabs: Array.from(this.recordingTabs.values()),
+        tabSwitchCount
       });
     }
     
@@ -355,11 +405,11 @@ export class BrowserManager {
   }
 
   /**
-   * Save recording session with video
+   * Save recording session with video and multi-tab metadata
    */
   public async saveRecording(name: string, description: string, actions: RecordedAction[]): Promise<string> {
-    const tab = this.tabs.get(this.activeTabId || '');
-    const videoPath = tab?.videoRecorder?.getVideoPath();
+    // Get video path from active video recorder (not from tab's video recorder)
+    const videoPath = this.activeVideoRecorder?.getVideoPath();
     
     // Get video metadata if available
     let videoSize: number | undefined;
@@ -375,6 +425,9 @@ export class BrowserManager {
       }
     }
     
+    const tabSwitchCount = this.countTabSwitchActions(actions);
+    const firstTab = this.recordingTabs.values().next().value;
+    
     const session: RecordingSession = {
       id: this.currentRecordingId || `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       name,
@@ -384,6 +437,12 @@ export class BrowserManager {
       duration: Date.now() - this.recordingStartTime,
       actionCount: actions.length,
       url: this.recordingStartUrl,
+      
+      // Multi-tab metadata
+      startTabId: firstTab?.tabId,
+      tabs: Array.from(this.recordingTabs.values()),
+      tabSwitchCount,
+      
       videoPath,
       videoSize,
       videoFormat: videoPath ? 'webm' : undefined,
@@ -392,6 +451,7 @@ export class BrowserManager {
 
     this.recordingStore.saveRecording(session);
     console.log('💾 Recording saved:', session.id, session.name);
+    console.log('📊 Multi-tab session:', this.recordingTabs.size, 'tabs,', tabSwitchCount, 'switches');
     if (videoPath && videoSize) {
       console.log('🎥 Video included:', videoPath, `(${(videoSize / 1024 / 1024).toFixed(2)} MB)`);
     }
@@ -401,8 +461,10 @@ export class BrowserManager {
       this.agentUIView.webContents.send('recording:saved', session);
     }
     
-    // Reset recording ID
+    // Reset recording state
     this.currentRecordingId = null;
+    this.recordingTabs.clear();
+    this.lastActiveTabId = null;
     
     return session.id;
   }
@@ -435,13 +497,90 @@ export class BrowserManager {
   }
 
   /**
-   * Get recorded actions from active tab
+   * Get recorded actions from centralized recorder
    */
   public getRecordedActions(): RecordedAction[] {
-    if (!this.activeTabId) return [];
-    
-    const tab = this.tabs.get(this.activeTabId);
-    return tab?.recorder?.getActions() || [];
+    return this.centralRecorder.getActions();
+  }
+
+  /**
+   * Handle tab switch during recording
+   */
+  private async handleRecordingTabSwitch(previousTabId: string | null, newTabId: string, newTab: Tab): Promise<void> {
+    try {
+      console.log(`🔄 Tab switch detected during recording: ${previousTabId} -> ${newTabId}`);
+      
+      // Record tab-switch action
+      const tabSwitchAction: RecordedAction = {
+        type: 'tab-switch',
+        timestamp: Date.now(),
+        tabId: newTabId,
+        tabUrl: newTab.info.url,
+        tabTitle: newTab.info.title,
+        webContentsId: newTab.view.webContents.id,
+        metadata: {
+          fromTabId: previousTabId,
+          toTabId: newTabId,
+          fromTabUrl: previousTabId ? this.tabs.get(previousTabId)?.info.url : undefined,
+          toTabUrl: newTab.info.url
+        },
+        verified: true,
+        verificationTime: 0
+      };
+      
+      // Add to actions through the recorder (but don't send via IPC here)
+      this.centralRecorder.getActions().push(tabSwitchAction);
+      
+      // Notify renderer via the action callback (which is already set up)
+      // This ensures it goes through the same path as other actions
+      const callback = this.centralRecorder['onActionCallback'];
+      if (callback) {
+        callback(tabSwitchAction);
+      }
+      
+      // Update or add tab to recording tabs
+      const now = Date.now();
+      if (!this.recordingTabs.has(newTabId)) {
+        this.recordingTabs.set(newTabId, {
+          tabId: newTabId,
+          webContentsId: newTab.view.webContents.id,
+          title: newTab.info.title,
+          url: newTab.info.url,
+          firstActiveAt: now,
+          lastActiveAt: now,
+          actionCount: 0
+        });
+      } else {
+        const tabInfo = this.recordingTabs.get(newTabId);
+        if (tabInfo) {
+          tabInfo.lastActiveAt = now;
+          tabInfo.title = newTab.info.title; // Update in case it changed
+          tabInfo.url = newTab.info.url;
+        }
+      }
+      
+      // Switch the centralized recorder to the new tab
+      await this.centralRecorder.switchWebContents(
+        newTab.view,
+        newTabId,
+        newTab.info.url,
+        newTab.info.title
+      );
+      
+      this.lastActiveTabId = newTabId;
+      
+      console.log('✅ Recording switched to new tab successfully');
+      
+    } catch (error) {
+      console.error('Failed to handle recording tab switch:', error);
+    }
+  }
+
+  /**
+   * Count tab-switch actions in recorded actions
+   */
+  private countTabSwitchActions(actions: RecordedAction[]): number {
+    return actions.filter(action => action.type === 'tab-switch').length;
   }
 
   /**
@@ -461,11 +600,21 @@ export class BrowserManager {
    * Clean up all tabs
    */
   public destroy(): void {
+    // Stop recording if active
+    if (this.isRecording) {
+      this.centralRecorder.stopRecording();
+      if (this.activeVideoRecorder) {
+        this.activeVideoRecorder.stopRecording();
+        this.activeVideoRecorder = null;
+      }
+    }
+    
     this.tabs.forEach(tab => {
       this.baseWindow.contentView.removeChildView(tab.view);
       tab.view.webContents.close();
     });
     this.tabs.clear();
+    this.recordingTabs.clear();
   }
 
   /**

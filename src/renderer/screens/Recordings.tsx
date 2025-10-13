@@ -26,7 +26,6 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -399,7 +398,7 @@ export function Recordings() {
 
       {/* Recording Details Dialog */}
       <Dialog open={isPlayDialogOpen} onOpenChange={setIsPlayDialogOpen}>
-        <DialogContent className="max-w-[95vw] w-[1400px] max-h-[95vh] overflow-hidden flex flex-col p-0">
+        <DialogContent className="max-w-[90vw] w-[1250px] max-h-[90vh] overflow-hidden flex flex-col p-0">
           <DialogHeader className="px-6 pt-6 pb-4 border-b">
             <DialogTitle className="flex items-center gap-2 text-xl">
               <Video className="w-6 h-6 text-blue-600" />

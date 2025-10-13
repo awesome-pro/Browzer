@@ -4,11 +4,17 @@ import { WebContentsView } from "electron";
 import { RecordedAction } from '../shared/types';
 
 export class ActionRecorder {
-  private view: WebContentsView;
+  private view: WebContentsView | null = null;
   private isRecording = false;
   private actions: RecordedAction[] = [];
-  private debugger: Electron.Debugger;
-  private onActionCallback?: (action: RecordedAction) => void;
+  private debugger: Electron.Debugger | null = null;
+  public onActionCallback?: (action: RecordedAction) => void;
+
+  // Tab context for current recording
+  private currentTabId: string | null = null;
+  private currentTabUrl: string | null = null;
+  private currentTabTitle: string | null = null;
+  private currentWebContentsId: number | null = null;
 
   private recentNetworkRequests: Array<{
     url: string;
@@ -26,9 +32,11 @@ export class ActionRecorder {
   }>();
 
 
-  constructor(view: WebContentsView) {
-    this.view = view;
-    this.debugger = view.webContents.debugger;
+  constructor(view?: WebContentsView) {
+    if (view) {
+      this.view = view;
+      this.debugger = view.webContents.debugger;
+    }
   }
 
   /**
@@ -39,23 +47,104 @@ export class ActionRecorder {
   }
 
   /**
+   * Set the current tab context for recorded actions
+   */
+  public setTabContext(tabId: string, tabUrl: string, tabTitle: string, webContentsId: number): void {
+    this.currentTabId = tabId;
+    this.currentTabUrl = tabUrl;
+    this.currentTabTitle = tabTitle;
+    this.currentWebContentsId = webContentsId;
+  }
+
+  /**
+   * Switch to a different WebContentsView during active recording
+   * This is the key method for multi-tab recording support
+   */
+  public async switchWebContents(
+    newView: WebContentsView,
+    tabId: string,
+    tabUrl: string,
+    tabTitle: string
+  ): Promise<boolean> {
+    if (!this.isRecording) {
+      console.warn('Cannot switch WebContents: not recording');
+      return false;
+    }
+
+    try {
+      console.log(`🔄 Switching recording to tab: ${tabId} (${tabTitle})`);
+
+      // Detach from current debugger if attached
+      if (this.debugger && this.debugger.isAttached()) {
+        try {
+          this.debugger.detach();
+        } catch (error) {
+          console.warn('Error detaching previous debugger:', error);
+        }
+      }
+
+      // Update to new view
+      this.view = newView;
+      this.debugger = newView.webContents.debugger;
+      this.currentTabId = tabId;
+      this.currentTabUrl = tabUrl;
+      this.currentTabTitle = tabTitle;
+      this.currentWebContentsId = newView.webContents.id;
+
+      // Attach debugger to new view
+      this.debugger.attach('1.3');
+      console.log('✅ CDP Debugger attached to new tab');
+
+      // Re-enable CDP domains
+      await this.enableCDPDomains();
+
+      // Re-setup event listeners
+      this.setupEventListeners();
+
+      console.log(`✅ Recording switched to tab: ${tabId}`);
+      return true;
+
+    } catch (error) {
+      console.error('Failed to switch WebContents:', error);
+      return false;
+    }
+  }
+
+  /**
    * Start recording user actions
    */
-  public async startRecording(): Promise<void> {
+  public async startRecording(
+    tabId?: string,
+    tabUrl?: string,
+    tabTitle?: string,
+    webContentsId?: number
+  ): Promise<void> {
     if (this.isRecording) {
       console.warn('Recording already in progress');
       return;
     }
 
+    if (!this.view) {
+      throw new Error('No WebContentsView set for recording');
+    }
+
     try {
+      this.debugger = this.view.webContents.debugger;
       this.debugger.attach('1.3');
       console.log('✅ CDP Debugger attached');
 
       this.actions = [];
       this.isRecording = true;
 
-      await this.enableCDPDomains();
+      // Set initial tab context
+      if (tabId && tabUrl && tabTitle) {
+        this.currentTabId = tabId;
+        this.currentTabUrl = tabUrl;
+        this.currentTabTitle = tabTitle;
+        this.currentWebContentsId = webContentsId || this.view.webContents.id;
+      }
 
+      await this.enableCDPDomains();
       this.setupEventListeners();
 
       console.log('🎬 Recording started');
@@ -76,7 +165,7 @@ export class ActionRecorder {
     }
 
     try {
-      if (this.debugger.isAttached()) {
+      if (this.debugger && this.debugger.isAttached()) {
         this.debugger.detach();
       }
 
@@ -84,6 +173,12 @@ export class ActionRecorder {
       this.actions.sort((a, b) => a.timestamp - b.timestamp);
       
       console.log(`⏹️ Recording stopped. Captured ${this.actions.length} actions`);
+      
+      // Reset tab context
+      this.currentTabId = null;
+      this.currentTabUrl = null;
+      this.currentTabTitle = null;
+      this.currentWebContentsId = null;
       
       return [...this.actions];
     } catch (error) {
@@ -107,9 +202,33 @@ export class ActionRecorder {
   }
 
   /**
+   * Get current tab context
+   */
+  public getCurrentTabContext(): { tabId: string | null; tabUrl: string | null; tabTitle: string | null; webContentsId: number | null } {
+    return {
+      tabId: this.currentTabId,
+      tabUrl: this.currentTabUrl,
+      tabTitle: this.currentTabTitle,
+      webContentsId: this.currentWebContentsId
+    };
+  }
+
+  /**
+   * Set the view for recording (used when initializing or switching)
+   */
+  public setView(view: WebContentsView): void {
+    this.view = view;
+    this.debugger = view.webContents.debugger;
+  }
+
+  /**
    * Enable required CDP domains
    */
   private async enableCDPDomains(): Promise<void> {
+    if (!this.debugger) {
+      throw new Error('Debugger not initialized');
+    }
+
     try {
       await this.debugger.sendCommand('DOM.enable');
       console.log('✓ DOM domain enabled');
@@ -140,6 +259,8 @@ export class ActionRecorder {
    * Inject event tracking script into the page
    */
   private async injectEventTracker(): Promise<void> {
+    if (!this.debugger) return;
+
     const script = this.generateMonitoringScript();
     await this.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
       source: script,
@@ -720,6 +841,8 @@ export class ActionRecorder {
    * Setup CDP event listeners
    */
   private setupEventListeners(): void {
+    if (!this.debugger) return;
+
     this.debugger.on('message', async (_event, method, params) => {
       if (!this.isRecording) return;
 
@@ -731,7 +854,7 @@ export class ActionRecorder {
     });
     this.debugger.on('detach', (_event, reason) => {
       console.log('Debugger detached:', reason);
-      this.isRecording = false;
+      // Don't set isRecording to false here - we might be switching tabs
     });
   }
 
@@ -805,10 +928,37 @@ export class ActionRecorder {
    */
   private async handlePendingAction(actionData: RecordedAction): Promise<void> {
     const actionId = `${actionData.type}-${actionData.timestamp}`;
-    const verificationDeadline = Date.now() + 1000; // 1 second to verify
+    
+    // Add tab context to action
+    const enrichedAction: RecordedAction = {
+      ...actionData,
+      tabId: this.currentTabId || undefined,
+      tabUrl: this.currentTabUrl || undefined,
+      tabTitle: this.currentTabTitle || undefined,
+      webContentsId: this.currentWebContentsId || undefined
+    };
+    
+    // For keypress and certain actions, verify immediately without waiting
+    const immediateVerificationTypes = ['keypress', 'input', 'checkbox', 'radio', 'select'];
+    const shouldVerifyImmediately = immediateVerificationTypes.includes(actionData.type);
+    
+    if (shouldVerifyImmediately) {
+      // Verify immediately and record
+      enrichedAction.verified = true;
+      enrichedAction.verificationTime = 0;
+      this.actions.push(enrichedAction);
+      console.log(`✅ Action immediately verified: ${actionData.type}`);
+      if (this.onActionCallback) {
+        this.onActionCallback(enrichedAction);
+      }
+      return;
+    }
+    
+    // For other actions (like clicks), use verification with shorter deadline
+    const verificationDeadline = Date.now() + 500; // Reduced from 1000ms to 500ms
     
     this.pendingActions.set(actionId, {
-      action: actionData,
+      action: enrichedAction,
       timestamp: Date.now(),
       verificationDeadline
     });
@@ -1030,6 +1180,10 @@ export class ActionRecorder {
       type: 'navigate',
       timestamp: timestamp || Date.now(),
       url,
+      tabId: this.currentTabId || undefined,
+      tabUrl: this.currentTabUrl || undefined,
+      tabTitle: this.currentTabTitle || undefined,
+      webContentsId: this.currentWebContentsId || undefined,
       verified: true, // Navigation is always verified
       verificationTime: 0,
     };

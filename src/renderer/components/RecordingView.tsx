@@ -39,7 +39,23 @@ export function RecordingView() {
     });
 
     const unsubAction = window.browserAPI.onRecordingAction((action: RecordedAction) => {
-      setActions(prev => [action, ...prev]);
+      setActions(prev => {
+        // Check for duplicates based on timestamp and type
+        const isDuplicate = prev.some(a => 
+          a.timestamp === action.timestamp && 
+          a.type === action.type &&
+          JSON.stringify(a.target) === JSON.stringify(action.target)
+        );
+        
+        if (isDuplicate) {
+          console.warn('Duplicate action detected, skipping:', action);
+          return prev;
+        }
+        
+        // Add new action and sort by timestamp (newest first)
+        const updated = [...prev, action];
+        return updated.sort((a, b) => b.timestamp - a.timestamp);
+      });
     });
 
     const unsubSaved = window.browserAPI.onRecordingSaved(() => {
