@@ -50,7 +50,8 @@ export class BrowserManager {
   private recordingStartTime = 0;
   private recordingStartUrl = '';
   private currentRecordingId: string | null = null;
-  private multiTabRecorder: MultiTabRecorder;
+  private currentSidebarWidth = 0;
+   private multiTabRecorder: MultiTabRecorder;
   private videoRecorder: VideoRecorder | null = null;
   private lastVideoPath: string | null = null;
 
@@ -127,7 +128,7 @@ export class BrowserManager {
     // Store tab
     this.tabs.set(tabId, tab);
 
-    // Register tab with multi-tab recorder (pass the existing recorder)
+     // Register tab with multi-tab recorder (pass the existing recorder)
     if (tab.recorder) {
       this.multiTabRecorder.registerTabRecorder(tabId, tab.recorder);
     }
@@ -138,8 +139,8 @@ export class BrowserManager {
     // Add view to window (hidden initially)
     this.baseWindow.contentView.addChildView(view);
     
-    // Position the view (sidebar width will be 0 initially)
-    this.updateTabViewBounds(view, 0);
+    // Position the view with current sidebar width
+    this.updateTabViewBounds(view, this.currentSidebarWidth);
 
     // Load URL (always load, even if no URL provided, use default)
     const urlToLoad = url || 'https://www.google.com';
@@ -290,7 +291,7 @@ export class BrowserManager {
   }
 
   /**
-   * Start recording actions and video across all tabs
+   * Start recording actions and video on active tab
    */
   public async startRecording(): Promise<boolean> {
     if (!this.activeTabId) {
@@ -299,8 +300,8 @@ export class BrowserManager {
     }
 
     const tab = this.tabs.get(this.activeTabId);
-    if (!tab) {
-      console.error('Active tab not found');
+    if (!tab || !tab.recorder || !tab.videoRecorder) {
+      console.error('Tab or recorders not found');
       return false;
     }
 
@@ -345,7 +346,7 @@ export class BrowserManager {
   }
 
   /**
-   * Stop recording and return actions from all tabs
+   * Stop recording and return actions (don't save yet)
    */
   public async stopRecording(): Promise<RecordedAction[]> {
     if (!this.multiTabRecorder.isActive()) {
@@ -386,7 +387,7 @@ export class BrowserManager {
   }
 
   /**
-   * Save recording session with video and multi-tab context
+   * Save recording session with video
    */
   public async saveRecording(name: string, description: string, actions: RecordedAction[]): Promise<string> {
     // Use the stored video path from stopRecording
@@ -405,8 +406,8 @@ export class BrowserManager {
         console.error('Failed to get video stats:', error);
       }
     }
-    
-    // Get tab contexts from multi-tab recorder
+
+     // Get tab contexts from multi-tab recorder
     const tabContexts = this.multiTabRecorder.getTabContexts();
     const startTabId = this.multiTabRecorder.getStartTabId();
     
@@ -428,8 +429,7 @@ export class BrowserManager {
     };
 
     this.recordingStore.saveRecording(session);
-    console.log('💾 Multi-tab recording saved:', session.id, session.name);
-    console.log('📊 Tabs involved:', tabContexts.length, 'Actions:', actions.length);
+    console.log('💾 Recording saved:', session.id, session.name);
     if (videoPath && videoSize) {
       console.log('🎥 Video included:', videoPath, `(${(videoSize / 1024 / 1024).toFixed(2)} MB)`);
     }
@@ -439,7 +439,7 @@ export class BrowserManager {
       this.agentUIView.webContents.send('recording:saved', session);
     }
     
-    // Reset recording state
+    // Reset recording ID
     this.currentRecordingId = null;
     this.lastVideoPath = null;
     this.videoRecorder = null;
@@ -475,7 +475,7 @@ export class BrowserManager {
   }
 
   /**
-   * Get all recorded actions from multi-tab recorder (without stopping)
+   * Get recorded actions from active tab
    */
   public getRecordedActions(): RecordedAction[] {
     return this.multiTabRecorder.getActions();
@@ -485,6 +485,9 @@ export class BrowserManager {
    * Update layout when window resizes or sidebar changes
    */
   public updateLayout(_windowWidth: number, _windowHeight: number, sidebarWidth = 0): void {
+    // Store current sidebar width
+    this.currentSidebarWidth = sidebarWidth;
+    
     // Update all tab views with sidebar offset
     this.tabs.forEach(tab => {
       this.updateTabViewBounds(tab.view, sidebarWidth);
