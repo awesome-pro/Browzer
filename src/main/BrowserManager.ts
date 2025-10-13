@@ -363,20 +363,22 @@ export class BrowserManager {
     }
 
     const tab = this.tabs.get(this.activeTabId);
-    if (!tab || !tab.videoRecorder) {
-      console.error('Tab or recorder not found');
+    if (!tab) {
+      console.error('Tab not found');
       return [];
     }
 
-    // Stop action recording
+    // Stop centralized action recording
     const actions = this.centralRecorder.stopRecording();
     
-    // Stop video recording
+    // Stop video recording from active video recorder
     let videoPath: string | null = null;
-    if (tab.videoRecorder && tab.videoRecorder.isActive()) {
-      videoPath = await tab.videoRecorder.stopRecording();
+    if (this.activeVideoRecorder && this.activeVideoRecorder.isActive()) {
+      videoPath = await this.activeVideoRecorder.stopRecording();
       console.log('🎥 Video recording stopped:', videoPath || 'no video');
       this.activeVideoRecorder = null;
+    } else {
+      console.warn('⚠️ No active video recorder to stop');
     }
     
     this.isRecording = false;
@@ -402,11 +404,21 @@ export class BrowserManager {
   }
 
   /**
-   * Save recording session with video
+   * Save recording session with video and multi-tab metadata
    */
   public async saveRecording(name: string, description: string, actions: RecordedAction[]): Promise<string> {
-    const tab = this.tabs.get(this.activeTabId || '');
-    const videoPath = tab?.videoRecorder?.getVideoPath();
+    let videoPath = this.activeVideoRecorder?.getVideoPath();
+    
+    if (!videoPath && this.currentRecordingId) {
+      for (const tab of this.tabs.values()) {
+        const tabVideoPath = tab.videoRecorder?.getVideoPath();
+        if (tabVideoPath && tabVideoPath.includes(this.currentRecordingId)) {
+          videoPath = tabVideoPath;
+          console.log('📹 Found video path from tab recorder:', videoPath);
+          break;
+        }
+      }
+    }
     
     // Get video metadata if available
     let videoSize: number | undefined;
