@@ -3,6 +3,7 @@ import { Circle, Clock } from 'lucide-react';
 import { RecordedAction, RecordingSession } from '../../shared/types';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { LiveRecordingView, SessionsListView } from './recording';
+import { toast } from 'sonner';
 
 export function RecordingView() {
   const [recordingTab, setRecordingTab] = useState('live');
@@ -32,7 +33,9 @@ export function RecordingView() {
     const unsubStop = window.browserAPI.onRecordingStopped((data) => {
       setIsRecording(false);
       setRecordingData(data);
-      setShowSaveForm(true);
+      if (data.actions && data.actions.length > 0) {
+        setShowSaveForm(true);
+      }
     });
 
     const unsubAction = window.browserAPI.onRecordingAction((action: RecordedAction) => {
@@ -40,13 +43,15 @@ export function RecordingView() {
     });
 
     const unsubSaved = window.browserAPI.onRecordingSaved(() => {
+      setActions([]);
       loadSessions();
     });
 
     const unsubDeleted = window.browserAPI.onRecordingDeleted(() => {
+      setActions([]);
       loadSessions();
     });
-
+    
     return () => {
       unsubStart();
       unsubStop();
@@ -81,29 +86,28 @@ export function RecordingView() {
     const confirmed = confirm('Are you sure you want to delete this recording? This action cannot be undone.');
     if (confirmed) {
       await window.browserAPI.deleteRecording(id);
+      toast.success('Recording deleted successfully');
     }
   };
 
   return (
-    <Tabs value={recordingTab} onValueChange={setRecordingTab} className="flex-1 flex flex-col h-full">
+    <Tabs value={recordingTab} onValueChange={setRecordingTab}>
       <TabsList className="w-full rounded-none border-b p-0 h-auto">
         <TabsTrigger 
           value="live" 
-          // className="flex-1 rounded-none data-[state=active]:bg-[#1a1a1a] data-[state=active]:border-b-2 data-[state=active]:border-green-500 data-[state=active]:text-white text-gray-400 hover:text-gray-300 py-2.5 text-xs"
         >
           <Circle className="w-3 h-3 mr-1.5" />
           Live
         </TabsTrigger>
         <TabsTrigger 
           value="sessions"
-          // className="flex-1 rounded-none data-[state=active]:bg-[#1a1a1a] data-[state=active]:border-b-2 data-[state=active]:border-green-500 data-[state=active]:text-white text-gray-400 hover:text-gray-300 py-2.5 text-xs"
         >
           <Clock className="w-3 h-3 mr-1.5" />
           Sessions
         </TabsTrigger>
       </TabsList>
 
-      <TabsContent value="live" className="flex-1 m-0 p-0 overflow-hidden flex flex-col">
+      <TabsContent value="live">
         <LiveRecordingView 
           actions={actions} 
           isRecording={isRecording}

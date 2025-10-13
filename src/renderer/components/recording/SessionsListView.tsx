@@ -58,8 +58,7 @@ export function SessionsListView({ sessions, onRefresh, onDelete }: SessionsList
                       onClick={() => onDelete(session.id)}
                       title="Delete recording"
                       size='icon'
-                      variant='ghost'
-                      className='rounded-full'
+                      variant='destructive'
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>

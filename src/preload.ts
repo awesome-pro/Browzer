@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, desktopCapturer } from 'electron';
 import type { TabInfo } from './main/BrowserManager';
 import type { AppSettings } from './main/SettingsStore';
-import { User, UserPreferences, HistoryEntry, HistoryQuery, HistoryStats, RecordingSession, RecordedAction, VideoRecordingMetadata } from './shared/types';
+import { User, UserPreferences, HistoryEntry, HistoryQuery, HistoryStats } from './shared/types';
 
 /**
  * Preload script for Agent UI (Browser Chrome)
@@ -32,15 +32,22 @@ export interface BrowserAPI {
 
   // Sidebar Management
   setSidebarState: (visible: boolean, widthPercent: number) => Promise<boolean>;
+  
+  // Desktop Capturer (for video recording)
+  getDesktopSources: () => Promise<Array<{ id: string; name: string; thumbnail: any }>>;
 
   // Recording Management
-  startRecording: (enableVideo?: boolean) => Promise<boolean>;
-  stopRecording: () => Promise<{ actions: RecordedAction[]; video?: VideoRecordingMetadata; duration: number; startUrl: string }>;
-  saveRecording: (name: string, description: string, actions: RecordedAction[], video?: VideoRecordingMetadata) => Promise<string>;
-  getAllRecordings: () => Promise<RecordingSession[]>;
+  startRecording: () => Promise<boolean>;
+  stopRecording: () => Promise<{ actions: any[]; duration: number; startUrl: string }>;
+  saveRecording: (name: string, description: string, actions: any[]) => Promise<string>;
+  getAllRecordings: () => Promise<any[]>;
   deleteRecording: (id: string) => Promise<boolean>;
   isRecording: () => Promise<boolean>;
-  getRecordedActions: () => Promise<RecordedAction[]>;
+  getRecordedActions: () => Promise<any[]>;
+  
+  // Video File Operations
+  openVideoFile: (videoPath: string) => Promise<void>;
+  getVideoFileUrl: (videoPath: string) => Promise<string>;
 
   // Settings Management
   getAllSettings: () => Promise<AppSettings>;
@@ -105,10 +112,10 @@ const browserAPI: BrowserAPI = {
   setSidebarState: (visible: boolean, widthPercent: number) => 
     ipcRenderer.invoke('browser:set-sidebar-state', visible, widthPercent),
 
-  startRecording: (enableVideo?: boolean) => ipcRenderer.invoke('browser:start-recording', enableVideo),
+  startRecording: () => ipcRenderer.invoke('browser:start-recording'),
   stopRecording: () => ipcRenderer.invoke('browser:stop-recording'),
-  saveRecording: (name: string, description: string, actions: RecordedAction[], video?: VideoRecordingMetadata) => 
-    ipcRenderer.invoke('browser:save-recording', name, description, actions, video),
+  saveRecording: (name: string, description: string, actions: any[]) => 
+    ipcRenderer.invoke('browser:save-recording', name, description, actions),
   getAllRecordings: () => ipcRenderer.invoke('browser:get-all-recordings'),
   deleteRecording: (id: string) => ipcRenderer.invoke('browser:delete-recording', id),
   isRecording: () => ipcRenderer.invoke('browser:is-recording'),
@@ -192,6 +199,26 @@ const browserAPI: BrowserAPI = {
   getHistoryStats: () => ipcRenderer.invoke('history:get-stats'),
   getMostVisited: (limit?: number) => ipcRenderer.invoke('history:get-most-visited', limit),
   getRecentlyVisited: (limit?: number) => ipcRenderer.invoke('history:get-recently-visited', limit),
+  
+  // Desktop Capturer API
+  getDesktopSources: async () => {
+    const sources = await desktopCapturer.getSources({ 
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 150, height: 150 }
+    });
+    return sources.map(source => ({
+      id: source.id,
+      name: source.name,
+      thumbnail: source.thumbnail.toDataURL()
+    }));
+  },
+  
+  // Video File Operations
+  openVideoFile: (videoPath: string) => ipcRenderer.invoke('video:open-file', videoPath),
+  getVideoFileUrl: (videoPath: string) => ipcRenderer.invoke('video:get-file-url', videoPath),
 };
 
 contextBridge.exposeInMainWorld('browserAPI', browserAPI);
+contextBridge.exposeInMainWorld('electronAPI', {
+  getDesktopSources: browserAPI.getDesktopSources
+});

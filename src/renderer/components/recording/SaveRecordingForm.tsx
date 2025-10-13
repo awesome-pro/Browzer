@@ -29,7 +29,7 @@ export function SaveRecordingForm({ actionCount, duration, onSave, onDiscard }: 
     setDescription('');
     setError('');
 
-    toast.success('Recording saved');
+    toast.success('Recording saved successfully');
   };
 
   const handleDiscardClick = () => {
@@ -55,8 +55,8 @@ export function SaveRecordingForm({ actionCount, duration, onSave, onDiscard }: 
   return (
     <div className="p-6 max-w-2xl mx-auto">
       <div className="mb-6">
-        <h3 className="text-lg font-semibold mb-2 text-black dark:text-white">Save Recording</h3>
-        <p className="text-sm text-black dark:text-white">
+        <h3 className="text-lg font-semibold mb-2">Save Recording</h3>
+        <p className="text-sm">
           Recorded {actionCount} actions in {formatDuration(duration)}
         </p>
       </div>
@@ -64,7 +64,7 @@ export function SaveRecordingForm({ actionCount, duration, onSave, onDiscard }: 
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Name Input */}
         <div>
-          <Label htmlFor="recording-name" className="block text-sm font-medium mb-2 text-black dark:text-white">
+          <Label htmlFor="recording-name" className="block text-sm font-medium mb-2">
             Recording Name <span className="text-red-500">*</span>
           </Label>
           <Input
@@ -85,7 +85,7 @@ export function SaveRecordingForm({ actionCount, duration, onSave, onDiscard }: 
 
         {/* Description Input */}
         <div>
-          <Label htmlFor="recording-description" className="block text-sm font-medium mb-2 text-black dark:text-white">
+          <Label htmlFor="recording-description" className="block text-sm font-medium mb-2">
             Description (Optional)
           </Label>
           <Textarea
@@ -102,7 +102,6 @@ export function SaveRecordingForm({ actionCount, duration, onSave, onDiscard }: 
           <Button
             type="button"
             variant="ghost"
-            className='text-black dark:text-white'
             onClick={handleDiscardClick}
           >
             Discard

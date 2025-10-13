@@ -1,8 +1,7 @@
 /* eslint-disable no-case-declarations */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { WebContentsView } from "electron";
-import { RecordedAction, VideoRecordingMetadata } from '../shared/types';
-import { VideoRecorder } from './VideoRecorder';
+import { RecordedAction } from '../shared/types';
 
 export class ActionRecorder {
   private view: WebContentsView;
@@ -10,9 +9,6 @@ export class ActionRecorder {
   private actions: RecordedAction[] = [];
   private debugger: Electron.Debugger;
   private onActionCallback?: (action: RecordedAction) => void;
-  private videoRecorder: VideoRecorder;
-  private recordingId: string | null = null;
-  private videoMetadata: VideoRecordingMetadata | null = null;
 
   private recentNetworkRequests: Array<{
     url: string;
@@ -33,7 +29,6 @@ export class ActionRecorder {
   constructor(view: WebContentsView) {
     this.view = view;
     this.debugger = view.webContents.debugger;
-    this.videoRecorder = new VideoRecorder(view);
   }
 
   /**
@@ -44,9 +39,9 @@ export class ActionRecorder {
   }
 
   /**
-   * Start recording user actions and screen video
+   * Start recording user actions
    */
-  public async startRecording(recordingId?: string, enableVideo = true): Promise<void> {
+  public async startRecording(): Promise<void> {
     if (this.isRecording) {
       console.warn('Recording already in progress');
       return;
@@ -58,23 +53,12 @@ export class ActionRecorder {
 
       this.actions = [];
       this.isRecording = true;
-      this.recordingId = recordingId || `rec-${Date.now()}`;
-      this.videoMetadata = null;
 
       await this.enableCDPDomains();
+
       this.setupEventListeners();
 
-      // Start video recording if enabled
-      if (enableVideo) {
-        const videoStarted = await this.videoRecorder.startRecording(this.recordingId);
-        if (videoStarted) {
-          console.log('🎥 Video recording started');
-        } else {
-          console.warn('⚠️ Video recording failed to start, continuing with actions only');
-        }
-      }
-
-      console.log('🎬 Recording started (ID:', this.recordingId, ')');
+      console.log('🎬 Recording started');
     } catch (error) {
       console.error('Failed to start recording:', error);
       this.isRecording = false;
@@ -83,25 +67,15 @@ export class ActionRecorder {
   }
 
   /**
-   * Stop recording and return actions with video metadata
+   * Stop recording
    */
-  public async stopRecording(): Promise<{ actions: RecordedAction[]; video?: VideoRecordingMetadata }> {
+  public stopRecording(): RecordedAction[] {
     if (!this.isRecording) {
       console.warn('No recording in progress');
-      return { actions: [] };
+      return [];
     }
 
     try {
-      // Stop video recording first
-      if (this.videoRecorder.isActive()) {
-        console.log('⏹️ Stopping video recording...');
-        this.videoMetadata = await this.videoRecorder.stopRecording();
-        if (this.videoMetadata) {
-          console.log('✅ Video saved:', this.videoMetadata.fileName);
-        }
-      }
-
-      // Stop CDP debugger
       if (this.debugger.isAttached()) {
         this.debugger.detach();
       }
@@ -111,16 +85,10 @@ export class ActionRecorder {
       
       console.log(`⏹️ Recording stopped. Captured ${this.actions.length} actions`);
       
-      return {
-        actions: [...this.actions],
-        video: this.videoMetadata || undefined
-      };
+      return [...this.actions];
     } catch (error) {
       console.error('Error stopping recording:', error);
-      return {
-        actions: [...this.actions],
-        video: undefined
-      };
+      return [...this.actions];
     }
   }
 
@@ -136,20 +104,6 @@ export class ActionRecorder {
    */
   public getActions(): RecordedAction[] {
     return [...this.actions];
-  }
-
-  /**
-   * Get video metadata
-   */
-  public getVideoMetadata(): VideoRecordingMetadata | null {
-    return this.videoMetadata;
-  }
-
-  /**
-   * Get video recorder instance
-   */
-  public getVideoRecorder(): VideoRecorder {
-    return this.videoRecorder;
   }
 
   /**

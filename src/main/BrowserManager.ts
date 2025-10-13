@@ -1,11 +1,13 @@
 import { BaseWindow, WebContentsView } from 'electron';
 import path from 'node:path';
 import { ActionRecorder } from './ActionRecorder';
+import { VideoRecorder } from './VideoRecorder';
 import { RecordingStore } from './RecordingStore';
 import { BrowserAutomation } from './automation/BrowserAutomation';
 import { HistoryService } from './HistoryService';
-import { RecordedAction, RecordingSession, HistoryTransition, VideoRecordingMetadata } from '../shared/types';
+import { RecordedAction, RecordingSession, HistoryTransition } from '../shared/types';
 import { INTERNAL_PAGES } from './constants';
+import { stat } from 'fs/promises';
 
 // Data that can be sent through IPC (serializable)
 export interface TabInfo {
@@ -24,6 +26,7 @@ interface Tab {
   view: WebContentsView;
   info: TabInfo;
   recorder?: ActionRecorder;
+  videoRecorder?: VideoRecorder;
   automation?: BrowserAutomation;
 }
 
@@ -45,6 +48,8 @@ export class BrowserManager {
   private historyService: HistoryService;
   private recordingStartTime = 0;
   private recordingStartUrl = '';
+  private currentRecordingId: string | null = null;
+  private currentSidebarWidth = 0;
 
   constructor(baseWindow: BaseWindow, chromeHeight: number, agentUIView?: WebContentsView) {
     this.baseWindow = baseWindow;
@@ -104,6 +109,7 @@ export class BrowserManager {
       view,
       info: tabInfo,
       recorder: new ActionRecorder(view),
+      videoRecorder: new VideoRecorder(view),
       automation: new BrowserAutomation(view),
     };
 
@@ -116,8 +122,8 @@ export class BrowserManager {
     // Add view to window (hidden initially)
     this.baseWindow.contentView.addChildView(view);
     
-    // Position the view (sidebar width will be 0 initially)
-    this.updateTabViewBounds(view, 0);
+    // Position the view with current sidebar width
+    this.updateTabViewBounds(view, this.currentSidebarWidth);
 
     // Load URL (always load, even if no URL provided, use default)
     const urlToLoad = url || 'https://www.google.com';
@@ -253,22 +259,23 @@ export class BrowserManager {
   /**
    * Start recording actions and video on active tab
    */
-  public async startRecording(enableVideo = true): Promise<boolean> {
+  public async startRecording(): Promise<boolean> {
     if (!this.activeTabId) {
       console.error('No active tab to record');
       return false;
     }
 
     const tab = this.tabs.get(this.activeTabId);
-    if (!tab || !tab.recorder) {
-      console.error('Tab or recorder not found');
+    if (!tab || !tab.recorder || !tab.videoRecorder) {
+      console.error('Tab or recorders not found');
       return false;
     }
 
     try {
-      // Generate recording ID
-      const recordingId = `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      // Generate unique recording ID
+      this.currentRecordingId = `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
+      // Set up action callback
       tab.recorder.setActionCallback((action) => {
         if (action.verified) {
           if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
@@ -277,16 +284,24 @@ export class BrowserManager {
         }
       });
 
-      await tab.recorder.startRecording(recordingId, enableVideo);
+      // Start action recording
+      await tab.recorder.startRecording();
+      
+      // Start video recording
+      const videoStarted = await tab.videoRecorder.startRecording(this.currentRecordingId);
+      
+      if (!videoStarted) {
+        console.warn('⚠️ Video recording failed to start, continuing with action recording only');
+      }
+      
       this.isRecording = true;
       this.recordingStartTime = Date.now();
       this.recordingStartUrl = tab.info.url;
       
-      console.log('🎬 Recording started with verification on tab:', this.activeTabId);
-      console.log('🎥 Video recording:', enableVideo ? 'enabled' : 'disabled');
+      console.log('🎬 Recording started (actions + video) on tab:', this.activeTabId);
       
       if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
-        this.agentUIView.webContents.send('recording:started', { enableVideo });
+        this.agentUIView.webContents.send('recording:started');
       }
       
       return true;
@@ -297,49 +312,71 @@ export class BrowserManager {
   }
 
   /**
-   * Stop recording and return actions with video metadata (don't save yet)
+   * Stop recording and return actions (don't save yet)
    */
-  public async stopRecording(): Promise<{ actions: RecordedAction[]; video?: VideoRecordingMetadata }> {
+  public async stopRecording(): Promise<RecordedAction[]> {
     if (!this.activeTabId) {
       console.error('No active tab');
-      return { actions: [] };
+      return [];
     }
 
     const tab = this.tabs.get(this.activeTabId);
     if (!tab || !tab.recorder) {
       console.error('Tab or recorder not found');
-      return { actions: [] };
+      return [];
     }
 
-    const result = await tab.recorder.stopRecording();
+    // Stop action recording
+    const actions = tab.recorder.stopRecording();
+    
+    // Stop video recording
+    let videoPath: string | null = null;
+    if (tab.videoRecorder && tab.videoRecorder.isActive()) {
+      videoPath = await tab.videoRecorder.stopRecording();
+      console.log('🎥 Video recording stopped:', videoPath || 'no video');
+    }
+    
     this.isRecording = false;
     
     const duration = Date.now() - this.recordingStartTime;
-    console.log('⏹️ Recording stopped. Duration:', duration, 'ms, Actions:', result.actions.length);
+    console.log('⏹️ Recording stopped. Duration:', duration, 'ms, Actions:', actions.length);
     
-    if (result.video) {
-      console.log('🎥 Video recorded:', result.video.fileName, `(${(result.video.fileSize / 1024 / 1024).toFixed(2)} MB)`);
-    }
-    
-    // Notify renderer that recording stopped (with actions and video for preview)
+    // Notify renderer that recording stopped (with actions for preview)
     if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
       this.agentUIView.webContents.send('recording:stopped', {
-        actions: result.actions,
-        video: result.video,
+        actions,
         duration,
-        startUrl: this.recordingStartUrl
+        startUrl: this.recordingStartUrl,
+        videoPath
       });
     }
     
-    return result;
+    return actions;
   }
 
   /**
    * Save recording session with video
    */
-  public saveRecording(name: string, description: string, actions: RecordedAction[], video?: VideoRecordingMetadata): string {
+  public async saveRecording(name: string, description: string, actions: RecordedAction[]): Promise<string> {
+    const tab = this.tabs.get(this.activeTabId || '');
+    const videoPath = tab?.videoRecorder?.getVideoPath();
+    
+    // Get video metadata if available
+    let videoSize: number | undefined;
+    let videoDuration: number | undefined;
+    
+    if (videoPath) {
+      try {
+        const stats = await stat(videoPath);
+        videoSize = stats.size;
+        videoDuration = Date.now() - this.recordingStartTime;
+      } catch (error) {
+        console.error('Failed to get video stats:', error);
+      }
+    }
+    
     const session: RecordingSession = {
-      id: `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: this.currentRecordingId || `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       name,
       description,
       actions,
@@ -347,19 +384,25 @@ export class BrowserManager {
       duration: Date.now() - this.recordingStartTime,
       actionCount: actions.length,
       url: this.recordingStartUrl,
-      video: video || undefined
+      videoPath,
+      videoSize,
+      videoFormat: videoPath ? 'webm' : undefined,
+      videoDuration
     };
 
     this.recordingStore.saveRecording(session);
     console.log('💾 Recording saved:', session.id, session.name);
-    if (video) {
-      console.log('🎥 Video included:', video.fileName);
+    if (videoPath && videoSize) {
+      console.log('🎥 Video included:', videoPath, `(${(videoSize / 1024 / 1024).toFixed(2)} MB)`);
     }
     
     // Notify renderer
     if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
       this.agentUIView.webContents.send('recording:saved', session);
     }
+    
+    // Reset recording ID
+    this.currentRecordingId = null;
     
     return session.id;
   }
@@ -372,7 +415,7 @@ export class BrowserManager {
   }
 
   /**
-   * Delete recording (including video)
+   * Delete recording (including video file)
    */
   public async deleteRecording(id: string): Promise<boolean> {
     const success = await this.recordingStore.deleteRecording(id);
@@ -405,6 +448,9 @@ export class BrowserManager {
    * Update layout when window resizes or sidebar changes
    */
   public updateLayout(_windowWidth: number, _windowHeight: number, sidebarWidth = 0): void {
+    // Store current sidebar width
+    this.currentSidebarWidth = sidebarWidth;
+    
     // Update all tab views with sidebar offset
     this.tabs.forEach(tab => {
       this.updateTabViewBounds(tab.view, sidebarWidth);

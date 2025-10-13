@@ -20,7 +20,14 @@ export function Sidebar() {
       setActiveTab('recording');
     });
     
-    return () => unsubStart();
+     const unsubStop = window.browserAPI.onRecordingStopped(() => {
+      setActiveTab('recording');
+    });
+
+    return () => {
+      unsubStart();
+      unsubStop();
+    };
   }, [setActiveTab]);
 
   return (
@@ -44,11 +51,11 @@ export function Sidebar() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="agent" className="flex-1 m-0 p-4 text-gray-200">
+        <TabsContent value="agent">
           <AgentView />
         </TabsContent>
 
-        <TabsContent value="recording" className="flex-1 m-0 p-0 text-gray-200">
+        <TabsContent value="recording">
           <RecordingView />
         </TabsContent>
       </Tabs>

@@ -12,6 +12,12 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "jsx": "react-jsx",
-    "lib": ["ESNext", "DOM"]
+    "lib": ["ESNext", "DOM"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@/main/*": ["./src/main/*"],
+      "@/renderer/*": ["./src/renderer/*"],
+      "@/shared/*": ["./src/shared/*"]
+    }
   }
 }

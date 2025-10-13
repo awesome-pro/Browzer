@@ -28,7 +28,7 @@ interface SidebarState {
 export const useSidebarStore = create<SidebarState>()(
   persist(
     (set, get) => ({
-      isVisible: false,
+      isVisible: true,
       widthPercent: 30,
       activeTab: 'agent',
       toggleSidebar: () => {
@@ -62,6 +62,12 @@ export const useSidebarStore = create<SidebarState>()(
     {
       name: 'browzer-sidebar-storage',
       storage: createJSONStorage(() => localStorage),
+      onRehydrateStorage: () => (state) => {
+        // After hydration from localStorage, sync with main process
+        if (state) {
+          notifyMainProcess(state.isVisible, state.widthPercent);
+        }
+      },
     }
   )
 );

@@ -1,13 +1,14 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useSidebarStore } from '../store/useSidebarStore';
 import { toast } from 'sonner';
+import { RecordedAction } from '../../shared/types';
 
 /**
  * React hook for action recording
  */
 export function useRecording() {
   const [isRecording, setIsRecording] = useState(false);
-  const [actions, setActions] = useState<any[]>([]);
+  const [actions, setActions] = useState<RecordedAction[]>([]);
   const { showSidebar, setActiveTab } = useSidebarStore();
 
   // Check recording status on mount

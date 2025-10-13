@@ -1,10 +1,10 @@
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
 import { BrowserManager } from '../BrowserManager';
 import { LayoutManager } from '../window/LayoutManager';
 import { WindowManager } from '../window/WindowManager';
 import { SettingsStore, AppSettings } from '../SettingsStore';
 import { UserService } from '../UserService';
-import { RecordedAction, HistoryQuery, VideoRecordingMetadata } from '../../shared/types';
+import { RecordedAction, HistoryQuery } from '../../shared/types';
 
 /**
  * IPCHandlers - Centralized IPC communication setup
@@ -93,27 +93,27 @@ export class IPCHandlers {
   }
 
   private setupRecordingHandlers(): void {
-    // Start recording with optional video
-    ipcMain.handle('browser:start-recording', async (_, enableVideo = true) => {
-      return this.browserManager.startRecording(enableVideo);
+    // Start recording
+    ipcMain.handle('browser:start-recording', async () => {
+      return this.browserManager.startRecording();
     });
 
-    // Stop recording - returns actions and video metadata
+    // Stop recording - returns actions
     ipcMain.handle('browser:stop-recording', async () => {
       return this.browserManager.stopRecording();
     });
 
-    // Save recording with video metadata
-    ipcMain.handle('browser:save-recording', async (_, name: string, description: string, actions: RecordedAction[], video?: VideoRecordingMetadata) => {
-      return this.browserManager.saveRecording(name, description, actions, video);
+    // Save recording
+    ipcMain.handle('browser:save-recording', async (_, name: string, description: string, actions: RecordedAction[]) => {
+      return this.browserManager.saveRecording(name, description, actions);
     });
 
-    // Get all recordings (includes video metadata)
+    // Get all recordings
     ipcMain.handle('browser:get-all-recordings', async () => {
       return this.browserManager.getAllRecordings();
     });
 
-    // Delete recording (includes video file)
+    // Delete recording
     ipcMain.handle('browser:delete-recording', async (_, id: string) => {
       return this.browserManager.deleteRecording(id);
     });
@@ -126,6 +126,26 @@ export class IPCHandlers {
     // Get recorded actions
     ipcMain.handle('browser:get-recorded-actions', async () => {
       return this.browserManager.getRecordedActions();
+    });
+    
+    // Video file operations
+    ipcMain.handle('video:open-file', async (_, videoPath: string) => {
+      try {
+        await shell.openPath(videoPath);
+      } catch (error) {
+        console.error('Failed to open video file:', error);
+        throw error;
+      }
+    });
+    
+    ipcMain.handle('video:get-file-url', async (_, videoPath: string) => {
+      try {
+        // Use custom protocol that Electron can serve
+        return `video-file://${encodeURIComponent(videoPath)}`;
+      } catch (error) {
+        console.error('Failed to get video file URL:', error);
+        throw error;
+      }
     });
   }
 

@@ -1,37 +1,35 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { desktopCapturer, WebContentsView, app } from 'electron';
-import path from 'node:path';
-import fs from 'node:fs/promises';
-import { VideoRecordingMetadata } from '../shared/types';
+import { WebContentsView, desktopCapturer, BrowserWindow, app } from 'electron';
+import { mkdir } from 'fs/promises';
+import { join } from 'path';
+import { pathToFileURL } from 'url';
 
 /**
- * VideoRecorder - Captures screen recording of WebContentsView
+ * VideoRecorder - Records screen activity of active webContents
  * 
- * Uses Electron's desktopCapturer API to capture the active tab's screen
- * and MediaRecorder to encode it into WebM format.
- * 
- * Features:
- * - High-quality screen capture (up to 60fps)
- * - Efficient WebM encoding (VP9 codec)
- * - Synchronized with action recording timestamps
- * - Automatic file management in user data directory
+ * Uses Electron's desktopCapturer API to capture the entire window.
+ * Creates a hidden offscreen window to handle MediaRecorder API.
+ * Saves recordings as WebM files (VP8/VP9 codec) for efficient storage and playback.
  */
 export class VideoRecorder {
   private view: WebContentsView;
   private isRecording = false;
-  private mediaRecorder: any = null;
-  private recordedChunks: Blob[] = [];
-  private startTimestamp = 0;
+  private startTime = 0;
+  private videoPath: string | null = null;
   private recordingId: string | null = null;
-  private videoFilePath: string | null = null;
-  private displayInfo: { width: number; height: number; scaleFactor: number } | null = null;
+  private recordingDir: string;
+  private offscreenWindow: BrowserWindow | null = null;
 
   constructor(view: WebContentsView) {
     this.view = view;
+    // Set up recordings directory in Application Support
+    const userDataPath = app.getPath('userData');
+    this.recordingDir = join(userDataPath, 'Recordings');
   }
 
   /**
-   * Start video recording of the WebContentsView
+   * Start recording the webContents view
+   * @param recordingId - Unique identifier for this recording session
+   * @returns Promise<boolean> - Success status
    */
   public async startRecording(recordingId: string): Promise<boolean> {
     if (this.isRecording) {
@@ -41,77 +39,144 @@ export class VideoRecorder {
 
     try {
       this.recordingId = recordingId;
-      this.startTimestamp = Date.now();
-      this.recordedChunks = [];
+      this.startTime = Date.now();
+      
+      // Create recordings directory
+      await mkdir(this.recordingDir, { recursive: true });
+      
+      // Generate filename
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `recording-${recordingId || timestamp}.webm`;
+      this.videoPath = join(this.recordingDir, filename);
 
-      // Get available video sources
+      // Get desktop sources
       const sources = await desktopCapturer.getSources({
         types: ['window', 'screen'],
-        thumbnailSize: { width: 1920, height: 1080 }
+        thumbnailSize: { width: 150, height: 150 }
       });
 
-      // Find the source that matches our WebContentsView
-      // For now, we'll capture the entire screen or the main window
-      // In production, you might want to filter by window title or ID
-      const primarySource = sources[0];
-
-      if (!primarySource) {
-        throw new Error('No video source available');
+      if (sources.length === 0) {
+        console.error('No desktop sources available');
+        return false;
       }
 
-      console.log('🎥 Selected video source:', primarySource.name);
+      // Find the Browzer window or use first screen
+      const source = sources.find(s => s.name.includes('browzer') || s.name.includes('Browzer')) 
+        || sources.find(s => s.id.startsWith('screen'))
+        || sources[0];
 
-      // Get display information
-      const bounds = this.view.getBounds();
-      this.displayInfo = {
-        width: bounds.width,
-        height: bounds.height,
-        scaleFactor: 1 // Will be updated from actual capture
-      };
+      console.log('📹 Using video source:', source.name);
 
-      // Inject MediaRecorder script into the WebContentsView
-      await this.setupMediaRecorder(primarySource.id);
+      // Create hidden window for recording
+      this.offscreenWindow = new BrowserWindow({
+        show: false,
+        width: 1,
+        height: 1,
+        x: -10000,
+        y: -10000,
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+          webSecurity: false, // CRITICAL: Allow access to mediaDevices
+          allowRunningInsecureContent: false
+        }
+      });
 
-      this.isRecording = true;
-      console.log('🎬 Video recording started:', this.recordingId);
+      // Load the recorder HTML file from disk (file:// protocol has mediaDevices access)
+      const recorderPath = join(__dirname, '../../recorder.html');
+      const recorderURL = pathToFileURL(recorderPath).href;
+      
+      console.log('📄 Loading recorder from:', recorderURL);
+      
+      await this.offscreenWindow.loadURL(recorderURL);
+      
+      // Wait a bit for page to fully initialize
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
-      return true;
+      // Start recording
+      const success = await this.offscreenWindow.webContents.executeJavaScript(
+        `window.startRecording('${source.id}')`
+      );
+
+      if (success) {
+        this.isRecording = true;
+        console.log('🎥 Video recording started:', recordingId);
+        return true;
+      } else {
+        console.error('Failed to initialize video recording');
+        this.offscreenWindow.close();
+        this.offscreenWindow = null;
+        return false;
+      }
+
     } catch (error) {
       console.error('Failed to start video recording:', error);
       this.isRecording = false;
+      if (this.offscreenWindow) {
+        this.offscreenWindow.close();
+        this.offscreenWindow = null;
+      }
       return false;
     }
   }
 
   /**
-   * Stop video recording and save to file
+   * Stop recording and save the video file
+   * @returns Promise<string | null> - Path to saved video file
    */
-  public async stopRecording(): Promise<VideoRecordingMetadata | null> {
-    if (!this.isRecording || !this.recordingId) {
+  public async stopRecording(): Promise<string | null> {
+    if (!this.isRecording || !this.offscreenWindow) {
       console.warn('No video recording in progress');
       return null;
     }
 
     try {
-      console.log('⏹️ Stopping video recording...');
+      // Stop recording and get video data
+      const videoBlob = await this.offscreenWindow.webContents.executeJavaScript(
+        'window.stopRecording()'
+      );
 
-      // Stop the MediaRecorder
-      await this.stopMediaRecorder();
-
-      // Wait a bit for chunks to be collected
-      await new Promise(resolve => setTimeout(resolve, 500));
+      if (!videoBlob || !Array.isArray(videoBlob) || videoBlob.length === 0) {
+        console.warn('No video data received');
+        this.isRecording = false;
+        this.offscreenWindow.close();
+        this.offscreenWindow = null;
+        return null;
+      }
 
       // Save video file
-      const metadata = await this.saveVideoFile();
+      if (!this.videoPath) {
+        console.error('Video path not set');
+        this.isRecording = false;
+        this.offscreenWindow.close();
+        this.offscreenWindow = null;
+        return null;
+      }
+      
+      const { writeFile } = await import('fs/promises');
+      const buffer = Buffer.from(videoBlob);
+      await writeFile(this.videoPath, buffer);
 
       this.isRecording = false;
-      this.recordingId = null;
+      const duration = Date.now() - this.startTime;
+      
+      console.log('✅ Video saved:', this.videoPath);
+      console.log('📊 Video size:', (buffer.length / 1024 / 1024).toFixed(2), 'MB');
+      console.log('⏱️ Duration:', duration, 'ms');
 
-      console.log('✅ Video recording saved:', metadata.filePath);
-      return metadata;
+      // Clean up offscreen window
+      this.offscreenWindow.close();
+      this.offscreenWindow = null;
+
+      return this.videoPath;
+
     } catch (error) {
       console.error('Failed to stop video recording:', error);
       this.isRecording = false;
+      if (this.offscreenWindow) {
+        this.offscreenWindow.close();
+        this.offscreenWindow = null;
+      }
       return null;
     }
   }
@@ -124,224 +189,30 @@ export class VideoRecorder {
   }
 
   /**
-   * Get current recording file path
+   * Get the path to the saved video file
    */
-  public getFilePath(): string | null {
-    return this.videoFilePath;
+  public getVideoPath(): string | null {
+    return this.videoPath;
   }
 
   /**
-   * Delete video file
+   * Get the recordings directory path
+   * Useful for showing users where their recordings are stored
    */
-  public async deleteVideo(filePath: string): Promise<boolean> {
-    try {
-      await fs.unlink(filePath);
-      console.log('🗑️ Video file deleted:', filePath);
-      return true;
-    } catch (error) {
-      console.error('Failed to delete video file:', error);
-      return false;
+  public getRecordingsDirectory(): string {
+    return this.recordingDir;
+  }
+
+  /**
+   * Clean up resources
+   */
+  public destroy(): void {
+    if (this.isRecording) {
+      this.stopRecording();
     }
-  }
-
-  /**
-   * Setup MediaRecorder in the WebContentsView
-   */
-  private async setupMediaRecorder(sourceId: string): Promise<void> {
-    const script = `
-      (async function() {
-        try {
-          // Get media stream from desktop capturer
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: {
-              mandatory: {
-                chromeMediaSource: 'desktop',
-                chromeMediaSourceId: '${sourceId}',
-                minWidth: 1280,
-                maxWidth: 1920,
-                minHeight: 720,
-                maxHeight: 1080,
-                minFrameRate: 30,
-                maxFrameRate: 60
-              }
-            }
-          });
-
-          // Create MediaRecorder with optimal settings
-          const options = {
-            mimeType: 'video/webm;codecs=vp9',
-            videoBitsPerSecond: 2500000 // 2.5 Mbps for good quality
-          };
-
-          // Fallback to VP8 if VP9 is not supported
-          if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-            options.mimeType = 'video/webm;codecs=vp8';
-          }
-
-          window.__browzerMediaRecorder = new MediaRecorder(stream, options);
-          window.__browzerRecordedChunks = [];
-
-          window.__browzerMediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0) {
-              window.__browzerRecordedChunks.push(event.data);
-            }
-          };
-
-          window.__browzerMediaRecorder.onerror = (event) => {
-            console.error('MediaRecorder error:', event);
-          };
-
-          // Start recording with 1 second timeslice
-          window.__browzerMediaRecorder.start(1000);
-
-          console.log('✅ MediaRecorder started');
-          return { success: true };
-        } catch (error) {
-          console.error('MediaRecorder setup failed:', error);
-          return { success: false, error: error.message };
-        }
-      })();
-    `;
-
-    const result = await this.view.webContents.executeJavaScript(script);
-    
-    if (!result.success) {
-      throw new Error(`MediaRecorder setup failed: ${result.error}`);
-    }
-  }
-
-  /**
-   * Stop MediaRecorder and collect chunks
-   */
-  private async stopMediaRecorder(): Promise<void> {
-    const script = `
-      (function() {
-        return new Promise((resolve) => {
-          if (window.__browzerMediaRecorder && window.__browzerMediaRecorder.state !== 'inactive') {
-            window.__browzerMediaRecorder.onstop = () => {
-              // Stop all tracks
-              const stream = window.__browzerMediaRecorder.stream;
-              stream.getTracks().forEach(track => track.stop());
-              resolve({ success: true, chunkCount: window.__browzerRecordedChunks.length });
-            };
-            window.__browzerMediaRecorder.stop();
-          } else {
-            resolve({ success: false, error: 'MediaRecorder not active' });
-          }
-        });
-      })();
-    `;
-
-    await this.view.webContents.executeJavaScript(script);
-  }
-
-  /**
-   * Save video file to disk
-   */
-  private async saveVideoFile(): Promise<VideoRecordingMetadata> {
-    // Get recorded chunks from WebContentsView
-    const chunksScript = `
-      (function() {
-        if (window.__browzerRecordedChunks && window.__browzerRecordedChunks.length > 0) {
-          // Convert Blob chunks to base64
-          return Promise.all(
-            window.__browzerRecordedChunks.map(chunk => 
-              new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onloadend = () => resolve(reader.result.split(',')[1]);
-                reader.readAsDataURL(chunk);
-              })
-            )
-          );
-        }
-        return [];
-      })();
-    `;
-
-    const base64Chunks = await this.view.webContents.executeJavaScript(chunksScript);
-
-    if (!base64Chunks || base64Chunks.length === 0) {
-      throw new Error('No video chunks recorded');
-    }
-
-    // Convert base64 chunks to Buffer
-    const buffers = base64Chunks.map((chunk: string) => Buffer.from(chunk, 'base64'));
-    const videoBuffer = Buffer.concat(buffers);
-
-    // Create recordings directory
-    const recordingsDir = path.join(app.getPath('userData'), 'recordings', 'videos');
-    await fs.mkdir(recordingsDir, { recursive: true });
-
-    // Generate filename
-    const fileName = `${this.recordingId}.webm`;
-    const filePath = path.join(recordingsDir, fileName);
-
-    // Save file
-    await fs.writeFile(filePath, videoBuffer);
-
-    // Get file stats
-    const stats = await fs.stat(filePath);
-    const endTimestamp = Date.now();
-    const duration = endTimestamp - this.startTimestamp;
-
-    // Create metadata
-    const metadata: VideoRecordingMetadata = {
-      filePath,
-      fileName,
-      fileSize: stats.size,
-      format: 'webm',
-      codec: 'vp9', // or 'vp8' depending on what was used
-      duration,
-      fps: 30, // Default, could be detected from stream
-      startTimestamp: this.startTimestamp,
-      endTimestamp,
-      displayInfo: this.displayInfo || {
-        width: 1920,
-        height: 1080,
-        scaleFactor: 1
-      },
-      status: 'completed'
-    };
-
-    this.videoFilePath = filePath;
-
-    return metadata;
-  }
-
-  /**
-   * Get video directory path
-   */
-  public static getVideosDirectory(): string {
-    return path.join(app.getPath('userData'), 'recordings', 'videos');
-  }
-
-  /**
-   * Clean up old video files (optional utility)
-   */
-  public static async cleanupOldVideos(daysOld = 30): Promise<number> {
-    try {
-      const videosDir = VideoRecorder.getVideosDirectory();
-      const files = await fs.readdir(videosDir);
-      const now = Date.now();
-      const maxAge = daysOld * 24 * 60 * 60 * 1000;
-      let deletedCount = 0;
-
-      for (const file of files) {
-        const filePath = path.join(videosDir, file);
-        const stats = await fs.stat(filePath);
-        
-        if (now - stats.mtimeMs > maxAge) {
-          await fs.unlink(filePath);
-          deletedCount++;
-        }
-      }
-
-      console.log(`🧹 Cleaned up ${deletedCount} old video files`);
-      return deletedCount;
-    } catch (error) {
-      console.error('Failed to cleanup old videos:', error);
-      return 0;
+    if (this.offscreenWindow && !this.offscreenWindow.isDestroyed()) {
+      this.offscreenWindow.close();
+      this.offscreenWindow = null;
     }
   }
 }
