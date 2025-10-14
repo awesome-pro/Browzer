@@ -67,17 +67,17 @@ export function RecordingSelector({ selectedRecording, onSelect, className }: Re
       <PopoverTrigger asChild>
         <Button
           variant="outline"
-          size="sm"
+          size="lg"
           className={cn(
-            "justify-between gap-2 font-normal",
-            selectedRecording && "border-blue-500 bg-blue-50 dark:bg-blue-950",
+            "justify-between gap-2 font-normal w-full",
+            selectedRecording && "border-primary bg-primary/10 dark:bg-primary/10",
             className
           )}
         >
           <div className="flex items-center gap-2 min-w-0">
-            <Video className="size-3.5 shrink-0" />
+            <Video className="size-3.5 shrink-0 text-primary" />
             {selectedRec ? (
-              <span className="truncate">{selectedRec.name}</span>
+              <span className="truncate text-primary">{selectedRec.name}</span>
             ) : (
               <span className="text-muted-foreground">Select recording context...</span>
             )}
@@ -85,11 +85,11 @@ export function RecordingSelector({ selectedRecording, onSelect, className }: Re
           <div className="flex items-center gap-1 shrink-0">
             {selectedRecording && (
               <X
-                className="size-3.5 hover:bg-muted rounded"
+                className="size-3.5 hover:bg-muted rounded text-primary"
                 onClick={handleClear}
               />
             )}
-            <ChevronDown className="size-3.5" />
+            <ChevronDown className="size-3.5 text-primary" />
           </div>
         </Button>
       </PopoverTrigger>
