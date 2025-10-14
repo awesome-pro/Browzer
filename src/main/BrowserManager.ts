@@ -86,7 +86,7 @@ export class BrowserManager {
   private initializeAgentOrchestration(): void {
     try {
       // Wait for first tab to be created, then initialize
-      setTimeout(() => {
+      setTimeout(async () => {
         const activeTab = this.tabs.get(this.activeTabId || '');
         if (activeTab) {
           // Initialize tool registry
@@ -94,6 +94,14 @@ export class BrowserManager {
           
           // Initialize context provider
           this.contextProvider = new BrowserContextProvider(activeTab.view);
+          
+          // Start monitoring browser context (attach CDP debugger)
+          try {
+            await this.contextProvider.startMonitoring();
+            console.log('✅ Browser context monitoring started');
+          } catch (monitorError) {
+            console.warn('⚠️ Failed to start context monitoring, will attach on-demand:', monitorError);
+          }
           
           // Initialize agent orchestrator
           this.agentOrchestrator = new AgentOrchestrator(

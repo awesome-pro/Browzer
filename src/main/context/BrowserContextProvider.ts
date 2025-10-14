@@ -227,6 +227,19 @@ export class BrowserContextProvider {
    */
   private async getPageMetadata(): Promise<PageMetadata> {
     try {
+      // Ensure debugger is attached before trying to use it
+      if (!this.debugger.isAttached()) {
+        console.warn('⚠️ Debugger not attached, attaching now...');
+        try {
+          this.debugger.attach('1.3');
+          await this.debugger.sendCommand('Runtime.enable');
+        } catch (attachError) {
+          console.error('Failed to attach debugger:', attachError);
+          // Fall back to basic metadata
+          return this.getBasicMetadata();
+        }
+      }
+
       const result = await this.debugger.sendCommand('Runtime.evaluate', {
         expression: `
           (function() {
@@ -250,23 +263,24 @@ export class BrowserContextProvider {
         returnByValue: true
       });
 
-      return result.result?.value || {
-        url: this.view.webContents.getURL(),
-        title: this.view.webContents.getTitle(),
-        readyState: 'unknown',
-        scrollPosition: { x: 0, y: 0 },
-        viewport: { width: 0, height: 0 }
-      };
+      return result.result?.value || this.getBasicMetadata();
     } catch (error) {
       console.error('Error getting page metadata:', error);
-      return {
-        url: this.view.webContents.getURL(),
-        title: this.view.webContents.getTitle(),
-        readyState: 'unknown',
-        scrollPosition: { x: 0, y: 0 },
-        viewport: { width: 0, height: 0 }
-      };
+      return this.getBasicMetadata();
     }
+  }
+
+  /**
+   * Get basic metadata without CDP (fallback)
+   */
+  private getBasicMetadata(): PageMetadata {
+    return {
+      url: this.view.webContents.getURL() || 'about:blank',
+      title: this.view.webContents.getTitle() || 'Untitled',
+      readyState: 'unknown',
+      scrollPosition: { x: 0, y: 0 },
+      viewport: { width: 1920, height: 1080 } // Default viewport
+    };
   }
 
   /**

@@ -291,6 +291,19 @@ export class DOMPruner {
     maxElements = 100
   ): Promise<{ elements: PrunedElement[]; stats: { total: number; pruned: number } }> {
     try {
+      // Ensure debugger is attached
+      if (!cdpDebugger.isAttached()) {
+        console.warn('⚠️ Debugger not attached for DOM pruning, attaching now...');
+        try {
+          cdpDebugger.attach('1.3');
+          await cdpDebugger.sendCommand('Runtime.enable');
+          await cdpDebugger.sendCommand('DOM.enable');
+        } catch (attachError) {
+          console.error('Failed to attach debugger for DOM pruning:', attachError);
+          return { elements: [], stats: { total: 0, pruned: 0 } };
+        }
+      }
+
       const script = this.generateExtractionScript(maxElements);
       
       const result = await cdpDebugger.sendCommand('Runtime.evaluate', {
