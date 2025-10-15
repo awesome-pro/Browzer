@@ -1,16 +1,13 @@
 import { BaseWindow, WebContentsView, Menu } from 'electron';
 import path from 'node:path';
-import { ActionRecorder } from './ActionRecorder';
-import { VideoRecorder } from './VideoRecorder';
-import { RecordingStore } from './RecordingStore';
-import { BrowserAutomation } from './automation/BrowserAutomation';
-import { PasswordAutomation } from './automation/PasswordAutomation';
-import { HistoryService } from './HistoryService';
-import { PasswordManager } from './PasswordManager';
-import { RecordedAction, RecordingSession, HistoryTransition, RecordingTabInfo } from '../shared/types';
-import { INTERNAL_PAGES } from './constants';
+import { ActionRecorder, VideoRecorder, RecordingStore } from '@/main/recording';
+import { HistoryService } from '@/main/history/HistoryService';
+import { PasswordManager } from '@/main/PasswordManager';
+import { RecordedAction, RecordingSession, HistoryTransition, RecordingTabInfo, TabInfo } from '@/shared/types';
+import { INTERNAL_PAGES } from '@/main/constants';
 import { stat } from 'fs/promises';
-import { PasswordUtil } from './utils/PasswordUtil';
+import { PasswordUtil } from '@/main/utils/PasswordUtil';
+import { BrowserAutomation, PasswordAutomation } from './automation';
 
 // Internal tab structure (includes WebContentsView)
 interface Tab {
