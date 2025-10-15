@@ -28,41 +28,19 @@ import {
 
 export class AnthropicProvider extends BaseLLMProvider {
   private client: Anthropic;
-  private readonly defaultModel = 'claude-3-5-sonnet-20241022';
+  private readonly defaultModel = 'claude-sonnet-4-5-20250929';
 
   // Model capabilities registry
   private readonly modelCapabilities: Record<string, ModelCapabilities> = {
-    'claude-3-5-sonnet-20241022': {
+    'claude-sonnet-4-5-20250929': {
       provider: 'anthropic',
-      model: 'claude-3-5-sonnet-20241022',
+      model: 'claude-sonnet-4-5-20250929',
       maxTokens: 8192,
       supportsVision: true,
       supportsToolCalling: true,
       supportsStreaming: true,
       costPer1MTokens: { input: 3.00, output: 15.00 },
-      strengths: ['reasoning', 'coding', 'planning', 'tool-use'],
-      contextWindow: 200000
-    },
-    'claude-3-5-haiku-20241022': {
-      provider: 'anthropic',
-      model: 'claude-3-5-haiku-20241022',
-      maxTokens: 8192,
-      supportsVision: false,
-      supportsToolCalling: true,
-      supportsStreaming: true,
-      costPer1MTokens: { input: 0.80, output: 4.00 },
-      strengths: ['speed', 'cost-effective', 'simple-tasks'],
-      contextWindow: 200000
-    },
-    'claude-3-opus-20240229': {
-      provider: 'anthropic',
-      model: 'claude-3-opus-20240229',
-      maxTokens: 4096,
-      supportsVision: true,
-      supportsToolCalling: true,
-      supportsStreaming: true,
-      costPer1MTokens: { input: 15.00, output: 75.00 },
-      strengths: ['reasoning', 'complex-tasks', 'accuracy'],
+      strengths: ['reasoning', 'coding', 'planning', 'tool-use', 'agents', 'extended-autonomous-operation'],
       contextWindow: 200000
     }
   };

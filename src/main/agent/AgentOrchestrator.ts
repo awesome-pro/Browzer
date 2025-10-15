@@ -65,7 +65,7 @@ export class AgentOrchestrator {
 
     // Apply default configuration
     this.config = {
-      model: 'claude-3-5-sonnet',
+      model: 'claude-4-5-sonnet',
       mode: 'autonomous',
       maxExecutionSteps: 20,
       maxThinkingTime: 300000, // 5 minutes
@@ -119,15 +119,15 @@ export class AgentOrchestrator {
     if (anthropicKey) {
       const anthropic = new AnthropicProvider({
         apiKey: anthropicKey,
-        defaultModel: 'claude-3-5-sonnet-20241022'
+        defaultModel: 'claude-4-5-sonnet'
       });
-      this.llmProviders.set('claude-3-5-sonnet', anthropic);
-      this.llmProviders.set('claude-3-5-haiku', anthropic);
+      this.llmProviders.set('claude-4-5-sonnet', anthropic);
+      // this.llmProviders.set('claude-4-5-haiku', anthropic);
       console.log('[AgentOrchestrator] Anthropic provider initialized');
     }
 
     // Google Gemini
-    const geminiKey = process.env.GOOGLE_API_KEY;
+    const geminiKey = process.env.GEMINI_API_KEY;
     if (geminiKey) {
       const gemini = new GeminiProvider({
         apiKey: geminiKey,
@@ -172,6 +172,12 @@ export class AgentOrchestrator {
       sessionId?: string;
       userId?: string;
       mode?: AgentMode;
+      recordingContext?: {
+        id: string;
+        name: string;
+        actions: any[];
+        url?: string;
+      };
       streamingCallback?: AgentEventCallback;
     } = {}
   ): Promise<AgentExecutionResult> {
@@ -204,6 +210,19 @@ export class AgentOrchestrator {
     context.currentGoal = userMessage;
     context.mode = options.mode || this.config.mode;
     context.state = 'thinking';
+    
+    // Add recording context if provided
+    if (options.recordingContext) {
+      console.log(`[AgentOrchestrator] Using recording context: ${options.recordingContext.name} (${options.recordingContext.actions.length} actions)`);
+      context.recordingContext = options.recordingContext;
+      
+      // Add recording context to messages
+      const recordingPrompt = this.buildRecordingContextPrompt(options.recordingContext);
+      context.messages.push({
+        role: 'user',
+        content: recordingPrompt
+      });
+    }
 
     // Prepare for execution
     const thoughts: AgentThought[] = [];
@@ -576,6 +595,40 @@ export class AgentOrchestrator {
 **Execution Count:** ${context.executionCount}/${context.maxExecutionSteps}
 
 Remember: You are helping the user accomplish their goal efficiently and accurately.`;
+  }
+
+  /**
+   * Build recording context prompt
+   */
+  private buildRecordingContextPrompt(recordingContext: {
+    id: string;
+    name: string;
+    actions: any[];
+    url?: string;
+  }): string {
+    // Summarize the recording
+    const actionSummary = recordingContext.actions
+      .slice(0, 20) // First 20 actions
+      .map((action, idx) => {
+        const type = action.type;
+        const target = action.target?.text || action.target?.ariaLabel || action.target?.selector || '';
+        const value = action.value || '';
+        return `${idx + 1}. ${type}${target ? ` on "${target.substring(0, 50)}"` : ''}${value ? ` with "${value}"` : ''}`;
+      })
+      .join('\n');
+
+    return `[REFERENCE WORKFLOW]
+The user has provided a recorded workflow as reference context. This shows how they previously accomplished a similar task.
+
+Recording: "${recordingContext.name}"
+Starting URL: ${recordingContext.url || 'N/A'}
+Total Actions: ${recordingContext.actions.length}
+
+Key Actions (first 20):
+${actionSummary}
+${recordingContext.actions.length > 20 ? `\n... and ${recordingContext.actions.length - 20} more actions` : ''}
+
+You can use this as a reference for understanding the user's workflow, but adapt it to the current task and page state. The page may have changed since this was recorded, so verify elements exist before interacting with them.`;
   }
 }
 

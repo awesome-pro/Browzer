@@ -349,19 +349,52 @@ export class ReActEngine {
       return { action, actionResult: result };
     }
 
-    // No tool call - this is a final answer
-    const finalAnswer = lastMessage.content;
+    // No tool call - LLM gave text response instead
+    // This should NOT happen for automation tasks - we need to force tool usage!
+    console.warn(`[ReAct] ⚠️ LLM provided text response instead of tool call!`);
+    console.warn(`[ReAct] Response: ${String(lastMessage.content).substring(0, 200)}`);
     
+    // Check if this looks like task completion keywords
+    const content = String(lastMessage.content).toLowerCase();
+    const completionKeywords = ['task complete', 'completed successfully', 'finished', 'done', 'i cannot', 'unable to', 'impossible'];
+    const isCompletion = completionKeywords.some(keyword => content.includes(keyword));
+    
+    if (isCompletion) {
+      // LLM thinks task is done or cannot be done
+      const action: AgentAction = {
+        id: crypto.randomUUID(),
+        timestamp: Date.now(),
+        type: 'complete_task',
+        reasoning: 'LLM indicated task completion or inability to proceed'
+      };
+
+      console.log(`[ReAct] Task marked as complete by LLM`);
+      return { action, finalAnswer: String(lastMessage.content) };
+    }
+    
+    // Otherwise, this is an error - LLM should have called a tool
+    // Treat as a failed action and continue loop
+    console.warn(`[ReAct] Forcing LLM to use tools...`);
     const action: AgentAction = {
       id: crypto.randomUUID(),
       timestamp: Date.now(),
-      type: 'complete_task',
-      reasoning: 'Task completed, providing final answer'
+      type: 'tool_call',
+      reasoning: 'LLM failed to provide tool call, will retry'
     };
+    
+    const failureResult: ToolResult = {
+      success: false,
+      message: 'You did not call any tool. You MUST use the available tools to accomplish the task.',
+      data: { llm_response: lastMessage.content }
+    };
+    
+    // Add this as a user message to force LLM to try again with tools
+    context.messages.push({
+      role: 'user',
+      content: 'ERROR: You must use the available tools to accomplish this task. Do not provide text instructions - actually execute actions by calling tools. Based on the current page state, which specific tool should you call RIGHT NOW to make progress? Call that tool.'
+    });
 
-    console.log(`[ReAct] Final answer: ${finalAnswer.slice(0, 100)}...`);
-
-    return { action, finalAnswer: finalAnswer as string };
+    return { action, actionResult: failureResult };
   }
 
   /**
@@ -400,30 +433,86 @@ export class ReActEngine {
    * Build system prompt for the agent
    */
   private buildSystemPrompt(context: ExecutionContext): string {
-    return `You are an intelligent browser automation agent. Your goal is to help users accomplish tasks by controlling a web browser.
+    return `You are an intelligent browser automation agent. You control a web browser by calling tools/functions.
 
-**Your Capabilities:**
-- You can navigate to URLs, click elements, fill forms, and interact with web pages
-- You have access to the current page state (URL, title, visible elements)
-- You can observe what's on the page and make decisions based on that
+## YOUR ROLE
+You are a ROBOT that EXECUTES browser actions. You are NOT a chatbot that describes actions.
 
-**Your Process (ReAct):**
-1. **Observe** the current browser state
-2. **Think** about what action to take next to accomplish the goal
-3. **Act** by using available tools
-4. **Reflect** on the result and adjust your approach if needed
+## AVAILABLE TOOLS
+You have 18 tools for browser automation:
 
-**Guidelines:**
-- Think step-by-step and explain your reasoning
-- Use tools carefully and check their results
-- If something fails, try alternative approaches
-- When you complete the task, provide a clear final answer
-- Ask for user help if you're stuck or need clarification
+**Navigation:**
+- navigate_to_url: Go to a URL
+- go_back: Browser back button
+- go_forward: Browser forward button  
+- reload_page: Refresh current page
 
-**Current Mode:** ${context.mode}
-**Execution Count:** ${context.executionCount}/${context.maxExecutionSteps}
+**Interaction:**
+- click_element: Click an element (button, link, etc)
+- type_text: Type text into an input/textarea
+- press_key: Press keyboard key (Enter, Tab, etc)
+- select_option: Select from dropdown
+- check_checkbox: Check/uncheck checkbox
+- submit_form: Submit a form
 
-Remember: You are helping the user accomplish their goal efficiently and accurately.`;
+**Observation:**
+- get_page_info: Get URL, title, ready state
+- find_element: Find element by description
+- verify_element_exists: Check if element exists
+- verify_text_present: Check if text is on page
+- get_element_text: Extract text from element
+- get_element_attribute: Get element attribute (href, value, etc)
+- wait_for_element: Wait for element to appear
+- take_screenshot: Capture page screenshot
+
+## CRITICAL RULES
+
+1. **YOU MUST CALL FUNCTIONS** - Every response MUST call a tool unless task is complete or impossible
+2. **NO TEXT INSTRUCTIONS** - Do NOT say "click the button" - CALL click_element()
+3. **NO PSEUDOCODE** - Do NOT write Python-style code - USE ACTUAL FUNCTION CALLS
+4. **ONE TOOL PER TURN** - Call one tool, see result, then decide next tool
+
+## SELECTOR STRATEGIES
+When calling tools that need to find elements, use:
+- \`selector_strategy: "css"\`, \`selector_value: "button.primary"\` - For CSS selectors
+- \`selector_strategy: "text"\`, \`selector_value: "Sign In"\` - For visible text
+- \`selector_strategy: "aria_label"\`, \`selector_value: "Search"\` - For ARIA labels
+- \`selector_strategy: "placeholder"\`, \`selector_value: "Enter email"\` - For placeholders
+
+## EXAMPLES
+
+**BAD Response (TEXT ONLY - FORBIDDEN):**
+"You should navigate to github.com first, then click the sign in button"
+
+**GOOD Response (ACTUAL FUNCTION CALL):**
+Call: navigate_to_url
+Parameters: {"url": "https://github.com", "wait_for_load": true}
+
+**BAD Response (PSEUDOCODE - FORBIDDEN):**
+\`\`\`python
+call_tool("type_text", {"selector": "input[name='q']", "text": "hello"})
+\`\`\`
+
+**GOOD Response (ACTUAL FUNCTION CALL):**
+Call: type_text
+Parameters: {"selector_strategy": "css", "selector_value": "input[name='q']", "text": "hello"}
+
+## YOUR WORKFLOW
+1. Observe the current page (you'll get URL, title, visible elements)
+2. Decide which tool to call next
+3. CALL THE TOOL (using function calling)
+4. See the result
+5. Repeat until task complete
+
+## COMPLETION
+Only stop calling tools when:
+- Task is successfully complete (e.g., repo created, form submitted)
+- Task is impossible (e.g., "I need login credentials but don't have them")
+
+**Current Execution:**
+Mode: ${context.mode} | Steps: ${context.executionCount}/${context.maxExecutionSteps}
+
+**REMEMBER: CALL FUNCTIONS, DON'T DESCRIBE THEM!**`;
   }
 
   /**

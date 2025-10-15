@@ -14,7 +14,6 @@
 import { WebContentsView } from 'electron';
 import { 
   ToolResult, 
-  ToolExecutionContext, 
   ToolErrorCode,
   VerificationResult,
   WaitCondition

@@ -183,6 +183,7 @@ export class IPCHandlers {
       // Execute task
       const result = await agentOrchestrator.executeTask(message, activeTabId, {
         mode: (mode as any) || 'autonomous',
+        recordingContext, // Pass recording context to orchestrator
         streamingCallback: async (event) => {
           // Forward streaming events to renderer
           this.windowManager.sendToRenderer('agent:event', event);

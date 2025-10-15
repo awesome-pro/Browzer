@@ -188,6 +188,7 @@ export class BrowserContextProvider {
     };
 
     console.log('✅ Browser context captured successfully');
+    console.log("context: ", context);
     return context;
   }
 

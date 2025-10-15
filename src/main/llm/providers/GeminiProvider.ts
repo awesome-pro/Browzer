@@ -191,6 +191,12 @@ export class GeminiProvider extends BaseLLMProvider {
       // Add tools if present
       if (request.tools && request.tools.length > 0) {
         payload.tools = this.convertToolsToGeminiFormat(request.tools);
+        // CRITICAL: Force tool calling mode for automation tasks
+        payload.toolConfig = {
+          functionCallingConfig: {
+            mode: 'ANY' // Force model to call at least one function
+          }
+        };
       }
 
       // Generate streaming content using the new SDK
@@ -398,6 +404,7 @@ export class GeminiProvider extends BaseLLMProvider {
       }
     }
 
+    console.log("contents: ", contents);
     return contents;
   }
 

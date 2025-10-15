@@ -11,6 +11,7 @@
 import { LLMMessage, ToolCall } from '../llm/types';
 import { ToolResult } from '../tools/types';
 import { BrowserContext } from '../context/types';
+import { RecordedAction } from '@/shared/types';
 
 /**
  * Agent execution state
@@ -83,6 +84,14 @@ export interface ExecutionContext {
   
   // Browser context
   browserContext?: BrowserContext;
+  
+  // Recording context (optional workflow reference)
+  recordingContext?: {
+    id: string;
+    name: string;
+    actions: RecordedAction[];
+    url?: string;
+  };
   
   // Conversation history
   messages: LLMMessage[];
@@ -198,7 +207,7 @@ export interface MemoryEntry {
  */
 export interface AgentConfig {
   // Model selection
-  model: 'claude-3-5-sonnet' | 'claude-3-5-haiku' | 'gemini-2.5-pro' | 'gemini-2.5-flash';
+  model: 'claude-4-5-sonnet' | 'gemini-2.5-pro' | 'gemini-2.5-flash';
   fallbackModel?: string;
   
   // Behavior
