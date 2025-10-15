@@ -134,8 +134,14 @@ export class ActionRecorder {
 
     try {
       this.debugger = this.view.webContents.debugger;
-      this.debugger.attach('1.3');
-      console.log('✅ CDP Debugger attached');
+      
+      // Attach debugger if not already attached (could be attached by PasswordAutomation)
+      if (!this.debugger.isAttached()) {
+        this.debugger.attach('1.3');
+        console.log('✅ CDP Debugger attached');
+      } else {
+        console.log('✅ CDP Debugger already attached, reusing existing connection');
+      }
 
       this.actions = [];
       this.isRecording = true;
