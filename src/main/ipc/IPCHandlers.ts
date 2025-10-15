@@ -23,7 +23,8 @@ export class IPCHandlers {
   ) {
     this.settingsStore = new SettingsStore();
     this.userService = new UserService();
-    this.passwordManager = new PasswordManager();
+    // Use the existing PasswordManager from BrowserManager instead of creating a new one
+    this.passwordManager = this.browserManager.getPasswordManager();
     this.setupHandlers();
 
     console.log('IPCHandlers initialized');
@@ -367,6 +368,9 @@ export class IPCHandlers {
     ipcMain.removeAllListeners('password:delete');
     ipcMain.removeAllListeners('password:add-to-blacklist');
     ipcMain.removeAllListeners('password:is-blacklisted');
+    
+    // Window handlers cleanup
+    ipcMain.removeAllListeners('window:toggle-maximize');
   }
 
   private setupPasswordHandlers(): void {
@@ -400,6 +404,5 @@ export class IPCHandlers {
     ipcMain.handle('password:is-blacklisted', async (_, origin: string) => {
       return this.passwordManager.isBlacklisted(origin);
     });
-    ipcMain.removeAllListeners('window:toggle-maximize');
   }
 }

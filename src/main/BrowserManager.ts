@@ -913,6 +913,13 @@ export class BrowserManager {
   }
 
   /**
+   * Get password manager instance
+   */
+  public getPasswordManager(): PasswordManager {
+    return this.passwordManager;
+  }
+
+  /**
    * Notify renderer about tab changes
    */
   private notifyTabsChanged(): void {
