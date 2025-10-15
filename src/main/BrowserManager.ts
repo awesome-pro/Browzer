@@ -1,4 +1,4 @@
-import { BaseWindow, WebContentsView, Menu } from 'electron';
+import { BaseWindow, WebContentsView, Menu, WebContents } from 'electron';
 import path from 'node:path';
 import { ActionRecorder, VideoRecorder, RecordingStore } from '@/main/recording';
 import { HistoryService } from '@/main/history/HistoryService';
@@ -916,18 +916,6 @@ export class BrowserManager {
         view.webContents.send('browser:tabs-updated', this.getAllTabs());
       }
     });
-  }
-
-  /**
-   * Get tab ID for a given webContents
-   */
-  private getTabIdForWebContents(webContents: any): string | null {
-    for (const [tabId, tab] of this.tabs) {
-      if (tab.view.webContents === webContents) {
-        return tabId;
-      }
-    }
-    return null;
   }
 
   /**
