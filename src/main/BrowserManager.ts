@@ -4,10 +4,13 @@ import { ActionRecorder } from './ActionRecorder';
 import { VideoRecorder } from './VideoRecorder';
 import { RecordingStore } from './RecordingStore';
 import { BrowserAutomation } from './automation/BrowserAutomation';
+import { PasswordAutomation } from './automation/PasswordAutomation';
 import { HistoryService } from './HistoryService';
+import { PasswordManager } from './PasswordManager';
 import { RecordedAction, RecordingSession, HistoryTransition, RecordingTabInfo } from '../shared/types';
 import { INTERNAL_PAGES } from './constants';
 import { stat } from 'fs/promises';
+import { jsonStringifyForJS } from './utils/jsEscape';
 
 // Data that can be sent through IPC (serializable)
 export interface TabInfo {
@@ -27,6 +30,10 @@ interface Tab {
   info: TabInfo;
   videoRecorder?: VideoRecorder;
   automation?: BrowserAutomation;
+  passwordAutomation?: PasswordAutomation;
+  // Track selected credential for multi-step flows
+  selectedCredentialId?: string;
+  selectedCredentialUsername?: string;
 }
 
 /**
@@ -45,10 +52,12 @@ export class BrowserManager {
   private agentUIView?: WebContentsView;
   private recordingStore: RecordingStore;
   private historyService: HistoryService;
+  private passwordManager: PasswordManager;
   private recordingStartTime = 0;
   private recordingStartUrl = '';
   private currentRecordingId: string | null = null;
   private currentSidebarWidth = 0;
+  
 
    // Centralized recorder for multi-tab recording
   private centralRecorder: ActionRecorder;
@@ -62,6 +71,7 @@ export class BrowserManager {
     this.agentUIView = agentUIView;
     this.recordingStore = new RecordingStore();
     this.historyService = new HistoryService();
+    this.passwordManager = new PasswordManager();
     
     // Initialize centralized recorder (without view initially)
     this.centralRecorder = new ActionRecorder();
@@ -117,6 +127,13 @@ export class BrowserManager {
       info: tabInfo,
       videoRecorder: new VideoRecorder(view),
       automation: new BrowserAutomation(view),
+      passwordAutomation: new PasswordAutomation(
+        view, 
+        this.passwordManager, 
+        tabId,
+        (tabId: string, credentialId: string, username: string) => this.handleCredentialSelected(tabId, credentialId, username),
+        (tabId: string) => this.handleAutoFillPassword(tabId)
+      ),
     };
 
     // Store tab
@@ -150,6 +167,13 @@ export class BrowserManager {
 
     // Remove view from window
     this.baseWindow.contentView.removeChildView(tab.view);
+
+    // Clean up password automation
+    if (tab.passwordAutomation) {
+      tab.passwordAutomation.stop().catch(err => 
+        console.error('[BrowserManager] Error stopping password automation:', err)
+      );
+    }
 
     // Clean up
     tab.view.webContents.close();
@@ -654,7 +678,7 @@ export class BrowserManager {
       this.notifyTabsChanged();
     });
 
-    webContents.on('did-stop-loading', () => {
+    webContents.on('did-stop-loading', async () => {
       info.isLoading = false;
       info.canGoBack = webContents.navigationHistory.canGoBack();
       info.canGoForward = webContents.navigationHistory.canGoForward();
@@ -666,6 +690,15 @@ export class BrowserManager {
           HistoryTransition.LINK,
           info.favicon
         ).catch(err => console.error('Failed to add history entry:', err));
+      }
+      
+      // Start CDP-based password automation
+      if (tab.passwordAutomation && !this.isInternalPage(info.url)) {
+        try {
+          await tab.passwordAutomation.start();
+        } catch (error) {
+          console.error('[BrowserManager] Failed to start password automation:', error);
+        }
       }
       
       this.notifyTabsChanged();
@@ -741,7 +774,7 @@ export class BrowserManager {
         if (webContents.isDevToolsOpened()) {
           webContents.closeDevTools();
         } else {
-          webContents.openDevTools({ mode: 'right' });
+          webContents.openDevTools({ mode: 'right', activate: true });
         }
       }
       // Cmd/Ctrl + Shift + C to open DevTools in inspect mode
@@ -856,6 +889,15 @@ export class BrowserManager {
   }
 
   /**
+   * Check if URL is an internal page
+   */
+  private isInternalPage(url: string): boolean {
+    return url.startsWith('browzer://') || 
+           url.includes('index.html#/') ||
+           INTERNAL_PAGES.some(page => url.includes(`#/${page.path}`));
+  }
+
+  /**
    * Get automation instance for active tab
    */
   public getActiveAutomation(): BrowserAutomation | null {
@@ -881,5 +923,103 @@ export class BrowserManager {
         view.webContents.send('browser:tabs-updated', this.getAllTabs());
       }
     });
+  }
+
+  /**
+   * Get tab ID for a given webContents
+   */
+  private getTabIdForWebContents(webContents: any): string | null {
+    for (const [tabId, tab] of this.tabs) {
+      if (tab.view.webContents === webContents) {
+        return tabId;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Handle credential selection for multi-step flows
+   */
+  private handleCredentialSelected(tabId: string, credentialId: string, username: string): void {
+    const tab = this.tabs.get(tabId);
+    if (tab) {
+      tab.selectedCredentialId = credentialId;
+      tab.selectedCredentialUsername = username;
+      // console.log('[BrowserManager] Stored selected credential for tab:', tabId, 'username:', username);
+    }
+  }
+
+  /**
+   * Handle auto-fill password request
+   */
+  private async handleAutoFillPassword(tabId: string): Promise<void> {
+    const tab = this.tabs.get(tabId);
+    if (!tab || !tab.selectedCredentialId) {
+      // console.log('[BrowserManager] No selected credential for auto-fill on tab:', tabId);
+      return;
+    }
+    
+    const password = this.passwordManager.getPassword(tab.selectedCredentialId);
+    if (!password) {
+      //console.log('[BrowserManager] No password found for credential:', tab.selectedCredentialId);
+      return;
+    }
+    
+    console.log('[BrowserManager] Auto-filling password for:', tab.selectedCredentialUsername);
+    
+    // Inject password fill script with retry logic
+    const script = `
+      (function() {
+        let attempts = 0;
+        const maxAttempts = 20;
+        
+        function tryFillPassword() {
+          const passwordFields = document.querySelectorAll('input[type="password"]');
+          const visiblePasswordField = Array.from(passwordFields).find(field => {
+            const style = window.getComputedStyle(field);
+            return style.display !== 'none' && 
+                   style.visibility !== 'hidden' && 
+                   field.offsetWidth > 0 && 
+                   field.offsetHeight > 0;
+          });
+          
+          if (visiblePasswordField) {
+            visiblePasswordField.value = ${jsonStringifyForJS(password)};
+            visiblePasswordField.dispatchEvent(new Event('input', { bubbles: true }));
+            visiblePasswordField.dispatchEvent(new Event('change', { bubbles: true }));
+            
+            // Show success notification
+            const notification = document.createElement('div');
+            notification.style.cssText = 'position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #4CAF50; color: white; padding: 12px 24px; border-radius: 6px; z-index: 999999; font-family: Arial, sans-serif; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);';
+            notification.textContent = 'Password auto-filled for ' + ${jsonStringifyForJS(tab.selectedCredentialUsername || 'user')};
+            document.body.appendChild(notification);
+            
+            setTimeout(() => notification.remove(), 3000);
+            
+            //console.log('[PasswordManager] ✅ Multi-step password auto-filled');
+          } else {
+            attempts++;
+            if (attempts < maxAttempts) {
+              setTimeout(tryFillPassword, 250);
+            } else {
+              // console.log('[PasswordManager] ❌ Password field not found after', maxAttempts, 'attempts');
+            }
+          }
+        }
+        
+        tryFillPassword();
+      })();
+    `;
+    
+    try {
+      await tab.view.webContents.executeJavaScript(script);
+      
+      // Clear selected credential after use
+      tab.selectedCredentialId = undefined;
+      tab.selectedCredentialUsername = undefined;
+      
+    } catch (error) {
+      console.error('[BrowserManager] Error auto-filling password:', error);
+    }
   }
 }
