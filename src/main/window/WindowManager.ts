@@ -25,6 +25,7 @@ export class WindowManager {
       trafficLightPosition: { x: 10, y: 10 },
       backgroundColor: '#fff',
       show: false,
+      fullscreenable: false, // Prevent fullscreen mode to keep traffic lights always visible
     });
 
     // Create Agent UI WebContentsView (trusted UI layer)
@@ -47,9 +48,10 @@ export class WindowManager {
     }, 100);
 
     // Open DevTools in development
-    if (process.env.NODE_ENV === 'development') {
-      this.agentUIView.webContents.openDevTools({ mode: 'detach' });
-    }
+    // if (process.env.NODE_ENV === 'development') {
+    //  this.agentUIView.webContents.openDevTools({ mode: 'detach' });
+    // }
+    // DevTools will only open via keyboard shortcut (Cmd+Shift+I) or context menu
   }
 
   private setupAgentUI(): void {
