@@ -1,11 +1,11 @@
 import { ipcMain, shell } from 'electron';
-import { BrowserManager } from '../BrowserManager';
-import { LayoutManager } from '../window/LayoutManager';
-import { WindowManager } from '../window/WindowManager';
-import { SettingsStore, AppSettings } from '../settings/SettingsStore';
-import { UserService } from '../user/UserService';
-import { PasswordManager } from '../password/PasswordManager';
-import { RecordedAction, HistoryQuery } from '../../shared/types';
+import { BrowserManager } from '@/main/BrowserManager';
+import { LayoutManager } from '@/main/window/LayoutManager';
+import { WindowManager } from '@/main/window/WindowManager';
+import { SettingsStore, AppSettings } from '@/main/settings/SettingsStore';
+import { UserService } from '@/main/user/UserService';
+import { PasswordManager } from '@/main/password/PasswordManager';
+import { RecordedAction, HistoryQuery } from '@/shared/types';
 
 /**
  * IPCHandlers - Centralized IPC communication setup
