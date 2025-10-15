@@ -10,7 +10,7 @@ import { PasswordManager } from './PasswordManager';
 import { RecordedAction, RecordingSession, HistoryTransition, RecordingTabInfo } from '../shared/types';
 import { INTERNAL_PAGES } from './constants';
 import { stat } from 'fs/promises';
-import { jsonStringifyForJS } from './utils/jsEscape';
+import { PasswordUtil } from './utils/PasswordUtil';
 
 // Data that can be sent through IPC (serializable)
 export interface TabInfo {
@@ -962,64 +962,23 @@ export class BrowserManager {
   private async handleAutoFillPassword(tabId: string): Promise<void> {
     const tab = this.tabs.get(tabId);
     if (!tab || !tab.selectedCredentialId) {
-      // console.log('[BrowserManager] No selected credential for auto-fill on tab:', tabId);
       return;
     }
     
     const password = this.passwordManager.getPassword(tab.selectedCredentialId);
     if (!password) {
-      //console.log('[BrowserManager] No password found for credential:', tab.selectedCredentialId);
       return;
     }
     
     console.log('[BrowserManager] Auto-filling password for:', tab.selectedCredentialUsername);
     
-    // Inject password fill script with retry logic
-    const script = `
-      (function() {
-        let attempts = 0;
-        const maxAttempts = 20;
-        
-        function tryFillPassword() {
-          const passwordFields = document.querySelectorAll('input[type="password"]');
-          const visiblePasswordField = Array.from(passwordFields).find(field => {
-            const style = window.getComputedStyle(field);
-            return style.display !== 'none' && 
-                   style.visibility !== 'hidden' && 
-                   field.offsetWidth > 0 && 
-                   field.offsetHeight > 0;
-          });
-          
-          if (visiblePasswordField) {
-            visiblePasswordField.value = ${jsonStringifyForJS(password)};
-            visiblePasswordField.dispatchEvent(new Event('input', { bubbles: true }));
-            visiblePasswordField.dispatchEvent(new Event('change', { bubbles: true }));
-            
-            // Show success notification
-            const notification = document.createElement('div');
-            notification.style.cssText = 'position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #4CAF50; color: white; padding: 12px 24px; border-radius: 6px; z-index: 999999; font-family: Arial, sans-serif; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);';
-            notification.textContent = 'Password auto-filled for ' + ${jsonStringifyForJS(tab.selectedCredentialUsername || 'user')};
-            document.body.appendChild(notification);
-            
-            setTimeout(() => notification.remove(), 3000);
-            
-            //console.log('[PasswordManager] ✅ Multi-step password auto-filled');
-          } else {
-            attempts++;
-            if (attempts < maxAttempts) {
-              setTimeout(tryFillPassword, 250);
-            } else {
-              // console.log('[PasswordManager] ❌ Password field not found after', maxAttempts, 'attempts');
-            }
-          }
-        }
-        
-        tryFillPassword();
-      })();
-    `;
-    
     try {
-      await tab.view.webContents.executeJavaScript(script);
+      // Use PasswordUtil for the actual password filling logic
+      await PasswordUtil.fillPassword(
+        tab.view,
+        password,
+        tab.selectedCredentialUsername
+      );
       
       // Clear selected credential after use
       tab.selectedCredentialId = undefined;
