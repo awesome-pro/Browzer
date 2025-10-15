@@ -38,6 +38,7 @@ export class IPCHandlers {
     this.setupUserHandlers();
     this.setupHistoryHandlers();
     this.setupPasswordHandlers();
+    this.setupWindowHandlers();
   }
 
   private setupTabHandlers(): void {
@@ -297,6 +298,19 @@ export class IPCHandlers {
     this.browserManager.updateLayout(bounds.width, bounds.height, sidebarWidth);
   }
 
+  private setupWindowHandlers(): void {
+    ipcMain.handle('window:toggle-maximize', async () => {
+      const window = this.windowManager.getWindow();
+      if (window) {
+        if (window.isMaximized()) {
+          window.unmaximize();
+        } else {
+          window.maximize();
+        }
+      }
+    });
+  }
+
   public cleanup(): void {
     ipcMain.removeAllListeners('browser:create-tab');
     ipcMain.removeAllListeners('browser:close-tab');
@@ -386,5 +400,6 @@ export class IPCHandlers {
     ipcMain.handle('password:is-blacklisted', async (_, origin: string) => {
       return this.passwordManager.isBlacklisted(origin);
     });
+    ipcMain.removeAllListeners('window:toggle-maximize');
   }
 }
