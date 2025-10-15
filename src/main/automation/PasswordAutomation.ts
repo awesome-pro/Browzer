@@ -283,7 +283,7 @@ export class PasswordAutomation {
                   // Function to show autofill
                   const showAutofill = () => {
                     console.log('BROWZER_SHOW_AUTOFILL_DROPDOWN:' + JSON.stringify({
-                      origin: '${origin}',
+                      origin: ${jsonStringifyForJS(origin)},
                       credentials: credentials
                     }));
                   };
