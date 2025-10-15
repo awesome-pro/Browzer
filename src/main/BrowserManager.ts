@@ -12,17 +12,6 @@ import { INTERNAL_PAGES } from './constants';
 import { stat } from 'fs/promises';
 import { PasswordUtil } from './utils/PasswordUtil';
 
-// Data that can be sent through IPC (serializable)
-export interface TabInfo {
-  id: string;
-  title: string;
-  url: string;
-  favicon?: string;
-  isLoading: boolean;
-  canGoBack: boolean;
-  canGoForward: boolean;
-}
-
 // Internal tab structure (includes WebContentsView)
 interface Tab {
   id: string;

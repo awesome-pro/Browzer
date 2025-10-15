@@ -1,7 +1,7 @@
 /* eslint-disable no-case-declarations */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { WebContentsView } from "electron";
-import { RecordedAction } from '../shared/types';
+import { RecordedAction } from '@/shared/types';
 import { SnapshotManager } from './SnapshotManager';
 
 export class ActionRecorder {

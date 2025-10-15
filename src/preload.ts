@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { contextBridge, ipcRenderer, desktopCapturer } from 'electron';
-import type { TabInfo } from './main/BrowserManager';
-import type { AppSettings } from './main/SettingsStore';
-import { User, UserPreferences, HistoryEntry, HistoryQuery, HistoryStats } from './shared/types';
+import type { TabInfo } from '@/shared/types';
+import type { AppSettings } from '@/main/settings/SettingsStore';
+import { User, UserPreferences, HistoryEntry, HistoryQuery, HistoryStats } from '@/shared/types';
 
 /**
  * Preload script for Agent UI (Browser Chrome)
