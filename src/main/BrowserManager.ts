@@ -1,24 +1,13 @@
 import { BaseWindow, WebContentsView, Menu } from 'electron';
 import path from 'node:path';
-import { ActionRecorder } from './ActionRecorder';
-import { VideoRecorder } from './VideoRecorder';
-import { RecordingStore } from './RecordingStore';
-import { BrowserAutomation } from './automation/BrowserAutomation';
-import { HistoryService } from './HistoryService';
-import { RecordedAction, RecordingSession, HistoryTransition, RecordingTabInfo } from '../shared/types';
-import { INTERNAL_PAGES } from './constants';
+import { ActionRecorder } from '@/main/recording/ActionRecorder';
+import { VideoRecorder } from '@/main/recording/VideoRecorder';
+import { RecordingStore } from '@/main/recording/RecordingStore';
+import { BrowserAutomation } from '@/main/automation/BrowserAutomation';
+import { HistoryService } from '@/main/history/HistoryService';
+import { RecordedAction, RecordingSession, HistoryTransition, RecordingTabInfo, TabInfo } from '@/shared/types';
+import { INTERNAL_PAGES } from '@/main/constants';
 import { stat } from 'fs/promises';
-
-// Data that can be sent through IPC (serializable)
-export interface TabInfo {
-  id: string;
-  title: string;
-  url: string;
-  favicon?: string;
-  isLoading: boolean;
-  canGoBack: boolean;
-  canGoForward: boolean;
-}
 
 // Internal tab structure (includes WebContentsView)
 interface Tab {

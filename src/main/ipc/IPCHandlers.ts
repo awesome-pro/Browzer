@@ -2,8 +2,8 @@ import { ipcMain, shell } from 'electron';
 import { BrowserManager } from '../BrowserManager';
 import { LayoutManager } from '../window/LayoutManager';
 import { WindowManager } from '../window/WindowManager';
-import { SettingsStore, AppSettings } from '../SettingsStore';
-import { UserService } from '../UserService';
+import { SettingsStore, AppSettings } from '../settings/SettingsStore';
+import { UserService } from '../user/UserService';
 import { RecordedAction, HistoryQuery } from '../../shared/types';
 
 /**
