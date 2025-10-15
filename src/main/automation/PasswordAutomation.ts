@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { WebContentsView } from 'electron';
-import { PasswordManager } from '../PasswordManager';
+import { PasswordManager } from '../password/PasswordManager';
 import { jsonStringifyForJS } from '../utils/jsEscape';
 
 /**

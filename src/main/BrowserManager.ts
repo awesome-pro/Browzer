@@ -2,7 +2,7 @@ import { BaseWindow, WebContentsView, Menu } from 'electron';
 import path from 'node:path';
 import { ActionRecorder, VideoRecorder, RecordingStore } from '@/main/recording';
 import { HistoryService } from '@/main/history/HistoryService';
-import { PasswordManager } from '@/main/PasswordManager';
+import { PasswordManager } from '@/main/password/PasswordManager';
 import { RecordedAction, RecordingSession, HistoryTransition, RecordingTabInfo, TabInfo } from '@/shared/types';
 import { INTERNAL_PAGES } from '@/main/constants';
 import { stat } from 'fs/promises';

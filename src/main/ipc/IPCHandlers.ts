@@ -4,7 +4,7 @@ import { LayoutManager } from '@/main/window/LayoutManager';
 import { WindowManager } from '@/main/window/WindowManager';
 import { SettingsStore, AppSettings } from '@/main/settings/SettingsStore';
 import { UserService } from '@/main/user/UserService';
-import { PasswordManager } from '@/main/PasswordManager';
+import { PasswordManager } from '@/main/password/PasswordManager';
 import { RecordedAction, HistoryQuery } from '@/shared/types';
 
 /**
