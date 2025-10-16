@@ -1,53 +1,43 @@
 /**
- * Automation Service - Main orchestrator for LLM-controlled browser automation
+ * Automation Service - ReAct-based agentic browser automation
  * 
- * This service coordinates:
- * - LLM plan generation
- * - Automation execution
- * - Progress tracking
- * - Error handling
+ * Uses Claude Sonnet 4.5 with tool use for iterative automation:
+ * - Think → Act → Observe → Reflect loop
+ * - Persistent conversation context with prompt caching
+ * - Real-time browser state awareness
+ * - Intelligent error recovery
+ * - Adaptive planning
  */
 
-import { BrowserAutomation } from './BrowserAutomation';
-import { LLMService } from './LLMService';
-import { AutomationExecutor } from './AutomationExecutor';
-import { RecordingSession } from '@/shared/types/recording';
+import { WebContentsView } from 'electron';
+import { AgenticAutomationService } from './agentic';
 import {
   AutomationPlan,
   AutomationResult,
   AutomationStep,
-  LLMAutomationRequest,
-  LLMAutomationResponse
+  LLMAutomationRequest
 } from '@/shared/types/automation';
 
 export class AutomationService {
-  private llmService: LLMService;
-  private currentPlan: AutomationPlan | null = null;
+  private agenticService: AgenticAutomationService;
   private isExecuting = false;
 
-  constructor() {
-    this.llmService = new LLMService();
+  constructor(view: WebContentsView) {
+    this.agenticService = new AgenticAutomationService(view);
   }
 
   /**
-   * Initialize the service with API key
-   */
-  public initialize(apiKey: string): void {
-    this.llmService.initialize(apiKey);
-  }
-
-  /**
-   * Generate and execute automation plan
+   * Execute automation using ReAct-based agentic loop
    */
   public async executeAutomation(
     request: LLMAutomationRequest,
-    automation: BrowserAutomation,
     onProgress?: (step: AutomationStep, index: number, total: number) => void
   ): Promise<AutomationResult> {
     if (this.isExecuting) {
+      const emptyPlan = this.createEmptyPlan(request);
       return {
         success: false,
-        plan: this.currentPlan!,
+        plan: emptyPlan,
         error: 'Another automation is already running',
         executionTime: 0
       };
@@ -57,54 +47,51 @@ export class AutomationService {
     const startTime = Date.now();
 
     try {
-      // Step 1: Generate automation plan using LLM
-      console.log('[AutomationService] Generating automation plan...');
-      const llmResponse = await this.llmService.generateAutomationPlan(
-        request.userPrompt,
-        request.recordingSession
-      );
+      console.log('[AutomationService] Starting ReAct-based agentic automation');
 
-      if (!llmResponse.success || !llmResponse.steps) {
-        return {
-          success: false,
-          plan: this.createEmptyPlan(request),
-          error: llmResponse.error || 'Failed to generate automation plan',
-          executionTime: Date.now() - startTime
-        };
-      }
+      const result = await this.agenticService.execute({
+        userPrompt: request.userPrompt,
+        recordingSession: request.recordingSession,
+        apiKey: request.apiKey,
+        onProgress: (update) => {
+          // Convert agentic progress updates for UI
+          if (update.type === 'acting' && update.toolName) {
+            const step: AutomationStep = {
+              id: `step-${Date.now()}`,
+              action: 'navigate', // Use a valid action type
+              description: `${update.toolName}: ${update.message}`,
+              status: 'running',
+              retryCount: 0
+            };
+            onProgress?.(step, update.iteration, 50);
+          }
+        }
+      });
 
-      // Step 2: Create automation plan
-      this.currentPlan = {
-        id: `plan-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        steps: llmResponse.steps,
+      // Build plan from agentic result
+      const plan: AutomationPlan = {
+        id: `plan-agentic-${Date.now()}`,
+        steps: [], // Agentic mode generates steps dynamically
         userPrompt: request.userPrompt,
         recordingSessionId: request.recordingSession.id,
-        createdAt: Date.now(),
-        status: 'pending',
-        completedSteps: 0,
-        failedSteps: 0
+        createdAt: startTime,
+        status: result.success ? 'completed' : 'failed',
+        completedSteps: result.iterations,
+        failedSteps: result.success ? 0 : 1
       };
 
-      console.log('[AutomationService] Plan generated with', llmResponse.steps.length, 'steps');
-      if (llmResponse.tokensUsed) {
-        console.log('[AutomationService] Tokens used:', llmResponse.tokensUsed);
-        if (llmResponse.tokensUsed.cacheRead) {
-          console.log('[AutomationService] Cache hit! Saved', llmResponse.tokensUsed.cacheRead, 'tokens');
-        }
-      }
-
-      // Step 3: Execute the plan
-      console.log('[AutomationService] Starting execution...');
-      const executor = new AutomationExecutor(automation);
-      const result = await executor.executePlan(this.currentPlan, onProgress);
-
-      return result;
+      return {
+        success: result.success,
+        plan,
+        error: result.error,
+        executionTime: result.duration
+      };
 
     } catch (error) {
       console.error('[AutomationService] Automation failed:', error);
       return {
         success: false,
-        plan: this.currentPlan || this.createEmptyPlan(request),
+        plan: this.createEmptyPlan(request),
         error: error instanceof Error ? error.message : 'Unknown error',
         executionTime: Date.now() - startTime
       };
@@ -114,34 +101,18 @@ export class AutomationService {
   }
 
   /**
-   * Generate automation plan without executing
-   */
-  public async generatePlan(
-    userPrompt: string,
-    recordingSession: RecordingSession
-  ): Promise<LLMAutomationResponse> {
-    return await this.llmService.generateAutomationPlan(userPrompt, recordingSession);
-  }
-
-  /**
    * Get current execution status
    */
-  public getStatus(): {
-    isExecuting: boolean;
-    currentPlan: AutomationPlan | null;
-  } {
-    return {
-      isExecuting: this.isExecuting,
-      currentPlan: this.currentPlan
-    };
+  public getStatus(): { isExecuting: boolean } {
+    return { isExecuting: this.isExecuting };
   }
 
   /**
    * Cancel current execution
    */
   public cancel(): void {
-    if (this.isExecuting && this.currentPlan) {
-      this.currentPlan.status = 'cancelled';
+    if (this.isExecuting) {
+      this.agenticService.cancel();
       this.isExecuting = false;
       console.log('[AutomationService] Execution cancelled');
     }

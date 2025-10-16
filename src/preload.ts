@@ -94,10 +94,9 @@ export interface BrowserAPI {
   getMostVisited: (limit?: number) => Promise<HistoryEntry[]>;
   getRecentlyVisited: (limit?: number) => Promise<HistoryEntry[]>;
 
-  // Automation Management
+  // Automation Management (Agentic ReAct-based)
   initializeAutomation: (apiKey: string) => Promise<{ success: boolean; error?: string }>;
   executeAutomation: (request: any) => Promise<any>;
-  generateAutomationPlan: (userPrompt: string, recordingSession: any) => Promise<any>;
   getAutomationStatus: () => Promise<any>;
   cancelAutomation: () => Promise<{ success: boolean }>;
 
@@ -252,13 +251,11 @@ const browserAPI: BrowserAPI = {
   isSiteBlacklisted: (origin: string) => 
     ipcRenderer.invoke('password:is-blacklisted', origin),
 
-  // Automation API
+  // Automation API (Agentic ReAct-based)
   initializeAutomation: (apiKey: string) => 
     ipcRenderer.invoke('automation:initialize', apiKey),
   executeAutomation: (request: any) => 
     ipcRenderer.invoke('automation:execute', request),
-  generateAutomationPlan: (userPrompt: string, recordingSession: any) => 
-    ipcRenderer.invoke('automation:generate-plan', userPrompt, recordingSession),
   getAutomationStatus: () => 
     ipcRenderer.invoke('automation:get-status'),
   cancelAutomation: () => 

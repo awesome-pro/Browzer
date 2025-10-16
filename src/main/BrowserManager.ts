@@ -892,6 +892,14 @@ export class BrowserManager {
   }
 
   /**
+   * Get WebContentsView of active tab
+   */
+  public getActiveTabView(): WebContentsView | null {
+    const activeTab = this.tabs.get(this.activeTabId || '');
+    return activeTab?.view || null;
+  }
+
+  /**
    * Get history service instance
    */
   public getHistoryService(): HistoryService {

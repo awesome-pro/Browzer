@@ -27,7 +27,10 @@ export class IPCHandlers {
     this.userService = new UserService();
     // Use the existing PasswordManager from BrowserManager instead of creating a new one
     this.passwordManager = this.browserManager.getPasswordManager();
-    this.automationService = new AutomationService();
+    
+    // AutomationService will be initialized when needed (requires active browser view)
+    this.automationService = null!;
+    
     this.setupHandlers();
 
     console.log('IPCHandlers initialized');
@@ -317,10 +320,10 @@ export class IPCHandlers {
   }
 
   private setupAutomationHandlers(): void {
-    // Initialize automation service with API key
-    ipcMain.handle('automation:initialize', async (_, apiKey: string) => {
+    // Initialize automation service with API key (no-op now, kept for compatibility)
+    ipcMain.handle('automation:initialize', async () => {
       try {
-        this.automationService.initialize(apiKey);
+        // AutomationService will be initialized when automation is executed
         return { success: true };
       } catch (error) {
         console.error('[IPC] Failed to initialize automation:', error);
@@ -331,17 +334,32 @@ export class IPCHandlers {
     // Execute automation
     ipcMain.handle('automation:execute', async (_, request: LLMAutomationRequest) => {
       try {
-        const automation = this.browserManager.getActiveAutomation();
-        if (!automation) {
+        // Get active tab's browser view
+        const browserView = this.browserManager.getActiveTabView();
+        
+        if (!browserView) {
           return {
             success: false,
-            error: 'No active tab for automation'
+            plan: {
+              id: 'error',
+              steps: [],
+              userPrompt: request.userPrompt,
+              recordingSessionId: request.recordingSession.id,
+              createdAt: Date.now(),
+              status: 'failed',
+              completedSteps: 0,
+              failedSteps: 0
+            },
+            error: 'No active tab for automation',
+            executionTime: 0
           };
         }
 
+        // Initialize AutomationService with current browser view
+        this.automationService = new AutomationService(browserView);
+
         const result = await this.automationService.executeAutomation(
           request,
-          automation,
           (step, index, total) => {
             // Send progress updates to renderer
             const agentUIView = this.windowManager.getAgentUIView();
@@ -360,33 +378,35 @@ export class IPCHandlers {
         console.error('[IPC] Automation execution failed:', error);
         return {
           success: false,
-          error: (error as Error).message
-        };
-      }
-    });
-
-    // Generate plan only (without executing)
-    ipcMain.handle('automation:generate-plan', async (_, userPrompt: string, recordingSession: any) => {
-      try {
-        const result = await this.automationService.generatePlan(userPrompt, recordingSession);
-        return result;
-      } catch (error) {
-        console.error('[IPC] Plan generation failed:', error);
-        return {
-          success: false,
-          error: (error as Error).message
+          plan: {
+            id: 'error',
+            steps: [],
+            userPrompt: request.userPrompt,
+            recordingSessionId: request.recordingSession.id,
+            createdAt: Date.now(),
+            status: 'failed',
+            completedSteps: 0,
+            failedSteps: 0
+          },
+          error: (error as Error).message,
+          executionTime: 0
         };
       }
     });
 
     // Get automation status
     ipcMain.handle('automation:get-status', async () => {
+      if (!this.automationService) {
+        return { isExecuting: false };
+      }
       return this.automationService.getStatus();
     });
 
     // Cancel automation
     ipcMain.handle('automation:cancel', async () => {
-      this.automationService.cancel();
+      if (this.automationService) {
+        this.automationService.cancel();
+      }
       return { success: true };
     });
   }
