@@ -469,12 +469,12 @@ export class ToolRegistry {
     return {
       name: tool.name,
       description: tool.description,
-      inputSchema: {
+      input_schema: {
         type: 'object',
         properties,
         ...(required.length > 0 ? { required } : {})
       }
-    };
+    } as any;
   }
 
   /**

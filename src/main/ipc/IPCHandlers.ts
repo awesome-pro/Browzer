@@ -40,6 +40,7 @@ export class IPCHandlers {
     this.setupHistoryHandlers();
     this.setupPasswordHandlers();
     this.setupWindowHandlers();
+    this.setupAgentHandlers();
   }
 
   private setupTabHandlers(): void {
@@ -371,6 +372,12 @@ export class IPCHandlers {
     
     // Window handlers cleanup
     ipcMain.removeAllListeners('window:toggle-maximize');
+    
+    // Agent handlers cleanup
+    ipcMain.removeAllListeners('agent:initialize');
+    ipcMain.removeAllListeners('agent:execute-automation');
+    ipcMain.removeAllListeners('agent:get-state');
+    ipcMain.removeAllListeners('agent:reset');
   }
 
   private setupPasswordHandlers(): void {
@@ -403,6 +410,28 @@ export class IPCHandlers {
     // Check if blacklisted
     ipcMain.handle('password:is-blacklisted', async (_, origin: string) => {
       return this.passwordManager.isBlacklisted(origin);
+    });
+  }
+
+  private setupAgentHandlers(): void {
+    // Initialize agent orchestrator
+    ipcMain.handle('agent:initialize', async (_, apiKey: string, config?: any) => {
+      return this.browserManager.initializeAgentOrchestrator(apiKey, config);
+    });
+
+    // Execute agent automation
+    ipcMain.handle('agent:execute-automation', async (_, request: any) => {
+      return this.browserManager.executeAgentAutomation(request);
+    });
+
+    // Get agent state
+    ipcMain.handle('agent:get-state', async () => {
+      return this.browserManager.getAgentState();
+    });
+
+    // Reset agent
+    ipcMain.handle('agent:reset', async () => {
+      return this.browserManager.resetAgent();
     });
   }
 }

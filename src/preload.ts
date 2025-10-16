@@ -94,6 +94,12 @@ export interface BrowserAPI {
   getMostVisited: (limit?: number) => Promise<HistoryEntry[]>;
   getRecentlyVisited: (limit?: number) => Promise<HistoryEntry[]>;
 
+  // Agent Automation
+  initializeAgent: (apiKey: string, config?: any) => Promise<boolean>;
+  executeAgentAutomation: (request: any) => Promise<any>;
+  getAgentState: () => Promise<any>;
+  resetAgent: () => Promise<boolean>;
+
   // Event listeners
   onTabsUpdated: (callback: (data: { tabs: TabInfo[]; activeTabId: string | null }) => void) => () => void;
   onRecordingAction: (callback: (action: any) => void) => () => void;
@@ -101,6 +107,7 @@ export interface BrowserAPI {
   onRecordingStopped: (callback: (data: { actions: any[]; duration: number; startUrl: string }) => void) => () => void;
   onRecordingSaved: (callback: (session: any) => void) => () => void;
   onRecordingDeleted: (callback: (id: string) => void) => () => void;
+  onAgentAutomationComplete: (callback: (result: any) => void) => () => void;
 }
 
 // Expose protected methods that allow the renderer process to use
@@ -243,6 +250,22 @@ const browserAPI: BrowserAPI = {
     ipcRenderer.invoke('password:add-to-blacklist', origin),
   isSiteBlacklisted: (origin: string) => 
     ipcRenderer.invoke('password:is-blacklisted', origin),
+
+  // Agent Automation API
+  initializeAgent: (apiKey: string, config?: any) => 
+    ipcRenderer.invoke('agent:initialize', apiKey, config),
+  executeAgentAutomation: (request: any) => 
+    ipcRenderer.invoke('agent:execute-automation', request),
+  getAgentState: () => 
+    ipcRenderer.invoke('agent:get-state'),
+  resetAgent: () => 
+    ipcRenderer.invoke('agent:reset'),
+
+  onAgentAutomationComplete: (callback) => {
+    const subscription = (_event: Electron.IpcRendererEvent, result: any) => callback(result);
+    ipcRenderer.on('agent:automation-complete', subscription);
+    return () => ipcRenderer.removeListener('agent:automation-complete', subscription);
+  },
 };
 
 contextBridge.exposeInMainWorld('browserAPI', browserAPI);

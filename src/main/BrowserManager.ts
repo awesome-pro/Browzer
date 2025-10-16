@@ -8,6 +8,7 @@ import { INTERNAL_PAGES } from '@/main/constants';
 import { stat } from 'fs/promises';
 import { PasswordUtil } from '@/main/utils/PasswordUtil';
 import { BrowserAutomation, PasswordAutomation } from './automation';
+import { AgentOrchestrator, AutomationRequest } from './automation/agent';
 
 // Internal tab structure (includes WebContentsView)
 interface Tab {
@@ -17,6 +18,7 @@ interface Tab {
   videoRecorder?: VideoRecorder;
   automation?: BrowserAutomation;
   passwordAutomation?: PasswordAutomation;
+  agentOrchestrator?: AgentOrchestrator;
   // Track selected credential for multi-step flows
   selectedCredentialId?: string;
   selectedCredentialUsername?: string;
@@ -120,6 +122,8 @@ export class BrowserManager {
         (tabId: string, credentialId: string, username: string) => this.handleCredentialSelected(tabId, credentialId, username),
         (tabId: string) => this.handleAutoFillPassword(tabId)
       ),
+      // Agent orchestrator will be initialized when needed (requires API key)
+      agentOrchestrator: undefined,
     };
 
     // Store tab
@@ -889,6 +893,114 @@ export class BrowserManager {
   public getActiveAutomation(): BrowserAutomation | null {
     const activeTab = this.tabs.get(this.activeTabId || '');
     return activeTab?.automation || null;
+  }
+
+  /**
+   * Initialize agent orchestrator for active tab
+   */
+  public initializeAgentOrchestrator(apiKey: string, config?: Partial<{
+    model: string;
+    maxIterations: number;
+    maxRetries: number;
+    temperature: number;
+    thinkingBudget: number;
+  }>): boolean {
+    const activeTab = this.tabs.get(this.activeTabId || '');
+    if (!activeTab) {
+      console.error('No active tab to initialize agent');
+      return false;
+    }
+
+    try {
+      activeTab.agentOrchestrator = new AgentOrchestrator(activeTab.view, {
+        apiKey,
+        model: config?.model || 'claude-sonnet-4-20250514',
+        maxIterations: config?.maxIterations || 15,
+        maxRetries: config?.maxRetries || 3,
+        temperature: config?.temperature || 0.7,
+        thinkingBudget: config?.thinkingBudget || 10000
+      });
+
+      console.log('🤖 Agent orchestrator initialized for tab:', this.activeTabId);
+      return true;
+    } catch (error) {
+      console.error('Failed to initialize agent orchestrator:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Execute agent automation on active tab
+   */
+  public async executeAgentAutomation(request: AutomationRequest): Promise<{
+    success: boolean;
+    result?: any;
+    plan?: any;
+    executionHistory: any[];
+    error?: string;
+  }> {
+    const activeTab = this.tabs.get(this.activeTabId || '');
+    if (!activeTab) {
+      return {
+        success: false,
+        executionHistory: [],
+        error: 'No active tab'
+      };
+    }
+
+    if (!activeTab.agentOrchestrator) {
+      return {
+        success: false,
+        executionHistory: [],
+        error: 'Agent orchestrator not initialized. Call initializeAgentOrchestrator() first.'
+      };
+    }
+
+    console.log('🎯 Starting agent automation on tab:', this.activeTabId);
+    
+    try {
+      const result = await activeTab.agentOrchestrator.executeAutomation(request);
+      
+      // Notify renderer of completion
+      if (this.agentUIView && !this.agentUIView.webContents.isDestroyed()) {
+        this.agentUIView.webContents.send('agent:automation-complete', result);
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('Agent automation failed:', error);
+      return {
+        success: false,
+        executionHistory: [],
+        error: (error as Error).message
+      };
+    }
+  }
+
+  /**
+   * Get agent state for active tab
+   */
+  public getAgentState(): any {
+    const activeTab = this.tabs.get(this.activeTabId || '');
+    if (!activeTab || !activeTab.agentOrchestrator) {
+      return null;
+    }
+
+    return activeTab.agentOrchestrator.getState();
+  }
+
+  /**
+   * Reset agent for active tab
+   */
+  public resetAgent(): boolean {
+    const activeTab = this.tabs.get(this.activeTabId || '');
+    if (!activeTab || !activeTab.agentOrchestrator) {
+      return false;
+    }
+
+    activeTab.agentOrchestrator.reset();
+    console.log('🔄 Agent reset for tab:', this.activeTabId);
+    return true;
   }
 
   /**
