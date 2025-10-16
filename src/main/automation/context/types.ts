@@ -112,7 +112,8 @@ export interface PageMetadata {
  */
 export interface VisualContext {
   screenshotPath?: string; // Path to saved screenshot
-  screenshotBase64?: string; // Base64 for immediate use (optional)
+  screenshotBase64?: string; // Base64 for immediate use (pure base64, no data URL prefix)
+  screenshotMediaType?: string; // Media type (e.g., 'image/png', 'image/jpeg')
   description?: string; // AI-generated text description
   timestamp: number;
 }

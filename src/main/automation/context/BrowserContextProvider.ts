@@ -280,7 +280,11 @@ export class BrowserContextProvider {
     try {
       // Capture screenshot
       const image = await this.view.webContents.capturePage();
-      visual.screenshotBase64 = image.toDataURL();
+      
+      // Convert to base64 PNG (pure base64 without data URL prefix for Claude API)
+      const pngBuffer = image.toPNG();
+      visual.screenshotBase64 = pngBuffer.toString('base64');
+      visual.screenshotMediaType = 'image/png';
 
       // TODO: Add AI-based description if requested
       // This would call a vision model to generate text description

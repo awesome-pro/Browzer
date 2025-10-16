@@ -25,11 +25,38 @@ export interface CachedContext {
   cacheTimestamp: number;
 }
 
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  totalTokens: number;
+  estimatedCost: number;  // In USD
+}
+
 export class ConversationManager {
   private messages: ConversationMessage[] = [];
   private cachedContext: CachedContext | null = null;
   private readonly MAX_MESSAGES = 50; // Keep last 50 messages
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  
+  // Token usage tracking
+  private tokenUsage: TokenUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    totalTokens: 0,
+    estimatedCost: 0
+  };
+  
+  // Pricing for Claude Sonnet 4.5 (per million tokens)
+  private readonly PRICING = {
+    input: 3.00,           // $3 per million input tokens
+    output: 15.00,         // $15 per million output tokens
+    cacheWrite: 3.75,      // $3.75 per million cache write tokens
+    cacheRead: 0.30        // $0.30 per million cache read tokens
+  };
   
   /**
    * Add a user message to conversation
@@ -47,12 +74,17 @@ export class ConversationManager {
   /**
    * Add an assistant message to conversation
    */
-  public addAssistantMessage(content: string | Anthropic.MessageParam['content']): void {
+  public addAssistantMessage(content: string | Anthropic.MessageParam['content'], usage?: Anthropic.Usage): void {
     this.messages.push({
       role: 'assistant',
       content,
       timestamp: Date.now()
     });
+    
+    // Track token usage if provided
+    if (usage) {
+      this.updateTokenUsage(usage);
+    }
     
     this.pruneOldMessages();
   }
@@ -162,6 +194,14 @@ export class ConversationManager {
   public reset(): void {
     this.messages = [];
     this.cachedContext = null;
+    this.tokenUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      totalTokens: 0,
+      estimatedCost: 0
+    };
   }
   
   /**
@@ -173,6 +213,34 @@ export class ConversationManager {
       this.messages = this.messages.slice(-this.MAX_MESSAGES);
       console.log(`📝 Pruned conversation history to ${this.MAX_MESSAGES} messages`);
     }
+  }
+  
+  /**
+   * Update token usage from API response
+   */
+  private updateTokenUsage(usage: Anthropic.Usage): void {
+    this.tokenUsage.inputTokens += usage.input_tokens || 0;
+    this.tokenUsage.outputTokens += usage.output_tokens || 0;
+    this.tokenUsage.cacheCreationTokens += usage.cache_creation_input_tokens || 0;
+    this.tokenUsage.cacheReadTokens += usage.cache_read_input_tokens || 0;
+    this.tokenUsage.totalTokens = 
+      this.tokenUsage.inputTokens + 
+      this.tokenUsage.outputTokens + 
+      this.tokenUsage.cacheCreationTokens;
+    
+    // Calculate cost
+    this.tokenUsage.estimatedCost = 
+      (this.tokenUsage.inputTokens * this.PRICING.input / 1_000_000) +
+      (this.tokenUsage.outputTokens * this.PRICING.output / 1_000_000) +
+      (this.tokenUsage.cacheCreationTokens * this.PRICING.cacheWrite / 1_000_000) +
+      (this.tokenUsage.cacheReadTokens * this.PRICING.cacheRead / 1_000_000);
+  }
+  
+  /**
+   * Get token usage statistics
+   */
+  public getTokenUsage(): TokenUsage {
+    return { ...this.tokenUsage };
   }
   
   /**

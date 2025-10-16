@@ -182,6 +182,7 @@ export class AgenticAutomationService {
           const updatedContext = await this.contextProvider.getContext({
             includePrunedDOM: true,
             includeConsoleLogs: true,
+            includeScreenshot: true,  // Enable visual context
             maxElements: 100,
             maxConsoleEntries: 10
           });
@@ -254,7 +255,26 @@ export class AgenticAutomationService {
       this.isExecuting = false;
       this.contextProvider.stopMonitoring();
       await this.browserAutomation.stop();
-      console.log(`\n⏱️ Total execution time: ${((Date.now() - startTime) / 1000).toFixed(2)}s`);
+      
+      // Log comprehensive execution summary
+      const duration = (Date.now() - startTime) / 1000;
+      const tokenUsage = this.conversationManager.getTokenUsage();
+      
+      console.log('\n' + '='.repeat(80));
+      console.log('📊 EXECUTION SUMMARY');
+      console.log('='.repeat(80));
+      console.log(`⏱️  Duration: ${duration.toFixed(2)}s`);
+      console.log(`🔄 Iterations: ${this.currentIteration}`);
+      console.log('');
+      console.log('💰 TOKEN USAGE & COST:');
+      console.log(`   Input tokens:         ${tokenUsage.inputTokens.toLocaleString()}`);
+      console.log(`   Output tokens:        ${tokenUsage.outputTokens.toLocaleString()}`);
+      console.log(`   Cache write tokens:   ${tokenUsage.cacheCreationTokens.toLocaleString()}`);
+      console.log(`   Cache read tokens:    ${tokenUsage.cacheReadTokens.toLocaleString()}`);
+      console.log(`   ─────────────────────────────────`);
+      console.log(`   Total tokens:         ${tokenUsage.totalTokens.toLocaleString()}`);
+      console.log(`   Estimated cost:       $${tokenUsage.estimatedCost.toFixed(4)}`);
+      console.log('='.repeat(80) + '\n');
     }
   }
 
@@ -408,8 +428,8 @@ Remember: You're in an iterative loop. Take it step by step, verify your actions
       tool_choice: { type: 'auto' }
     });
 
-    // Add assistant response to conversation
-    this.conversationManager.addAssistantMessage(response.content);
+    // Add assistant response to conversation with token usage
+    this.conversationManager.addAssistantMessage(response.content, response.usage);
 
     return response;
   }
@@ -576,6 +596,18 @@ Remember: You're in an iterative loop. Take it step by step, verify your actions
         
         resultIndex++;
       }
+    }
+    
+    // Add screenshot if available (image should come before text per Claude best practices)
+    if (browserContext.visual?.screenshotBase64) {
+      content.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: browserContext.visual.screenshotMediaType || 'image/png',
+          data: browserContext.visual.screenshotBase64
+        }
+      });
     }
     
     // Add browser context as additional text

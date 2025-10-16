@@ -16,5 +16,6 @@ export type {
 
 export type {
   ConversationMessage,
-  CachedContext
+  CachedContext,
+  TokenUsage
 } from './ConversationManager';

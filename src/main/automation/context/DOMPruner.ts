@@ -34,7 +34,7 @@ export class DOMPruner {
     excludeHidden: true,
     maxTextLength: 100,
     maxChildrenDepth: 5,
-    minInteractivityScore: 30
+    minInteractivityScore: 20  // Lowered from 30 to capture more interactive elements
   };
 
   constructor(private strategy: PruningStrategy = {} as PruningStrategy) {
@@ -230,10 +230,10 @@ export class DOMPruner {
         
         /**
          * Traverse DOM and collect interactive elements
+         * Collects ALL qualifying elements first, then limits at the end
          */
         function traverseDOM(node, depth = 0) {
           if (depth > strategy.maxChildrenDepth) return;
-          if (prunedElements.length >= maxElements) return;
           
           // Skip excluded tags
           if (node.nodeType === Node.ELEMENT_NODE) {
@@ -254,6 +254,7 @@ export class DOMPruner {
                 text: getTextContent(node),
                 isVisible: visible,
                 isInteractive: score >= 50,
+                interactivityScore: score,  // Add score for sorting
                 boundingBox: {
                   x: rect.x,
                   y: rect.y,
@@ -264,7 +265,7 @@ export class DOMPruner {
               });
             }
             
-            // Traverse children
+            // Always traverse children (don't stop early)
             for (const child of node.children) {
               traverseDOM(child, depth + 1);
             }
@@ -274,10 +275,15 @@ export class DOMPruner {
         // Start traversal from body
         traverseDOM(document.body);
         
+        // Sort by interactivity score (highest first) and limit to maxElements
+        prunedElements.sort((a, b) => b.interactivityScore - a.interactivityScore);
+        const limitedElements = prunedElements.slice(0, maxElements);
+        
         return {
-          elements: prunedElements,
+          elements: limitedElements,
           totalScanned: document.querySelectorAll('*').length,
-          totalPruned: prunedElements.length
+          totalPruned: limitedElements.length,
+          totalFound: prunedElements.length  // Total before limiting
         };
       })();
     `;
