@@ -190,6 +190,224 @@ export class BrowserAutomation {
   }
 
   /**
+   * Select option from dropdown
+   */
+  public async select(selector: string, value: string): Promise<void> {
+    console.log(`📋 Selecting "${value}" from ${selector}`);
+    
+    const script = `
+      (function() {
+        const select = document.querySelector('${selector.replace(/'/g, "\\'")}'');
+        if (!select) return { success: false, error: 'Select element not found' };
+        
+        // Try to find option by value or text
+        let option = Array.from(select.options).find(opt => 
+          opt.value === '${value.replace(/'/g, "\\'")}'  || 
+          opt.text === '${value.replace(/'/g, "\\'")}''
+        );
+        
+        if (!option) return { success: false, error: 'Option not found' };
+        
+        select.value = option.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        select.dispatchEvent(new Event('input', { bubbles: true }));
+        
+        return { success: true, selectedValue: option.value, selectedText: option.text };
+      })();
+    `;
+    
+    const result = await this.debugger.sendCommand('Runtime.evaluate', {
+      expression: script,
+      returnByValue: true
+    });
+    
+    if (!result.result?.value?.success) {
+      throw new Error(`Select failed: ${result.result?.value?.error || 'Unknown error'}`);
+    }
+    
+    console.log('✅ Select complete');
+    await this.sleep(300);
+  }
+
+  /**
+   * Toggle checkbox
+   */
+  public async toggleCheckbox(selector: string, checked: boolean): Promise<void> {
+    console.log(`☑️ Setting checkbox ${selector} to ${checked}`);
+    
+    const script = `
+      (function() {
+        const checkbox = document.querySelector('${selector.replace(/'/g, "\\'")}'');
+        if (!checkbox) return { success: false, error: 'Checkbox not found' };
+        
+        if (checkbox.checked !== ${checked}) {
+          checkbox.checked = ${checked};
+          checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+          checkbox.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        
+        return { success: true, checked: checkbox.checked };
+      })();
+    `;
+    
+    const result = await this.debugger.sendCommand('Runtime.evaluate', {
+      expression: script,
+      returnByValue: true
+    });
+    
+    if (!result.result?.value?.success) {
+      throw new Error(`Checkbox toggle failed: ${result.result?.value?.error || 'Unknown error'}`);
+    }
+    
+    console.log('✅ Checkbox toggled');
+    await this.sleep(300);
+  }
+
+  /**
+   * Select radio button
+   */
+  public async selectRadio(selector: string): Promise<void> {
+    console.log(`🔘 Selecting radio button ${selector}`);
+    
+    const script = `
+      (function() {
+        const radio = document.querySelector('${selector.replace(/'/g, "\\'")}'');
+        if (!radio) return { success: false, error: 'Radio button not found' };
+        
+        radio.checked = true;
+        radio.dispatchEvent(new Event('change', { bubbles: true }));
+        radio.dispatchEvent(new Event('input', { bubbles: true }));
+        
+        return { success: true, value: radio.value };
+      })();
+    `;
+    
+    const result = await this.debugger.sendCommand('Runtime.evaluate', {
+      expression: script,
+      returnByValue: true
+    });
+    
+    if (!result.result?.value?.success) {
+      throw new Error(`Radio selection failed: ${result.result?.value?.error || 'Unknown error'}`);
+    }
+    
+    console.log('✅ Radio selected');
+    await this.sleep(300);
+  }
+
+  /**
+   * Scroll to element or position
+   */
+  public async scroll(options: { selector?: string; x?: number; y?: number }): Promise<void> {
+    console.log(`📜 Scrolling...`);
+    
+    if (options.selector) {
+      const script = `
+        (function() {
+          const element = document.querySelector('${options.selector!.replace(/'/g, "\\'")}'');
+          if (!element) return { success: false, error: 'Element not found' };
+          
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return { success: true };
+        })();
+      `;
+      
+      const result = await this.debugger.sendCommand('Runtime.evaluate', {
+        expression: script,
+        returnByValue: true
+      });
+      
+      if (!result.result?.value?.success) {
+        throw new Error(`Scroll failed: ${result.result?.value?.error || 'Unknown error'}`);
+      }
+    } else if (options.x !== undefined || options.y !== undefined) {
+      const x = options.x || 0;
+      const y = options.y || 0;
+      
+      await this.debugger.sendCommand('Runtime.evaluate', {
+        expression: `window.scrollTo(${x}, ${y});`,
+        returnByValue: true
+      });
+    }
+    
+    console.log('✅ Scroll complete');
+    await this.sleep(500);
+  }
+
+  /**
+   * Wait for element to appear (public wrapper)
+   */
+  public async waitForElementVisible(selector: string, timeout = 10000): Promise<void> {
+    console.log(`⏳ Waiting for element: ${selector}`);
+    
+    const element = await this.waitForElement(selector, timeout);
+    if (!element) {
+      throw new Error(`Element ${selector} did not appear within ${timeout}ms`);
+    }
+    
+    console.log('✅ Element found');
+  }
+
+  /**
+   * Wait for navigation to complete
+   */
+  public async waitForNavigation(timeout = 30000): Promise<void> {
+    console.log(`⏳ Waiting for navigation...`);
+    
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error(`Navigation timeout after ${timeout}ms`));
+      }, timeout);
+      
+      const handler = () => {
+        clearTimeout(timeoutId);
+        this.view.webContents.off('did-finish-load', handler);
+        resolve();
+      };
+      
+      this.view.webContents.on('did-finish-load', handler);
+    });
+  }
+
+  /**
+   * Get element text content
+   */
+  public async getText(selector: string): Promise<string> {
+    const script = `
+      (function() {
+        const element = document.querySelector('${selector.replace(/'/g, "\\'")}'');
+        return element ? element.textContent : null;
+      })();
+    `;
+    
+    const result = await this.debugger.sendCommand('Runtime.evaluate', {
+      expression: script,
+      returnByValue: true
+    });
+    
+    return result.result?.value || '';
+  }
+
+  /**
+   * Get element attribute
+   */
+  public async getAttribute(selector: string, attribute: string): Promise<string | null> {
+    const script = `
+      (function() {
+        const element = document.querySelector('${selector.replace(/'/g, "\\'")}'');
+        return element ? element.getAttribute('${attribute.replace(/'/g, "\\'")}'') : null;
+      })();
+    `;
+    
+    const result = await this.debugger.sendCommand('Runtime.evaluate', {
+      expression: script,
+      returnByValue: true
+    });
+    
+    return result.result?.value;
+  }
+
+  /**
    * Press a key (Enter, Escape, Tab, etc.)
    */
   public async pressKey(key: string): Promise<void> {
