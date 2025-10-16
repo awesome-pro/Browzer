@@ -65,7 +65,7 @@ export class LLMService {
         messages: [
           {
             role: 'user',
-            content: userPrompt
+            content: `${userPrompt}\n\nIMPORTANT: Generate the COMPLETE automation plan with ALL necessary steps in this single response. Use multiple tool calls to create the full sequence of actions from start to finish. Do not generate just one step.`
           }
         ]
       });
@@ -73,9 +73,12 @@ export class LLMService {
       console.log('[LLMService] Response received');
       console.log('[LLMService] Stop reason:', response.stop_reason);
       console.log('[LLMService] Usage:', response.usage);
+      console.log('[LLMService] Content blocks:', response.content.length);
+      console.log('[LLMService] Content types:', response.content.map((block: any) => block.type).join(', '));
 
       // Extract automation steps from tool use blocks
       const steps = this.extractStepsFromResponse(response);
+      console.log('[LLMService] Extracted steps:', steps);
 
       if (steps.length === 0) {
         return {
@@ -108,14 +111,16 @@ export class LLMService {
    * Build system prompt with recorded context
    */
   private buildSystemPrompt(session: RecordingSession): string {
-    return `You are an expert browser automation assistant. Your task is to generate a sequence of browser automation actions based on a user's request and a previously recorded workflow.
+    console.log("actions: ", this.formatRecordedActions(session.actions));
+
+    return `You are an expert browser automation assistant. Your task is to generate a COMPLETE sequence of browser automation actions based on a user's request and a previously recorded workflow.
 
 ## YOUR ROLE
 You will receive:
 1. A recorded browser workflow showing how a similar task was performed
 2. A user's request for what they want to automate
 
-You must generate a precise sequence of automation actions using the available tools to accomplish the user's goal.
+You must generate a COMPLETE, DETAILED sequence of ALL automation actions needed to accomplish the user's goal in a SINGLE response. Do not generate just one step - generate the ENTIRE plan from start to finish.
 
 ## RECORDED WORKFLOW CONTEXT
 This is a recording of how a user previously performed a similar task. Use it as a reference pattern, but adapt it to the current request.
@@ -179,11 +184,28 @@ You should generate tool calls for:
 4. click(selector="button[type='submit']")
 
 ## RESPONSE FORMAT
-Use the provided tools to generate each automation step. Each tool call will become one step in the automation sequence. Generate all necessary steps to complete the user's request.`;
+You MUST use multiple tool calls in your response to create the complete automation plan. Each tool call represents one step. Generate ALL steps needed from start to finish:
+
+1. Start with navigation (if needed)
+2. Add wait steps for page loads
+3. Include all interactions (clicks, typing, selections)
+4. Add waits between actions for stability
+5. Complete the entire workflow
+
+**CRITICAL**: Generate the COMPLETE plan with ALL steps in this single response. Do NOT generate just one step. The system will execute all your tool calls sequentially without asking you again.
+
+Example: If the user wants to "create a repo called X", you should generate:
+- navigate to github.com/new
+- waitForElement for the form
+- type into repository name field
+- scroll to submit button (if needed)
+- click submit button
+
+Generate ALL these steps in your response, not just the first one.`;
   }
 
   /**
-   * Format recorded actions for context
+   * Format recorded actions for context with rich details
    */
   private formatRecordedActions(actions: RecordedAction[]): string {
     if (!actions || actions.length === 0) {
@@ -216,15 +238,30 @@ Use the provided tools to generate each automation step. Each tool call will bec
           description += ` ${action.type}`;
       }
 
-      // Add selector info if available
-      if (action.target?.selector) {
-        description += `\n   Selector: ${action.target.selector}`;
-      }
+      // Add detailed selector info for better automation
+      const details: string[] = [];
+      
       if (action.target?.id) {
-        description += `\n   ID: #${action.target.id}`;
+        details.push(`ID: #${action.target.id}`);
+      }
+      if (action.target?.selector) {
+        details.push(`Selector: ${action.target.selector}`);
       }
       if (action.target?.ariaLabel) {
-        description += `\n   Aria-label: ${action.target.ariaLabel}`;
+        details.push(`Aria-label: "${action.target.ariaLabel}"`);
+      }
+      if (action.target?.name) {
+        details.push(`Name: ${action.target.name}`);
+      }
+      if (action.target?.tagName) {
+        details.push(`Tag: ${action.target.tagName}`);
+      }
+      if (action.target?.text && action.target.text.length < 50) {
+        details.push(`Text: "${action.target.text}"`);
+      }
+      
+      if (details.length > 0) {
+        description += `\n   ${details.join(' | ')}`;
       }
 
       return description;

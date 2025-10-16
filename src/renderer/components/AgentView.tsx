@@ -4,12 +4,12 @@ import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { ScrollArea } from '../ui/scroll-area';
-import { Card, CardContent } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { toast } from 'sonner';
 import { RecordingSession } from '../../shared/types';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
+import { Item } from '../ui/item';
 
 interface ChatMessage {
   id: string;
@@ -259,25 +259,50 @@ export default function AgentView() {
 
   return (
     <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b">
-        <h3 className="text-sm font-medium flex items-center gap-2">
-          <Bot className="w-4 h-4" />
-          AI Automation
-        </h3>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setShowSettings(true)}
-          title="Settings"
-        >
-          <Settings className="w-4 h-4" />
-        </Button>
-      </div>
+      {/* Header with Recording Selector */}
+        <div className="flex items-center justify-between px-3 py-2">
+          <Select
+            value={selectedSession}
+            onValueChange={setSelectedSession}
+            disabled={isExecuting}
+          >
+            <SelectTrigger className="w-[90%] h-8 text-xs">
+              <SelectValue placeholder="Select a recording..." />
+            </SelectTrigger>
+            <SelectContent>
+              {sessions.length === 0 ? (
+                <div className="p-2 text-xs text-gray-500 text-center">
+                  No recordings available
+                </div>
+              ) : (
+                sessions.map((session) => (
+                  <SelectItem key={session.id} value={session.id}>
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-xs">{session.name}</span>
+                      <Badge variant="secondary" className="text-[10px] px-1 py-0">
+                        {session.actionCount}
+                      </Badge>
+                    </div>
+                  </SelectItem>
+                ))
+              )}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setShowSettings(true)}
+            title="Settings"
+            className="h-7 w-7"
+          >
+            <Settings className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+
 
       {/* Chat Messages */}
-      <ScrollArea className="flex-1 p-4">
-        <div ref={scrollRef} className="space-y-4">
+      <ScrollArea className="flex-1 px-3 py-2">
+        <div ref={scrollRef} className="space-y-2">
           {messages.length === 0 && (
             <div className="text-center py-12">
               <Bot className="w-12 h-12 mx-auto text-gray-600 mb-3" />
@@ -296,26 +321,23 @@ export default function AgentView() {
               key={message.id}
               className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              <Card
+              <Item
                 className={`max-w-[85%] ${
                   message.type === 'user'
-                    ? 'bg-blue-500 text-white'
-                    : message.type === 'result'
-                    ? 'bg-gray-100 dark:bg-gray-800'
-                    : 'bg-white dark:bg-gray-900'
+                    ? 'bg-blue-600 text-white'
+                    : message.type === 'system'
+                    ? 'bg-green-600 text-white'
+                    : 'bg-gray-800'
                 }`}
               >
-                <CardContent className="p-3">
-                  <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                </CardContent>
-              </Card>
+                <p className="text-xs whitespace-pre-wrap">{message.content}</p>
+              </Item>
             </div>
           ))}
 
           {/* Current Execution Steps */}
           {isExecuting && currentSteps.length > 0 && (
-            <Card className="bg-gray-50 dark:bg-gray-900">
-              <CardContent className="p-4 space-y-2">
+            <Item className="bg-gray-50 dark:bg-gray-900">
                 <div className="flex items-center gap-2 mb-3">
                   <Loader2 className="w-4 h-4 animate-spin" />
                   <span className="text-sm font-medium">Executing Steps...</span>
@@ -345,87 +367,47 @@ export default function AgentView() {
                     </div>
                   </div>
                 ))}
-              </CardContent>
-            </Card>
+            </Item>
           )}
         </div>
       </ScrollArea>
 
-      {/* Input Area */}
-      <div className="border-t p-4 space-y-3">
-        {/* Recording Selection */}
-        <div className="space-y-2">
-          <Label className="text-xs text-gray-500">Select Recording *</Label>
-          <Select
-            value={selectedSession}
-            onValueChange={setSelectedSession}
+      {/* Input Area - Sticky at bottom */}
+      <div className="border-t bg-background">
+        <div className="px-3 py-2 space-y-2">
+          {/* Prompt Input */}
+          <Textarea
+            placeholder="E.g., Create a repository called 'my-awesome-project'"
+            value={userPrompt}
+            onChange={(e) => setUserPrompt(e.target.value)}
             disabled={isExecuting}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Choose a recorded session..." />
-            </SelectTrigger>
-            <SelectContent>
-              {sessions.length === 0 ? (
-                <div className="p-2 text-sm text-gray-500 text-center">
-                  No recordings available
-                </div>
-              ) : (
-                sessions.map((session) => (
-                  <SelectItem key={session.id} value={session.id}>
-                    <div className="flex items-center gap-2">
-                      <span className="truncate">{session.name}</span>
-                      <Badge variant="secondary" className="text-xs">
-                        {session.actionCount} actions
-                      </Badge>
-                    </div>
-                  </SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
-        </div>
+            className="min-h-[50px] resize-none text-xs"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                handleExecute();
+              }
+            }}
+          />
 
-        {/* Prompt Input */}
-        <div className="space-y-2">
-          <Label className="text-xs text-gray-500">What do you want to automate? *</Label>
+          {/* Action Buttons */}
           <div className="flex gap-2">
-            <Textarea
-              placeholder="E.g., Create a repository called 'my-awesome-project'"
-              value={userPrompt}
-              onChange={(e) => setUserPrompt(e.target.value)}
-              disabled={isExecuting}
-              className="min-h-[80px] resize-none"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                  handleExecute();
-                }
-              }}
-            />
+            {!isExecuting ? (
+              <Button
+                onClick={handleExecute}
+                disabled={!userPrompt.trim() || !selectedSession}
+                className="flex-1 h-8 text-xs"
+              >
+                <Play className="w-3.5 h-3.5 mr-1.5" />
+                Execute
+              </Button>
+            ) : (
+              <Button onClick={handleCancel} variant="destructive" className="flex-1 h-8 text-xs">
+                <StopCircle className="w-3.5 h-3.5 mr-1.5" />
+                Cancel
+              </Button>
+            )}
           </div>
         </div>
-
-        {/* Action Buttons */}
-        <div className="flex gap-2">
-          {!isExecuting ? (
-            <Button
-              onClick={handleExecute}
-              disabled={!userPrompt.trim() || !selectedSession}
-              className="flex-1"
-            >
-              <Play className="w-4 h-4 mr-2" />
-              Execute Automation
-            </Button>
-          ) : (
-            <Button onClick={handleCancel} variant="destructive" className="flex-1">
-              <StopCircle className="w-4 h-4 mr-2" />
-              Cancel
-            </Button>
-          )}
-        </div>
-
-        <p className="text-xs text-gray-500 text-center">
-          Press {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'} + Enter to execute
-        </p>
       </div>
     </div>
   );

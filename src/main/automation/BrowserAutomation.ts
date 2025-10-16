@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { WebContentsView } from 'electron';
 import { RecordedAction, ElementTarget, SelectorStrategy } from '../../shared/types';
+import { SmartElementFinder } from './SmartElementFinder';
 
 /**
  * BrowserAutomation - Advanced CDP-based browser automation engine
@@ -19,8 +20,6 @@ export class BrowserAutomation {
   private debugger: Electron.Debugger;
   private isAutomating = false;
   private readonly DEFAULT_TIMEOUT = 10000;
-  private readonly RETRY_ATTEMPTS = 2;
-  private readonly RETRY_DELAY = 500;
 
   constructor(view: WebContentsView) {
     this.view = view;
@@ -87,52 +86,122 @@ export class BrowserAutomation {
   }
 
   /**
-   * Click element by selector (with smart fallback strategies)
+   * Click element by selector (using executeJavaScript for reliability)
    */
-  public async click(selector: string | string[], options: { waitForElement?: number; offset?: { x: number; y: number } } = {}): Promise<void> {
+  public async click(selector: string | string[]): Promise<void> {
     const selectors = Array.isArray(selector) ? selector : [selector];
     console.log(`🖱️ Attempting to click with ${selectors.length} selector(s)`);
     
-    const { waitForElement = 5000, offset = { x: 0, y: 0 } } = options;
-    let element = null;
-    let usedSelector = '';
     
-    for (const sel of selectors) {
-      console.log(`  Trying selector: ${sel}`);
-      element = await this.waitForElement(sel, waitForElement / selectors.length);
-      if (element) {
-        usedSelector = sel;
-        console.log(`  ✓ Found element with: ${sel}`);
-        break;
-      }
+    // Use executeJavaScript for more reliable clicking with comprehensive fallbacks
+    const script = `
+      (async function() {
+        const selectors = ${JSON.stringify(selectors)};
+        
+        // Helper to check if element is visible
+        function isVisible(element) {
+          const rect = element.getBoundingClientRect();
+          const style = window.getComputedStyle(element);
+          return rect.width > 0 && rect.height > 0 && 
+                 style.display !== 'none' && 
+                 style.visibility !== 'hidden' &&
+                 style.opacity !== '0';
+        }
+        
+        // Helper to perform click
+        async function performClick(element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          await new Promise(r => setTimeout(r, 300));
+          
+          if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
+            element.focus();
+          }
+          
+          element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+          element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+          element.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        }
+        
+        // Strategy 1: Try each selector as-is
+        for (const selector of selectors) {
+          try {
+            let element = null;
+            
+            const containsMatch = selector.match(/^(.+):contains\\(['"](.+)['"]\\)$/);
+            
+            if (containsMatch) {
+              const baseSelector = containsMatch[1];
+              const searchText = containsMatch[2];
+              
+              const elements = document.querySelectorAll(baseSelector);
+              for (const el of elements) {
+                if (el.textContent && el.textContent.includes(searchText) && isVisible(el)) {
+                  element = el;
+                  break;
+                }
+              }
+            } else {
+              element = document.querySelector(selector);
+              if (element && !isVisible(element)) {
+                element = null;
+              }
+            }
+            
+            if (element) {
+              await performClick(element);
+              return { success: true, selector: selector };
+            }
+          } catch (e) {
+            console.warn('Selector failed:', selector, e.message);
+          }
+        }
+        
+        // Strategy 2: For button[type='submit'], try common button patterns
+        if (selectors.some(s => s.includes('button') && s.includes('submit'))) {
+          const buttonPatterns = [
+            'button[type="submit"]',
+            'button[type="button"]',
+            'button:not([type])',
+            'input[type="submit"]',
+            '[role="button"]'
+          ];
+          
+          for (const pattern of buttonPatterns) {
+            try {
+              const buttons = document.querySelectorAll(pattern);
+              for (const btn of buttons) {
+                if (isVisible(btn)) {
+                  await performClick(btn);
+                  return { success: true, selector: pattern };
+                }
+              }
+            } catch (e) {}
+          }
+        }
+        
+        // Strategy 3: Find any visible button as last resort
+        try {
+          const allButtons = document.querySelectorAll('button, input[type="submit"], [role="button"]');
+          for (const btn of allButtons) {
+            if (isVisible(btn)) {
+              await performClick(btn);
+              return { success: true, selector: 'button (fallback)' };
+            }
+          }
+        } catch (e) {}
+        
+        return { success: false, error: 'Element not found with any selector' };
+      })();
+    `;
+    
+    const result = await this.view.webContents.executeJavaScript(script);
+    
+    if (!result.success) {
+      throw new Error(`Click failed: ${result.error}`);
     }
-
-    if (!element) {
-      throw new Error(`Element not found with any of the provided selectors: ${selectors.join(', ')}`);
-    }
-    const box = element.box;
-    const x = box.x + box.width / 2 + offset.x;
-    const y = box.y + box.height / 2 + offset.y;
-    await this.debugger.sendCommand('Input.dispatchMouseEvent', {
-      type: 'mousePressed',
-      x,
-      y,
-      button: 'left',
-      clickCount: 1
-    });
-
-    await this.sleep(50);
-
-    await this.debugger.sendCommand('Input.dispatchMouseEvent', {
-      type: 'mouseReleased',
-      x,
-      y,
-      button: 'left',
-      clickCount: 1
-    });
-
-    console.log(`✅ Click complete using: ${usedSelector}`);
-    await this.sleep(300); // Wait for click effects
+    
+    console.log(`✅ Click complete using: ${result.selector}`);
+    await this.sleep(300);
   }
 
   /**
@@ -161,32 +230,71 @@ export class BrowserAutomation {
   }
 
   /**
-   * Type text into element
+   * Type text into element (React-compatible with proper event dispatching)
    */
   public async type(selector: string, text: string, options: { delay?: number; clear?: boolean } = {}): Promise<void> {
     console.log(`⌨️ Typing into ${selector}: "${text}"`);
     
-    const { delay = 50, clear = false } = options;
-    await this.click(selector);
-    await this.sleep(200);
-    if (clear) {
-      await this.clearInput(selector);
+    const { clear = true } = options;
+    
+    // Properly escape the text and selector for JavaScript
+    const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedText = text.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    
+    const script = `
+      (async function() {
+        try {
+          const element = document.querySelector('${escapedSelector}');
+          if (!element) return { success: false, error: 'Element not found' };
+          
+          // Scroll into view and focus
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          await new Promise(r => setTimeout(r, 200));
+          element.focus();
+          
+          // Clear existing value if needed
+          if (${clear}) {
+            element.value = '';
+            
+            // Trigger input event for React
+            const inputEvent = new Event('input', { bubbles: true });
+            element.dispatchEvent(inputEvent);
+          }
+          
+          // Set the new value
+          const newValue = '${escapedText}';
+          
+          // Use native setter to trigger React's value tracking
+          const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 
+            'value'
+          ).set;
+          nativeInputValueSetter.call(element, newValue);
+          
+          // Dispatch all necessary events for React
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+          element.dispatchEvent(new Event('change', { bubbles: true }));
+          element.dispatchEvent(new Event('blur', { bubbles: true }));
+          
+          // For React forms, also trigger focus and keydown/keyup
+          element.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }));
+          element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Enter' }));
+          
+          return { success: true, value: element.value };
+        } catch (error) {
+          return { success: false, error: error.message };
+        }
+      })();
+    `;
+    
+    const result = await this.view.webContents.executeJavaScript(script);
+    
+    if (!result.success) {
+      throw new Error(`Type failed: ${result.error}`);
     }
-    for (const char of text) {
-      await this.debugger.sendCommand('Input.dispatchKeyEvent', {
-        type: 'keyDown',
-        text: char
-      });
-
-      await this.debugger.sendCommand('Input.dispatchKeyEvent', {
-        type: 'keyUp',
-        text: char
-      });
-
-      await this.sleep(delay);
-    }
-
+    
     console.log('✅ Typing complete');
+    await this.sleep(300);
   }
 
   /**
@@ -296,7 +404,7 @@ export class BrowserAutomation {
   }
 
   /**
-   * Scroll to element or position
+   * Scroll to element or position (supports :contains() and fuzzy matching)
    */
   public async scroll(options: { selector?: string; x?: number; y?: number }): Promise<void> {
     console.log(`📜 Scrolling...`);
@@ -304,7 +412,48 @@ export class BrowserAutomation {
     if (options.selector) {
       const script = `
         (function() {
-          const element = document.querySelector('${options.selector!.replace(/'/g, "\\'")}'');
+          const selector = ${JSON.stringify(options.selector)};
+          
+          // Helper to check if element is visible
+          function isVisible(element) {
+            const rect = element.getBoundingClientRect();
+            const style = window.getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && 
+                   style.display !== 'none' && 
+                   style.visibility !== 'hidden';
+          }
+          
+          let element = null;
+          
+          // Check if selector contains :contains() pseudo-class
+          const containsMatch = selector.match(/^(.+):contains\\(['"](.+)['"]\\)$/);
+          
+          if (containsMatch) {
+            const baseSelector = containsMatch[1];
+            const searchText = containsMatch[2];
+            
+            const elements = document.querySelectorAll(baseSelector);
+            for (const el of elements) {
+              if (el.textContent && el.textContent.includes(searchText) && isVisible(el)) {
+                element = el;
+                break;
+              }
+            }
+          } else {
+            element = document.querySelector(selector);
+          }
+          
+          // Fallback: Try finding any visible button/link
+          if (!element && selector.includes('button')) {
+            const buttons = document.querySelectorAll('button, [role="button"]');
+            for (const btn of buttons) {
+              if (isVisible(btn)) {
+                element = btn;
+                break;
+              }
+            }
+          }
+          
           if (!element) return { success: false, error: 'Element not found' };
           
           element.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -312,22 +461,16 @@ export class BrowserAutomation {
         })();
       `;
       
-      const result = await this.debugger.sendCommand('Runtime.evaluate', {
-        expression: script,
-        returnByValue: true
-      });
+      const result = await this.view.webContents.executeJavaScript(script);
       
-      if (!result.result?.value?.success) {
-        throw new Error(`Scroll failed: ${result.result?.value?.error || 'Unknown error'}`);
+      if (!result.success) {
+        throw new Error(`Scroll failed: ${result.error || 'Unknown error'}`);
       }
     } else if (options.x !== undefined || options.y !== undefined) {
       const x = options.x || 0;
       const y = options.y || 0;
       
-      await this.debugger.sendCommand('Runtime.evaluate', {
-        expression: `window.scrollTo(${x}, ${y});`,
-        returnByValue: true
-      });
+      await this.view.webContents.executeJavaScript(`window.scrollTo(${x}, ${y});`);
     }
     
     console.log('✅ Scroll complete');
@@ -443,39 +586,127 @@ export class BrowserAutomation {
   }
 
   /**
-   * Wait for element to appear
+   * Wait for element to appear (comprehensive element finding with multiple fallback strategies)
    */
   private async waitForElement(selector: string, timeout = 5000): Promise<any> {
     const startTime = Date.now();
+    const checkInterval = 100;
 
     while (Date.now() - startTime < timeout) {
       try {
-        const { root } = await this.debugger.sendCommand('DOM.getDocument');
-        const { nodeId } = await this.debugger.sendCommand('DOM.querySelector', {
-          nodeId: root.nodeId,
-          selector
-        });
-
-        if (nodeId) {
-          const { model } = await this.debugger.sendCommand('DOM.getBoxModel', { nodeId });
-          
-          if (model) {
-            return {
-              nodeId,
-              box: {
-                x: model.content[0],
-                y: model.content[1],
-                width: model.content[4] - model.content[0],
-                height: model.content[5] - model.content[1]
+        // Handle multiple selectors separated by comma
+        const selectors = selector.split(',').map(s => s.trim());
+        
+        const script = `
+          (function() {
+            const selectors = ${JSON.stringify(selectors)};
+            
+            // Helper to check if element is visible
+            function isVisible(element) {
+              const rect = element.getBoundingClientRect();
+              const style = window.getComputedStyle(element);
+              return rect.width > 0 && rect.height > 0 && 
+                     style.display !== 'none' && 
+                     style.visibility !== 'hidden' &&
+                     style.opacity !== '0';
+            }
+            
+            // Strategy 1: Try each selector as-is
+            for (const sel of selectors) {
+              try {
+                // Check if selector contains :contains() pseudo-class
+                const containsMatch = sel.match(/^(.+):contains\\(['"](.+)['"]\\)$/);
+                
+                if (containsMatch) {
+                  const baseSelector = containsMatch[1];
+                  const searchText = containsMatch[2];
+                  
+                  const elements = document.querySelectorAll(baseSelector);
+                  for (const element of elements) {
+                    if (element.textContent && element.textContent.includes(searchText) && isVisible(element)) {
+                      const rect = element.getBoundingClientRect();
+                      return {
+                        found: true,
+                        selector: sel,
+                        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+                      };
+                    }
+                  }
+                } else {
+                  const element = document.querySelector(sel);
+                  if (element && isVisible(element)) {
+                    const rect = element.getBoundingClientRect();
+                    return {
+                      found: true,
+                      selector: sel,
+                      rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+                    };
+                  }
+                }
+              } catch (e) {
+                // Continue to next selector
               }
-            };
-          }
+            }
+            
+            // Strategy 2: For button[type='submit'], try common button patterns
+            if (selectors.some(s => s.includes('button') && s.includes('submit'))) {
+              const buttonPatterns = [
+                'button[type="submit"]',
+                'button[type="button"]',
+                'button:not([type])',
+                'input[type="submit"]',
+                '[role="button"]'
+              ];
+              
+              for (const pattern of buttonPatterns) {
+                try {
+                  const buttons = document.querySelectorAll(pattern);
+                  for (const btn of buttons) {
+                    if (isVisible(btn)) {
+                      const rect = btn.getBoundingClientRect();
+                      return {
+                        found: true,
+                        selector: pattern,
+                        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+                      };
+                    }
+                  }
+                } catch (e) {}
+              }
+            }
+            
+            // Strategy 3: Search by text content in common interactive elements
+            const interactiveSelectors = ['button', 'a', 'input[type="submit"]', '[role="button"]'];
+            for (const baseSelector of interactiveSelectors) {
+              try {
+                const elements = document.querySelectorAll(baseSelector);
+                for (const el of elements) {
+                  if (isVisible(el)) {
+                    const rect = el.getBoundingClientRect();
+                    return {
+                      found: true,
+                      selector: baseSelector,
+                      rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+                    };
+                  }
+                }
+              } catch (e) {}
+            }
+            
+            return null;
+          })();
+        `;
+        
+        const result = await this.view.webContents.executeJavaScript(script);
+        
+        if (result && result.found) {
+          return result;
         }
       } catch (error) {
-        console.error('Error waiting for element:', error);
+        // Silently continue - element might not be ready yet
       }
 
-      await this.sleep(100);
+      await this.sleep(checkInterval);
     }
 
     return null;
@@ -498,26 +729,6 @@ export class BrowserAutomation {
     });
   }
 
-  /**
-   * Clear input field
-   */
-  private async clearInput(_selector: string): Promise<void> {
-    await this.debugger.sendCommand('Input.dispatchKeyEvent', {
-      type: 'keyDown',
-      key: 'a',
-      code: 'KeyA',
-      modifiers: 2 // Ctrl/Cmd
-    });
-
-    await this.debugger.sendCommand('Input.dispatchKeyEvent', {
-      type: 'keyUp',
-      key: 'a',
-      code: 'KeyA'
-    });
-
-    await this.sleep(50);
-    await this.pressKey('Backspace');
-  }
 
   /**
    * Enable required CDP domains

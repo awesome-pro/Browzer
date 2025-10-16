@@ -14,9 +14,11 @@ import { AutomationStep, AutomationPlan, AutomationResult } from '@/shared/types
 
 export class AutomationExecutor {
   private automation: BrowserAutomation;
-  private readonly MAX_RETRIES = 2;
+  private readonly MAX_RETRIES = 3; // Maximum 3 attempts total (1 initial + 2 retries)
   private readonly RETRY_DELAY_BASE = 1000; // 1 second
   private readonly STEP_DELAY = 500; // Delay between steps
+  private readonly MAX_CONSECUTIVE_FAILURES = 3; // Stop after 3 consecutive failures
+  private consecutiveFailures = 0;
 
   constructor(automation: BrowserAutomation) {
     this.automation = automation;
@@ -68,16 +70,22 @@ export class AutomationExecutor {
 
       if (success) {
         plan.completedSteps++;
+        this.consecutiveFailures = 0; // Reset on success
       } else {
         plan.failedSteps++;
+        this.consecutiveFailures++;
 
         // Check if we should continue after failure
-        if (this.isCriticalStep(step)) {
+        if (this.consecutiveFailures >= this.MAX_CONSECUTIVE_FAILURES) {
+          console.error(`[AutomationExecutor] Too many consecutive failures (${this.consecutiveFailures}), stopping execution`);
+          plan.status = 'failed';
+          break;
+        } else if (this.isCriticalStep(step)) {
           console.error(`[AutomationExecutor] Critical step failed, stopping execution`);
           plan.status = 'failed';
           break;
         } else {
-          console.warn(`[AutomationExecutor] Non-critical step failed, continuing...`);
+          console.warn(`[AutomationExecutor] Non-critical step failed, continuing... (consecutive failures: ${this.consecutiveFailures})`);
         }
       }
 
@@ -117,11 +125,11 @@ export class AutomationExecutor {
     step.startTime = Date.now();
     step.retryCount = 0;
 
-    for (let attempt = 0; attempt <= this.MAX_RETRIES; attempt++) {
+    for (let attempt = 1; attempt <= this.MAX_RETRIES; attempt++) {
       try {
-        if (attempt > 0) {
-          console.log(`[AutomationExecutor] Retry attempt ${attempt}/${this.MAX_RETRIES}`);
-          const delay = this.RETRY_DELAY_BASE * Math.pow(2, attempt - 1);
+        if (attempt > 1) {
+          const delay = this.RETRY_DELAY_BASE * Math.pow(2, attempt - 2);
+          console.log(`[AutomationExecutor] Retry attempt ${attempt - 1}/${this.MAX_RETRIES - 1} (waiting ${delay}ms)`);
           await this.sleep(delay);
         }
 
@@ -134,16 +142,17 @@ export class AutomationExecutor {
         return true;
 
       } catch (error) {
-        step.retryCount = attempt + 1;
+        step.retryCount = attempt;
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
-        console.error(`[AutomationExecutor] Step failed (attempt ${attempt + 1}):`, errorMessage);
+        console.error(`[AutomationExecutor] Step failed (attempt ${attempt}/${this.MAX_RETRIES}):`, errorMessage);
 
         if (attempt === this.MAX_RETRIES) {
           // Final attempt failed
           step.status = 'failed';
           step.error = errorMessage;
           step.endTime = Date.now();
+          console.error(`[AutomationExecutor] Step permanently failed after ${this.MAX_RETRIES} attempts`);
           return false;
         }
       }
