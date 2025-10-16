@@ -52,8 +52,8 @@ export function Sidebar() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="agent">
-          <AgentView />
+        <TabsContent value="agent" className='flex items-center justify-center h-full'>
+           Agents coming soon...
         </TabsContent>
 
         <TabsContent value="recording">
