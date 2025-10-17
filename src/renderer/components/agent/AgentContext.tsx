@@ -29,12 +29,12 @@ interface AgentContextValue {
   
   // Execution state
   isExecuting: boolean;
-  startAutomation: (userPrompt: string, apiKey: string) => Promise<void>;
+  startAutomation: (userPrompt: string, recordingSessionId: string) => Promise<void>;
   cancelAutomation: () => Promise<void>;
   
-  // UI state
-  showNewChat: boolean;
-  setShowNewChat: (show: boolean) => void;
+  // Recording session
+  recordingSessionId: string | null;
+  setRecordingSessionId: (id: string) => void;
 }
 
 const AgentContext = createContext<AgentContextValue | null>(null);
@@ -53,17 +53,12 @@ export function AgentProvider({ children }: { children: ReactNode }) {
   const [isExecuting, setIsExecuting] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   
-  // UI state
-  const [showNewChat, setShowNewChat] = useState(false);
+  // Recording session
+  const [recordingSessionId, setRecordingSessionId] = useState<string | null>(null);
 
   // Load sessions on mount
   useEffect(() => {
-    loadSessions().then(() => {
-      // Show new chat form if no sessions exist
-      if (sessions.length === 0) {
-        setShowNewChat(true);
-      }
-    });
+    loadSessions();
   }, []);
 
   // Listen for real-time automation progress
@@ -152,7 +147,6 @@ export function AgentProvider({ children }: { children: ReactNode }) {
 
   const selectSession = useCallback(async (sessionId: string) => {
     await loadSessionData(sessionId);
-    setShowNewChat(false);
   }, []);
 
   const deleteSession = useCallback(async (sessionId: string) => {
@@ -168,7 +162,6 @@ export function AgentProvider({ children }: { children: ReactNode }) {
         setMessages([]);
         setToolExecutions([]);
         setExecutionSteps([]);
-        setShowNewChat(true);
       }
     } catch (error) {
       console.error('Failed to delete session:', error);
@@ -194,33 +187,41 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const startAutomation = useCallback(async (userPrompt: string, apiKey: string) => {
+  const startAutomation = useCallback(async (userPrompt: string, recordingSessionIdParam: string) => {
     if (!userPrompt.trim()) {
       toast.error('Please enter a prompt');
       return;
     }
 
-    if (!apiKey.trim()) {
-      toast.error('Please enter your Claude API key');
+    if (!recordingSessionIdParam) {
+      toast.error('Please select a recording session first');
       return;
     }
 
     try {
-      setIsExecuting(true);
-      setExecutionSteps([]);
-      setShowNewChat(false);
-
-      console.log('🚀 Starting automation...');
-
-      // Get current recording session
-      const recordings = await window.browserAPI.getAllRecordings();
-      if (recordings.length === 0) {
-        toast.error('No recording session found. Please create a recording first.');
-        setIsExecuting(false);
+      // Check API key from settings
+      const settings = await window.browserAPI.getSettingsCategory('automation');
+      const apiKey = settings?.apiKey;
+      
+      if (!apiKey) {
+        toast.error('Please configure your Claude API key in Settings first');
         return;
       }
 
-      const recordingSession = recordings[recordings.length - 1]; // Use most recent
+      setIsExecuting(true);
+      setExecutionSteps([]);
+
+      console.log('🚀 Starting automation...');
+
+      // Get the selected recording session
+      const recordings = await window.browserAPI.getAllRecordings();
+      const recordingSession = recordings.find(r => r.id === recordingSessionIdParam);
+      
+      if (!recordingSession) {
+        toast.error('Selected recording session not found');
+        setIsExecuting(false);
+        return;
+      }
 
       const result = await window.browserAPI.executeAutomation({
         userPrompt,
@@ -241,7 +242,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       toast.error('Failed to start automation: ' + (error as Error).message);
       setIsExecuting(false);
     }
-  }, [loadSessions]);
+  }, [loadSessions, recordingSessionId]);
 
   const cancelAutomation = useCallback(async () => {
     try {
@@ -275,8 +276,8 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     isExecuting,
     startAutomation,
     cancelAutomation,
-    showNewChat,
-    setShowNewChat
+    recordingSessionId,
+    setRecordingSessionId
   };
 
   return (

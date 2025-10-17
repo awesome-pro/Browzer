@@ -76,7 +76,7 @@ export function ExecutionStream() {
   }
 
   return (
-      <Accordion type="multiple" className="space-y-2 px-2">
+      <Accordion type="multiple" className="space-y-2 px-3">
           {executionSteps.map((step, index) => {
             const hasDetails = step.toolInput || step.toolOutput || step.error;
 

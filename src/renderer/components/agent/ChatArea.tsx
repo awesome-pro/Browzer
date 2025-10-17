@@ -1,20 +1,20 @@
 /**
- * ChatArea - Scrollable middle section showing chat messages or new chat form
+ * ChatArea - Scrollable middle section showing recent sessions or active chat
  */
 
 import { useAgent } from './AgentContext';
-import { NewChatForm } from './NewChatForm';
+import { RecentSessions } from './RecentSessions';
 import { SessionDetails } from './SessionDetails';
 import { ExecutionStream } from './ExecutionStream';
 
 export function ChatArea() {
-  const { selectedSession, showNewChat } = useAgent();
+  const { selectedSession } = useAgent();
 
   return (
     <div className="flex-1 overflow-y-auto">
-      {showNewChat || !selectedSession ? (
-        /* New Chat Form - Centered */
-        <NewChatForm />
+      {!selectedSession ? (
+        /* Empty State: Show Recent Sessions */
+        <RecentSessions />
       ) : (
         /* Active Session View */
         <section className="h-full flex flex-col">

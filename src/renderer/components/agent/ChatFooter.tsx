@@ -14,14 +14,13 @@ import {
 import { useAgent } from './AgentContext';
 
 export function ChatFooter() {
-  const { isExecuting, startAutomation, selectedSession } = useAgent();
+  const { isExecuting, startAutomation, selectedSession, recordingSessionId } = useAgent();
   const [prompt, setPrompt] = useState('');
-   const [apiKey, setApiKey] = useState('');
 
   const handleSubmit = async () => {
-    if (!prompt.trim() || isExecuting) return;
+    if (!prompt.trim() || isExecuting || !recordingSessionId) return;
     
-    await startAutomation(prompt, apiKey);
+    await startAutomation(prompt, recordingSessionId);
     setPrompt('');
   };
 

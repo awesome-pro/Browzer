@@ -14,7 +14,6 @@ import { RecordingSession } from '@/shared/types';
 export function NewChatForm() {
   const { startAutomation, isExecuting } = useAgent();
   const [userPrompt, setUserPrompt] = useState('');
-  const [apiKey, setApiKey] = useState('');
   const [selectedSession, setSelectedSession] = useState<string>('');
   const [sessions, setSessions] = useState<RecordingSession[]>([]);
 
@@ -38,40 +37,13 @@ export function NewChatForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await startAutomation(userPrompt, apiKey);
+    await startAutomation(userPrompt, selectedSession);
     setUserPrompt(''); // Clear prompt after starting
   };
 
   return (
     <section className="flex-1 flex items-center justify-center p-8">
        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* API Key */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium">
-              Claude API Key
-            </label>
-            <Input
-              type="password"
-              placeholder="sk-ant-..."
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              disabled={isExecuting}
-              required
-              className="font-mono text-sm"
-            />
-            <p className="text-xs text-muted-foreground">
-              Get your API key from{' '}
-              <a 
-                href="https://console.anthropic.com" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-primary hover:underline"
-              >
-                console.anthropic.com
-              </a>
-            </p>
-          </div>
-
           {/* Recording Session Selector */}
           <div className="space-y-2">
             <label className="text-sm font-medium">
@@ -125,7 +97,7 @@ export function NewChatForm() {
           {/* Submit Button */}
           <Button
             type="submit"
-            disabled={isExecuting || !userPrompt.trim() || !apiKey.trim() || !selectedSession}
+            disabled={isExecuting || !userPrompt.trim() || !selectedSession}
             className="w-full"
             size="lg"
           >
