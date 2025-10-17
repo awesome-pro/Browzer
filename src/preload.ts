@@ -100,6 +100,16 @@ export interface BrowserAPI {
   getAutomationStatus: () => Promise<any>;
   cancelAutomation: () => Promise<{ success: boolean }>;
 
+  // Chat Session Management
+  getAllChatSessions: (limit?: number) => Promise<any[]>;
+  getChatSession: (sessionId: string) => Promise<any | null>;
+  getCompleteChatSession: (sessionId: string) => Promise<any>;
+  getChatSessionsByStatus: (status: string, limit?: number) => Promise<any[]>;
+  deleteChatSession: (sessionId: string) => Promise<boolean>;
+  getChatSessionStats: () => Promise<any>;
+  exportChatSession: (sessionId: string) => Promise<any>;
+  deleteOldChatSessions: (daysToKeep: number) => Promise<number>;
+
   // Event listeners
   onTabsUpdated: (callback: (data: { tabs: TabInfo[]; activeTabId: string | null }) => void) => () => void;
   onRecordingAction: (callback: (action: any) => void) => () => void;
@@ -266,6 +276,24 @@ const browserAPI: BrowserAPI = {
     ipcRenderer.on('automation:progress', subscription);
     return () => ipcRenderer.removeListener('automation:progress', subscription);
   },
+
+  // Chat Session API
+  getAllChatSessions: (limit?: number) => 
+    ipcRenderer.invoke('chat-session:get-all', limit),
+  getChatSession: (sessionId: string) => 
+    ipcRenderer.invoke('chat-session:get', sessionId),
+  getCompleteChatSession: (sessionId: string) => 
+    ipcRenderer.invoke('chat-session:get-complete', sessionId),
+  getChatSessionsByStatus: (status: string, limit?: number) => 
+    ipcRenderer.invoke('chat-session:get-by-status', status, limit),
+  deleteChatSession: (sessionId: string) => 
+    ipcRenderer.invoke('chat-session:delete', sessionId),
+  getChatSessionStats: () => 
+    ipcRenderer.invoke('chat-session:get-stats'),
+  exportChatSession: (sessionId: string) => 
+    ipcRenderer.invoke('chat-session:export', sessionId),
+  deleteOldChatSessions: (daysToKeep: number) => 
+    ipcRenderer.invoke('chat-session:delete-old', daysToKeep),
 };
 
 contextBridge.exposeInMainWorld('browserAPI', browserAPI);

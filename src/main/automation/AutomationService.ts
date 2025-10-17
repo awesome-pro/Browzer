@@ -11,6 +11,7 @@
 
 import { WebContentsView } from 'electron';
 import { AgenticAutomationService } from './agentic';
+import { ChatSessionService } from '@/main/services/ChatSessionService';
 import {
   AutomationPlan,
   AutomationResult,
@@ -22,8 +23,8 @@ export class AutomationService {
   private agenticService: AgenticAutomationService;
   private isExecuting = false;
 
-  constructor(view: WebContentsView) {
-    this.agenticService = new AgenticAutomationService(view);
+  constructor(view: WebContentsView, chatSessionService: ChatSessionService) {
+    this.agenticService = new AgenticAutomationService(view, chatSessionService);
   }
 
   /**

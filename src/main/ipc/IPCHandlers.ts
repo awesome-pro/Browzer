@@ -6,6 +6,7 @@ import { SettingsStore, AppSettings } from '@/main/settings/SettingsStore';
 import { UserService } from '@/main/user/UserService';
 import { PasswordManager } from '@/main/password/PasswordManager';
 import { AutomationService } from '@/main/automation';
+import { ChatSessionService } from '@/main/services/ChatSessionService';
 import { RecordedAction, HistoryQuery, LLMAutomationRequest } from '@/shared/types';
 
 /**
@@ -16,6 +17,7 @@ export class IPCHandlers {
   private settingsStore: SettingsStore;
   private userService: UserService;
   private passwordManager: PasswordManager;
+  private chatSessionService: ChatSessionService;
   private automationService: AutomationService;
 
   constructor(
@@ -27,6 +29,9 @@ export class IPCHandlers {
     this.userService = new UserService();
     // Use the existing PasswordManager from BrowserManager instead of creating a new one
     this.passwordManager = this.browserManager.getPasswordManager();
+    
+    // Initialize ChatSessionService (persistent storage)
+    this.chatSessionService = new ChatSessionService();
     
     // AutomationService will be initialized when needed (requires active browser view)
     this.automationService = null!;
@@ -47,6 +52,7 @@ export class IPCHandlers {
     this.setupPasswordHandlers();
     this.setupWindowHandlers();
     this.setupAutomationHandlers();
+    this.setupChatSessionHandlers();
   }
 
   private setupTabHandlers(): void {
@@ -355,8 +361,8 @@ export class IPCHandlers {
           };
         }
 
-        // Initialize AutomationService with current browser view
-        this.automationService = new AutomationService(browserView);
+        // Initialize AutomationService with current browser view and chat session service
+        this.automationService = new AutomationService(browserView, this.chatSessionService);
 
         const result = await this.automationService.executeAutomation(
           request,
@@ -408,6 +414,94 @@ export class IPCHandlers {
         this.automationService.cancel();
       }
       return { success: true };
+    });
+  }
+
+  private setupChatSessionHandlers(): void {
+    // Get all sessions
+    ipcMain.handle('chat-session:get-all', async (_, limit?: number) => {
+      try {
+        return this.chatSessionService.getAllSessions(limit);
+      } catch (error) {
+        console.error('[IPC] Failed to get chat sessions:', error);
+        return [];
+      }
+    });
+
+    // Get session by ID
+    ipcMain.handle('chat-session:get', async (_, sessionId: string) => {
+      try {
+        return this.chatSessionService.getSession(sessionId);
+      } catch (error) {
+        console.error('[IPC] Failed to get chat session:', error);
+        return null;
+      }
+    });
+
+    // Get complete session data (session + messages + tools)
+    ipcMain.handle('chat-session:get-complete', async (_, sessionId: string) => {
+      try {
+        return this.chatSessionService.getCompleteSession(sessionId);
+      } catch (error) {
+        console.error('[IPC] Failed to get complete session:', error);
+        return { session: null, messages: [], toolExecutions: [] };
+      }
+    });
+
+    // Get sessions by status
+    ipcMain.handle('chat-session:get-by-status', async (_, status: string, limit?: number) => {
+      try {
+        return this.chatSessionService.getSessionsByStatus(status as any, limit);
+      } catch (error) {
+        console.error('[IPC] Failed to get sessions by status:', error);
+        return [];
+      }
+    });
+
+    // Delete session
+    ipcMain.handle('chat-session:delete', async (_, sessionId: string) => {
+      try {
+        return this.chatSessionService.deleteSession(sessionId);
+      } catch (error) {
+        console.error('[IPC] Failed to delete session:', error);
+        return false;
+      }
+    });
+
+    // Get session statistics
+    ipcMain.handle('chat-session:get-stats', async () => {
+      try {
+        return this.chatSessionService.getStats();
+      } catch (error) {
+        console.error('[IPC] Failed to get session stats:', error);
+        return {
+          totalSessions: 0,
+          completedSessions: 0,
+          failedSessions: 0,
+          totalTokens: 0,
+          totalCost: 0
+        };
+      }
+    });
+
+    // Export session
+    ipcMain.handle('chat-session:export', async (_, sessionId: string) => {
+      try {
+        return this.chatSessionService.exportSession(sessionId);
+      } catch (error) {
+        console.error('[IPC] Failed to export session:', error);
+        throw error;
+      }
+    });
+
+    // Delete old sessions
+    ipcMain.handle('chat-session:delete-old', async (_, daysToKeep: number) => {
+      try {
+        return this.chatSessionService.deleteOldSessions(daysToKeep);
+      } catch (error) {
+        console.error('[IPC] Failed to delete old sessions:', error);
+        return 0;
+      }
     });
   }
 

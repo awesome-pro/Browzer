@@ -3,7 +3,7 @@
 /**
  * AgenticAutomationService - ReAct-based agentic automation with Claude
  * 
- * Implements the Think → Act → Observe → Reflect loop:
+ * Implements the Think → Act → Observe → Reflect loop with persistent session storage:
  * 1. THINK: Claude analyzes current state and decides next action
  * 2. ACT: Execute the chosen tool/action
  * 3. OBSERVE: Capture results and update browser context
@@ -11,7 +11,8 @@
  * 
  * Features:
  * - Persistent conversation context with prompt caching
- * - Real-time browser state awareness
+ * - Full session storage (messages, tools, costs) in SQLite
+ * - Real-time browser state awareness with screenshots
  * - Intelligent error recovery
  * - Adaptive planning
  * - Progress tracking and reporting
@@ -19,11 +20,13 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { WebContentsView } from 'electron';
+import { randomUUID } from 'crypto';
 import { BrowserAutomation } from '../BrowserAutomation';
 import { BrowserContextProvider } from '@/main/automation/context';
 import { ConversationManager } from './ConversationManager';
 import { ToolRegistry } from './ToolRegistry';
 import { RecordingSession } from '@/shared/types';
+import { ChatSessionService } from '@/main/services/ChatSessionService';
 
 export interface AgenticExecutionOptions {
   userPrompt: string;
@@ -31,6 +34,7 @@ export interface AgenticExecutionOptions {
   apiKey: string;
   maxIterations?: number;
   onProgress?: (update: ProgressUpdate) => void;
+  sessionId?: string;  // Optional: resume existing session
 }
 
 export interface ProgressUpdate {
@@ -50,6 +54,7 @@ export interface AgenticExecutionResult {
   conversationHistory: any[];
   error?: string;
   duration: number;
+  sessionId: string;  // ID of the stored session
 }
 
 export class AgenticAutomationService {
@@ -57,11 +62,13 @@ export class AgenticAutomationService {
   private browserAutomation: BrowserAutomation;
   private contextProvider: BrowserContextProvider;
   private conversationManager: ConversationManager;
+  private chatSessionService: ChatSessionService;
   private view: WebContentsView;
   
   private isExecuting = false;
   private shouldStop = false;
   private currentIteration = 0;
+  private currentSessionId: string | null = null;
   
   // Limits
   private readonly MAX_ITERATIONS = 50;
@@ -72,20 +79,25 @@ export class AgenticAutomationService {
   private consecutiveErrors = 0;
   private lastActions: string[] = [];
 
-  constructor(view: WebContentsView) {
+  constructor(view: WebContentsView, chatSessionService: ChatSessionService) {
     this.view = view;
     this.browserAutomation = new BrowserAutomation(view);
     this.contextProvider = new BrowserContextProvider(view);
     this.conversationManager = new ConversationManager();
+    this.chatSessionService = chatSessionService;
     this.anthropic = new Anthropic({ apiKey: '' }); // Will be set during execution
   }
 
   /**
-   * Execute automation task using ReAct loop
+   * Execute automation task using ReAct loop with full session persistence
    */
   public async execute(options: AgenticExecutionOptions): Promise<AgenticExecutionResult> {
     const startTime = Date.now();
     const { userPrompt, recordingSession, apiKey, maxIterations = this.MAX_ITERATIONS, onProgress } = options;
+
+    // Create or resume session
+    const sessionId = options.sessionId || randomUUID();
+    this.currentSessionId = sessionId;
 
     // Initialize
     this.anthropic = new Anthropic({ apiKey });
@@ -97,10 +109,24 @@ export class AgenticAutomationService {
     this.conversationManager.reset();
 
     console.log('🤖 Starting agentic automation...');
+    console.log(`   Session ID: ${sessionId}`);
     console.log(`   User Goal: ${userPrompt}`);
     console.log(`   Recording: ${recordingSession.name}`);
 
     try {
+      // Create session in database
+      if (!options.sessionId) {
+        this.chatSessionService.createSession({
+          id: sessionId,
+          title: userPrompt.substring(0, 100),
+          recordingSessionId: recordingSession.id,
+          userPrompt
+        });
+        console.log(`📝 Created new session: ${sessionId}`);
+      } else {
+        console.log(`📝 Resuming session: ${sessionId}`);
+      }
+
       // Start monitoring browser context
       await this.browserAutomation.start();
       await this.contextProvider.startMonitoring();
@@ -109,14 +135,26 @@ export class AgenticAutomationService {
       await this.initializeConversation(userPrompt, recordingSession);
 
       // Add initial user message
-      this.conversationManager.addUserMessage(
-        `Please help me automate the following task:\n\n${userPrompt}\n\nAnalyze the current browser state and decide what action to take first.`
-      );
+      const initialMessageId = randomUUID();
+      const initialMessage = `Please help me automate the following task:\n\n${userPrompt}\n\nAnalyze the current browser state and decide what action to take first.`;
+      
+      this.conversationManager.addUserMessage(initialMessage);
+      this.chatSessionService.addMessage({
+        id: initialMessageId,
+        sessionId,
+        role: 'user',
+        content: initialMessage
+      });
 
       // ReAct Loop
       while (this.currentIteration < maxIterations && !this.shouldStop) {
         this.currentIteration++;
         console.log(`\n🔄 Iteration ${this.currentIteration}/${maxIterations}`);
+
+        // Update session iteration count
+        this.chatSessionService.updateSession(sessionId, {
+          iterations: this.currentIteration
+        });
 
         try {
           // THINK: Get Claude's decision
@@ -127,6 +165,19 @@ export class AgenticAutomationService {
           });
 
           const response = await this.getClaudeResponse();
+
+          // Log assistant message
+          const assistantMessageId = randomUUID();
+          this.chatSessionService.addMessage({
+            id: assistantMessageId,
+            sessionId,
+            role: 'assistant',
+            content: response.content,
+            inputTokens: response.usage?.input_tokens,
+            outputTokens: response.usage?.output_tokens,
+            cacheCreationTokens: response.usage?.cache_creation_input_tokens,
+            cacheReadTokens: response.usage?.cache_read_input_tokens
+          });
 
           // Check for completion or failure
           if (this.isTaskComplete(response)) {
@@ -139,23 +190,46 @@ export class AgenticAutomationService {
               iteration: this.currentIteration
             });
 
+            // Update session as completed
+            const tokenUsage = this.conversationManager.getTokenUsage();
+            this.chatSessionService.updateSession(sessionId, {
+              status: 'completed',
+              completedAt: Date.now(),
+              duration: Date.now() - startTime,
+              totalTokens: tokenUsage.totalTokens,
+              totalCost: tokenUsage.estimatedCost,
+              summary
+            });
+
             return {
               success: true,
               summary,
               iterations: this.currentIteration,
               conversationHistory: this.conversationManager.export().messages,
-              duration: Date.now() - startTime
+              duration: Date.now() - startTime,
+              sessionId
             };
           }
 
           if (this.isTaskFailed(response)) {
             const reason = this.extractFailureReason(response);
-            console.log('❌ Task failed:', reason);
+            console.log(`❌ Task failed: ${reason}`);
             
             onProgress?.({
               type: 'failed',
               message: reason,
               iteration: this.currentIteration,
+              error: reason
+            });
+
+            // Update session as failed
+            const tokenUsage = this.conversationManager.getTokenUsage();
+            this.chatSessionService.updateSession(sessionId, {
+              status: 'failed',
+              completedAt: Date.now(),
+              duration: Date.now() - startTime,
+              totalTokens: tokenUsage.totalTokens,
+              totalCost: tokenUsage.estimatedCost,
               error: reason
             });
 
@@ -165,12 +239,13 @@ export class AgenticAutomationService {
               iterations: this.currentIteration,
               conversationHistory: this.conversationManager.export().messages,
               error: reason,
-              duration: Date.now() - startTime
+              duration: Date.now() - startTime,
+              sessionId
             };
           }
 
           // ACT: Execute tool calls
-          const toolResults = await this.executeToolCalls(response, onProgress);
+          const toolResults = await this.executeToolCalls(response, onProgress, sessionId);
 
           // OBSERVE: Update browser context
           onProgress?.({
@@ -190,6 +265,15 @@ export class AgenticAutomationService {
           // REFLECT: Add tool results to conversation in proper format
           const toolResultContent = this.buildToolResultContent(response, toolResults, updatedContext);
           this.conversationManager.addUserMessage(toolResultContent);
+          
+          // Log user message with tool results
+          const toolResultMessageId = randomUUID();
+          this.chatSessionService.addMessage({
+            id: toolResultMessageId,
+            sessionId,
+            role: 'user',
+            content: toolResultContent
+          });
 
           onProgress?.({
             type: 'reflecting',
@@ -203,9 +287,15 @@ export class AgenticAutomationService {
           // Check for repetitive behavior
           if (this.isStuckInLoop()) {
             console.warn('⚠️ Detected repetitive behavior, asking Claude to try different approach');
-            this.conversationManager.addUserMessage(
-              'You seem to be repeating the same actions. Please try a different approach or use task_failed if you cannot proceed.'
-            );
+            const warningMessage = 'You seem to be repeating the same actions. Please try a different approach or use task_failed if you cannot proceed.';
+            this.conversationManager.addUserMessage(warningMessage);
+            
+            this.chatSessionService.addMessage({
+              id: randomUUID(),
+              sessionId,
+              role: 'system',
+              content: warningMessage
+            });
           }
 
           // Reset consecutive errors on success
@@ -221,20 +311,38 @@ export class AgenticAutomationService {
             const errorMsg = `Failed after ${this.MAX_CONSECUTIVE_ERRORS} consecutive errors`;
             console.error(errorMsg);
             
+            // Update session as failed
+            const tokenUsage = this.conversationManager.getTokenUsage();
+            this.chatSessionService.updateSession(sessionId, {
+              status: 'failed',
+              completedAt: Date.now(),
+              duration: Date.now() - startTime,
+              totalTokens: tokenUsage.totalTokens,
+              totalCost: tokenUsage.estimatedCost,
+              error: errorMsg
+            });
+
             return {
               success: false,
               summary: errorMsg,
               iterations: this.currentIteration,
               conversationHistory: this.conversationManager.export().messages,
               error: errorMsg,
-              duration: Date.now() - startTime
+              duration: Date.now() - startTime,
+              sessionId
             };
           }
 
           // Add error to conversation for Claude to handle
-          this.conversationManager.addUserMessage(
-            `An error occurred: ${(error as Error).message}\n\nPlease analyze the error and decide how to proceed.`
-          );
+          const errorMessage = `An error occurred: ${(error as Error).message}\n\nPlease analyze the error and decide how to proceed.`;
+          this.conversationManager.addUserMessage(errorMessage);
+          
+          this.chatSessionService.addMessage({
+            id: randomUUID(),
+            sessionId,
+            role: 'system',
+            content: errorMessage
+          });
         }
       }
 
@@ -242,13 +350,25 @@ export class AgenticAutomationService {
       const timeoutMsg = `Reached maximum iterations (${maxIterations}) without completing the task`;
       console.warn(timeoutMsg);
       
+      // Update session as failed
+      const tokenUsage = this.conversationManager.getTokenUsage();
+      this.chatSessionService.updateSession(sessionId, {
+        status: 'failed',
+        completedAt: Date.now(),
+        duration: Date.now() - startTime,
+        totalTokens: tokenUsage.totalTokens,
+        totalCost: tokenUsage.estimatedCost,
+        error: timeoutMsg
+      });
+
       return {
         success: false,
         summary: timeoutMsg,
         iterations: this.currentIteration,
         conversationHistory: this.conversationManager.export().messages,
         error: timeoutMsg,
-        duration: Date.now() - startTime
+        duration: Date.now() - startTime,
+        sessionId
       };
 
     } finally {
@@ -263,8 +383,9 @@ export class AgenticAutomationService {
       console.log('\n' + '='.repeat(80));
       console.log('📊 EXECUTION SUMMARY');
       console.log('='.repeat(80));
-      console.log(`⏱️  Duration: ${duration.toFixed(2)}s`);
-      console.log(`🔄 Iterations: ${this.currentIteration}`);
+      console.log(`📝 Session ID:        ${sessionId}`);
+      console.log(`⏱️  Duration:          ${duration.toFixed(2)}s`);
+      console.log(`🔄 Iterations:        ${this.currentIteration}`);
       console.log('');
       console.log('💰 TOKEN USAGE & COST:');
       console.log(`   Input tokens:         ${tokenUsage.inputTokens.toLocaleString()}`);
@@ -284,6 +405,17 @@ export class AgenticAutomationService {
   public cancel(): void {
     console.log('🛑 Cancelling automation...');
     this.shouldStop = true;
+    
+    // Update session as cancelled
+    if (this.currentSessionId) {
+      const tokenUsage = this.conversationManager.getTokenUsage();
+      this.chatSessionService.updateSession(this.currentSessionId, {
+        status: 'cancelled',
+        completedAt: Date.now(),
+        totalTokens: tokenUsage.totalTokens,
+        totalCost: tokenUsage.estimatedCost
+      });
+    }
   }
 
   /**
@@ -299,14 +431,25 @@ export class AgenticAutomationService {
   private async initializeConversation(userPrompt: string, recordingSession: RecordingSession): Promise<void> {
     console.log('📝 Initializing conversation context...');
 
+    // Capture initial browser context
+    const browserContext = await this.contextProvider.getContext({
+      includePrunedDOM: true,
+      includeAccessibilityTree: false,
+      includeConsoleLogs: true,
+      includeNetworkActivity: true,
+      includeScreenshot: true,
+      maxElements: 100,
+      maxConsoleEntries: 20,
+      maxNetworkEntries: 20
+    });
+
     // Build system prompt
     const systemPrompt = this.buildSystemPrompt();
 
     // Build recording context
     const recordingContext = this.buildRecordingContext(recordingSession);
 
-    // Get initial browser context
-    const browserContext = await this.contextProvider.getRichContext();
+    // Build browser context text
     const browserContextText = this.contextProvider.contextToText(browserContext);
 
     // Get tools
@@ -321,7 +464,7 @@ export class AgenticAutomationService {
     );
 
     console.log('✅ Conversation initialized with prompt caching');
-    console.log(`   ${ToolRegistry.getSummary()}`);
+    console.log(`   ${tools.length} tools available: ${tools.map(t => t.name).join(', ')}`);
     console.log(`   ${this.conversationManager.getSummary()}`);
   }
 
@@ -329,60 +472,59 @@ export class AgenticAutomationService {
    * Build system prompt for Claude
    */
   private buildSystemPrompt(): string {
-    return `You are an expert browser automation agent. Your role is to help users automate web tasks by controlling a browser through a set of tools.
+    return `You are an expert browser automation agent powered by Claude Sonnet 4.5. Your role is to help users automate web tasks using a ReAct (Reasoning and Acting) approach.
 
-# YOUR CAPABILITIES
+## Your Capabilities
 
-You have access to tools that allow you to:
+You have access to browser automation tools that let you:
 - Navigate to URLs
-- Click on elements (buttons, links, etc.)
-- Type text into input fields
-- Select options from dropdowns
+- Click elements (buttons, links, etc.)
+- Type into input fields
+- Select dropdown options
 - Wait for elements to appear
-- Inspect the current page state
-- Scroll the page
+- Scroll pages
+- Inspect page content and structure
+- Get text from elements
 
-# YOUR APPROACH (ReAct Pattern)
+## How You Work (ReAct Loop)
 
-Follow this iterative process:
-
-1. **THINK**: Analyze the current browser state and user's goal
+1. **THINK**: Analyze the current browser state (DOM, screenshots, console logs)
 2. **ACT**: Choose and execute ONE tool at a time
-3. **OBSERVE**: Examine the results of your action
-4. **REFLECT**: Decide if you're making progress or need to adjust
+3. **OBSERVE**: See the results and updated browser state
+4. **REFLECT**: Decide if you're making progress or need to adjust strategy
+5. **REPEAT**: Continue until task is complete or impossible
 
-# IMPORTANT GUIDELINES
+## Important Guidelines
 
-- **One action at a time**: Execute only ONE tool per turn, then wait for results
-- **Verify before acting**: Use get_browser_context to understand the page before interacting
-- **Be specific**: Use precise selectors (IDs are best, then classes, then text matching)
-- **Handle errors gracefully**: If an action fails, analyze why and try a different approach
-- **Avoid repetition**: If the same action fails multiple times, try something different
-- **Know when to stop**: Use task_complete when done or task_failed if stuck
+- **One tool at a time**: Execute tools sequentially, never assume multiple actions succeed
+- **Verify before proceeding**: Always check if your action succeeded before moving on
+- **Use screenshots**: Visual context helps you understand the page layout
+- **Be adaptive**: If something fails, try alternative approaches
+- **Use selectors wisely**: Prefer data-testid, aria-labels, or IDs over complex CSS paths
+- **Handle errors gracefully**: If you encounter errors, analyze them and try different approaches
+- **Know when to give up**: Use task_failed if the task is truly impossible
 
-# SELECTOR STRATEGIES
+## When to Complete
 
-1. **ID selectors**: \`#submit-button\` (most reliable)
-2. **Class selectors**: \`.btn-primary\`
-3. **Attribute selectors**: \`button[type="submit"]\`
-4. **Text matching**: \`button:contains('Submit')\` (use for buttons with text)
-5. **Combination**: \`form#login button.submit\`
+Use \`task_complete\` when:
+- The user's goal has been fully achieved
+- You can verify the success visually or through page content
 
-# ERROR RECOVERY
+Use \`task_failed\` when:
+- The task is impossible (e.g., page doesn't exist, feature not available)
+- You've tried multiple approaches and all failed
+- You're stuck in a loop and can't make progress
 
-If an action fails:
-1. Check console logs for errors
-2. Verify the element exists with get_browser_context
-3. Try alternative selectors
-4. Wait for dynamic content to load
-5. If truly stuck after 3 attempts, use task_failed
+## Best Practices
 
-# COMPLETION
+- Start by understanding the current page state
+- Break complex tasks into simple steps
+- Verify each step before proceeding
+- Use :contains() for text-based element selection when needed
+- Wait for elements to load before interacting with them
+- Check for error messages or unexpected page states
 
-- Use **task_complete** when you've successfully accomplished the user's goal
-- Use **task_failed** if you encounter an unrecoverable error or cannot proceed
-
-Remember: You're in an iterative loop. Take it step by step, verify your actions, and adapt based on results.`;
+Remember: You're iterative and adaptive. Each action gives you new information to refine your approach.`;
   }
 
   /**
@@ -391,12 +533,13 @@ Remember: You're in an iterative loop. Take it step by step, verify your actions
   private buildRecordingContext(session: RecordingSession): string {
     const lines: string[] = [];
     
-    lines.push(`# Recording: ${session.name}`);
-    lines.push(`Actions recorded: ${session.actionCount}`);
-    lines.push(`URL: ${session.url}`);
+    lines.push('# RECORDING CONTEXT');
     lines.push('');
-    lines.push('## Recorded Actions:');
+    lines.push(`The user has provided a recording session "${session.name}" that demonstrates the task.`);
+    lines.push('This recording shows the sequence of actions they took:');
+    lines.push('');
     
+    // Add first 20 actions from recording
     session.actions.slice(0, 20).forEach((action, idx) => {
       const target = (action as any).target;
       const selector = target?.selector || '';
@@ -408,16 +551,19 @@ Remember: You're in an iterative loop. Take it step by step, verify your actions
       lines.push(`... and ${session.actions.length - 20} more actions`);
     }
     
+    lines.push('');
+    lines.push('Use this as a reference for the general flow, but adapt based on the current page state.');
+    
     return lines.join('\n');
   }
 
   /**
-   * Get response from Claude with tool use
+   * Get Claude's response with tool use
    */
   private async getClaudeResponse(): Promise<Anthropic.Message> {
-    const { system, messages, tools } = this.conversationManager.buildMessagesForAPI();
-
     console.log('🤔 Asking Claude for next action...');
+
+    const { system, messages, tools } = this.conversationManager.buildMessagesForAPI();
 
     const response = await this.anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -439,16 +585,19 @@ Remember: You're in an iterative loop. Take it step by step, verify your actions
    */
   private async executeToolCalls(
     response: Anthropic.Message,
-    onProgress?: (update: ProgressUpdate) => void
+    onProgress?: (update: ProgressUpdate) => void,
+    sessionId?: string
   ): Promise<Array<{ toolName: string; input: any; success: boolean; output?: any; error?: string }>> {
     const results: Array<{ toolName: string; input: any; success: boolean; output?: any; error?: string }> = [];
 
     for (const block of response.content) {
       if (block.type === 'tool_use') {
-        const { name: toolName, input } = block;
-        
+        const toolName = block.name;
+        const input = block.input;
+        const toolStartTime = Date.now();
+
         console.log(`🔧 Executing tool: ${toolName}`);
-        console.log(`   Input:`, JSON.stringify(input, null, 2));
+        console.log(`   Input: ${JSON.stringify(input, null, 2)}`);
 
         onProgress?.({
           type: 'acting',
@@ -458,15 +607,15 @@ Remember: You're in an iterative loop. Take it step by step, verify your actions
           toolInput: input
         });
 
-        // Track action for loop detection
-        this.lastActions.push(toolName);
-        if (this.lastActions.length > this.MAX_SAME_ACTION_REPEATS) {
-          this.lastActions.shift();
-        }
-
         try {
           const output = await this.executeTool(toolName, input);
+          const duration = Date.now() - toolStartTime;
           
+          console.log('✅ Tool executed successfully');
+          if (output && typeof output === 'object' && Object.keys(output).length > 0) {
+            console.log(`   Output: ${JSON.stringify(output).substring(0, 200)}`);
+          }
+
           results.push({
             toolName,
             input,
@@ -474,19 +623,53 @@ Remember: You're in an iterative loop. Take it step by step, verify your actions
             output
           });
 
-          console.log(`✅ Tool executed successfully`);
-          if (output) console.log(`   Output:`, output);
+          // Log tool execution to database
+          if (sessionId) {
+            this.chatSessionService.addToolExecution({
+              id: randomUUID(),
+              sessionId,
+              iteration: this.currentIteration,
+              toolName,
+              input,
+              output,
+              success: true,
+              duration
+            });
+          }
+
+          // Track action for loop detection
+          this.lastActions.push(`${toolName}:${JSON.stringify(input)}`);
+          if (this.lastActions.length > 10) {
+            this.lastActions.shift();
+          }
 
         } catch (error) {
+          const duration = Date.now() - toolStartTime;
           const errorMsg = (error as Error).message;
-          console.error(`❌ Tool execution failed:`, errorMsg);
           
+          console.log('❌ Tool execution failed');
+          console.log(`   Error: ${errorMsg}`);
+
           results.push({
             toolName,
             input,
             success: false,
             error: errorMsg
           });
+
+          // Log failed tool execution to database
+          if (sessionId) {
+            this.chatSessionService.addToolExecution({
+              id: randomUUID(),
+              sessionId,
+              iteration: this.currentIteration,
+              toolName,
+              input,
+              error: errorMsg,
+              success: false,
+              duration
+            });
+          }
 
           this.consecutiveErrors++;
         }
@@ -506,22 +689,21 @@ Remember: You're in an iterative loop. Take it step by step, verify your actions
         return { success: true, url: input.url };
 
       case 'click':
-        await this.browserAutomation.click(input.selector);
+        const selectors = Array.isArray(input.selector) ? input.selector : [input.selector];
+        await this.browserAutomation.click(selectors);
         return { success: true, selector: input.selector };
 
       case 'type':
-        await this.browserAutomation.type(input.selector, input.text, {
-          clear: input.clear !== false
-        });
-        return { success: true, selector: input.selector, text: input.text };
+        await this.browserAutomation.type(input.selector, input.text);
+        return { success: true };
 
       case 'select':
         await this.browserAutomation.select(input.selector, input.value);
-        return { success: true, selector: input.selector, value: input.value };
+        return { success: true };
 
       case 'wait_for_element':
-        await this.browserAutomation.waitForElementVisible(input.selector, input.timeout || 10000);
-        return { success: true, selector: input.selector };
+        await this.browserAutomation.waitForElementVisible(input.selector, input.timeout || 5000);
+        return { success: true };
 
       case 'wait':
         // Use a simple promise-based wait
@@ -531,7 +713,7 @@ Remember: You're in an iterative loop. Take it step by step, verify your actions
       case 'get_browser_context':
         const level = input.detail_level || 'standard';
         let context;
-        if (level === 'lightweight') {
+        if (level === 'minimal') {
           context = await this.contextProvider.getLightweightContext();
         } else if (level === 'rich') {
           context = await this.contextProvider.getRichContext();
@@ -662,7 +844,7 @@ Remember: You're in an iterative loop. Take it step by step, verify your actions
     const toolUse = response.content.find(
       block => block.type === 'tool_use' && block.name === 'task_complete'
     );
-    return (toolUse as any)?.input?.summary || 'Task completed';
+    return (toolUse as any)?.input?.summary || 'Task completed successfully';
   }
 
   /**
