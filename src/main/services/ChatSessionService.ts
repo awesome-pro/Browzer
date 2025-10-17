@@ -16,66 +16,13 @@ import Database from 'better-sqlite3';
 import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
-
-// ============================================================================
-// Types
-// ============================================================================
-
-export interface ChatSession {
-  id: string;
-  title: string;
-  recordingSessionId: string;
-  userPrompt: string;
-  status: 'running' | 'completed' | 'failed' | 'cancelled';
-  createdAt: number;
-  updatedAt: number;
-  completedAt?: number;
-  duration?: number;
-  
-  // Execution metadata
-  iterations: number;
-  totalTokens: number;
-  totalCost: number;
-  
-  // Summary
-  summary?: string;
-  error?: string;
-}
-
-export interface ChatMessage {
-  id: string;
-  sessionId: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;  // JSON stringified content
-  timestamp: number;
-  
-  // Token tracking
-  inputTokens?: number;
-  outputTokens?: number;
-  cacheCreationTokens?: number;
-  cacheReadTokens?: number;
-}
-
-export interface ToolExecution {
-  id: string;
-  sessionId: string;
-  iteration: number;
-  toolName: string;
-  input: string;  // JSON stringified
-  output?: string;  // JSON stringified
-  error?: string;
-  success: boolean;
-  timestamp: number;
-  duration?: number;
-}
-
-export interface SessionStats {
-  totalSessions: number;
-  completedSessions: number;
-  failedSessions: number;
-  totalTokens: number;
-  totalCost: number;
-}
+import {
+  ChatSession,
+  ChatMessage,
+  ToolExecution,
+  SessionStats,
+  CompleteChatSession
+} from '@/shared/types';
 
 // ============================================================================
 // ChatSessionService

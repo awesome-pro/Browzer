@@ -1,17 +1,19 @@
 /**
- * AgentContext - Global state management for agent automation
+ * AgentContext - Simplified global state management
  * 
- * Provides persistent state that survives:
- * - Tab switches in RecordingView
- * - Sidebar toggles
- * - Component remounts
- * 
- * State is maintained at the top level and synced with main process
+ * Single source of truth using shared types.
+ * State persists across tab switches and sidebar toggles.
  */
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { toast } from 'sonner';
-import { ChatSession, ExecutionStep, ToolExecution, ChatMessage } from './types';
+import {
+  ChatSession,
+  ChatMessage,
+  ToolExecution,
+  ExecutionStep,
+  AutomationProgressUpdate
+} from '@/shared/types';
 
 interface AgentContextValue {
   // Sessions
@@ -31,10 +33,6 @@ interface AgentContextValue {
   isExecuting: boolean;
   startAutomation: (userPrompt: string, recordingSessionId: string) => Promise<void>;
   cancelAutomation: () => Promise<void>;
-  
-  // Recording session
-  recordingSessionId: string | null;
-  setRecordingSessionId: (id: string) => void;
 }
 
 const AgentContext = createContext<AgentContextValue | null>(null);
@@ -52,9 +50,6 @@ export function AgentProvider({ children }: { children: ReactNode }) {
   // Execution state
   const [isExecuting, setIsExecuting] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  
-  // Recording session
-  const [recordingSessionId, setRecordingSessionId] = useState<string | null>(null);
 
   // Load sessions on mount
   useEffect(() => {
@@ -63,7 +58,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
 
   // Listen for real-time automation progress
   useEffect(() => {
-    const unsubscribe = window.browserAPI.onAutomationProgress((data) => {
+    const unsubscribe = window.browserAPI.onAutomationProgress((data: AutomationProgressUpdate) => {
       console.log('🔄 Progress update:', data);
       
       // Add execution step
@@ -187,13 +182,13 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const startAutomation = useCallback(async (userPrompt: string, recordingSessionIdParam: string) => {
+  const startAutomation = useCallback(async (userPrompt: string, recordingSessionId: string) => {
     if (!userPrompt.trim()) {
       toast.error('Please enter a prompt');
       return;
     }
 
-    if (!recordingSessionIdParam) {
+    if (!recordingSessionId) {
       toast.error('Please select a recording session first');
       return;
     }
@@ -230,7 +225,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
 
       // Get the selected recording session
       const recordings = await window.browserAPI.getAllRecordings();
-      const recordingSession = recordings.find(r => r.id === recordingSessionIdParam);
+      const recordingSession = recordings.find(r => r.id === recordingSessionId);
       
       if (!recordingSession) {
         toast.error('Selected recording session not found');
@@ -257,7 +252,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       toast.error('Failed to start automation: ' + (error as Error).message);
       setIsExecuting(false);
     }
-  }, [loadSessions, recordingSessionId]);
+  }, [loadSessions]);
 
   const cancelAutomation = useCallback(async () => {
     try {
@@ -290,9 +285,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     executionSteps,
     isExecuting,
     startAutomation,
-    cancelAutomation,
-    recordingSessionId,
-    setRecordingSessionId
+    cancelAutomation
   };
 
   return (

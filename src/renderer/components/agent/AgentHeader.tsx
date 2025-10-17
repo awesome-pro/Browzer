@@ -11,8 +11,9 @@ import { useAgent } from './AgentContext';
 import { RecordingSession } from '@/shared/types';
 
 export function AgentHeader() {
-  const { selectedSession, recordingSessionId, setRecordingSessionId } = useAgent();
+  const { selectedSession } = useAgent();
   const [recordings, setRecordings] = useState<RecordingSession[]>([]);
+  const [selectedRecordingId, setSelectedRecordingId] = useState<string>('');
   const [selectedRecording, setSelectedRecording] = useState<RecordingSession | null>(null);
 
   // Load recordings on mount
@@ -22,13 +23,14 @@ export function AgentHeader() {
 
   // Find selected recording details
   useEffect(() => {
-    if (recordingSessionId) {
-      const recording = recordings.find(r => r.id === recordingSessionId);
+    const recordingId = selectedSession?.recordingSessionId || selectedRecordingId;
+    if (recordingId) {
+      const recording = recordings.find(r => r.id === recordingId);
       setSelectedRecording(recording || null);
     } else {
       setSelectedRecording(null);
     }
-  }, [recordingSessionId, recordings]);
+  }, [selectedSession, selectedRecordingId, recordings]);
 
   const loadRecordings = async () => {
     try {
@@ -40,8 +42,8 @@ export function AgentHeader() {
   };
 
   const handleNewChat = () => {
-    // Clear selection to show recent sessions
-    window.location.reload(); // Simple way to reset state
+    // Reset to show recent sessions
+    window.location.reload();
   };
 
   return (
@@ -60,8 +62,8 @@ export function AgentHeader() {
           ) : (
             /* Show selector when no active session */
             <Select
-              value={recordingSessionId || ''}
-              onValueChange={setRecordingSessionId}
+              value={selectedRecordingId}
+              onValueChange={setSelectedRecordingId}
             >
               <SelectTrigger className="h-8 text-xs border-none shadow-none focus:ring-0">
                 <SelectValue placeholder="Select recording session..." />
