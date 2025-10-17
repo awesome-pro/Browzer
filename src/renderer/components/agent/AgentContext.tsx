@@ -199,12 +199,27 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      // Check API key from settings
+      // Check API key from settings based on selected LLM provider
       const settings = await window.browserAPI.getSettingsCategory('automation');
-      const apiKey = settings?.apiKey;
+      
+     
+      
+      // Get API key based on selected provider
+      let apiKey = '';
+      switch (settings.llmProvider) {
+        case 'gemini':
+          apiKey = settings.geminiApiKey;
+          break;
+        case 'claude':
+          apiKey = settings.claudeApiKey;
+          break;
+        case 'openai':
+          apiKey = settings.openaiApiKey;
+          break;
+      }
       
       if (!apiKey) {
-        toast.error('Please configure your Claude API key in Settings first');
+        toast.error(`Please configure your ${settings.llmProvider} API key in Settings first`);
         return;
       }
 

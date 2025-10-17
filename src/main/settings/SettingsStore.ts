@@ -26,14 +26,13 @@ export interface AppSettings {
     showBookmarksBar: boolean;
   };
   
-  // Agent Settings
-  agent: {
-    autoSaveRecordings: boolean;
-  };
-  
   // Automation Settings
   automation: {
-    apiKey: string;
+    llmProvider: 'gemini' | 'claude' | 'openai';
+    geminiApiKey: string;
+    claudeApiKey: string;
+    openaiApiKey: string;
+    enableAutomation: boolean;
   };
 }
 
@@ -56,11 +55,12 @@ const defaultSettings: AppSettings = {
     fontSize: 16,
     showBookmarksBar: false,
   },
-  agent: {
-    autoSaveRecordings: true,
-  },
   automation: {
-    apiKey: '',
+    llmProvider: 'claude',
+    geminiApiKey: '',
+    claudeApiKey: '',
+    openaiApiKey: '',
+    enableAutomation: true,
   },
 };
 
