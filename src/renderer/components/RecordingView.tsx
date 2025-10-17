@@ -120,7 +120,8 @@ export function RecordingView() {
       </TabsContent>
 
       <TabsContent value="automation">
-        <AgentView />
+        {/* <AgentView /> */}
+        A component will come here soon...
       </TabsContent>
     </Tabs>
   );
