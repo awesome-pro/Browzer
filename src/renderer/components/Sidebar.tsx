@@ -3,7 +3,7 @@ import { Bot, Video } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/renderer/ui/tabs';
 import { RecordingView } from './RecordingView';
 import { useSidebarStore } from '@/renderer/store/useSidebarStore';
-import AgentView from './AgentView';
+import { AgentView } from './agent';
 
 /**
  * Sidebar - Agent UI with tabbed interface
@@ -32,34 +32,31 @@ export function Sidebar() {
   }, [setActiveTab]);
 
   return (
-    <div className="h-full w-full flex flex-col ">
-      {/* Sidebar Header */}
-
-      {/* Main Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
-        <TabsList className="w-full rounded-none p-0 h-auto">
+     <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+        <TabsList className="w-full p-0 h-auto flex-shrink-0">
           <TabsTrigger 
-            value="agent" 
+            value="agent"
+            className="text-xs"
           >
-            <Bot className="w-4 h-4 mr-2" />
-            Agent
+            <Bot className="w-3.5 h-3.5 mr-1.5" />
+            Automation
           </TabsTrigger>
           <TabsTrigger 
             value="recording"
+            className="text-xs"
           >
-            <Video className="w-4 h-4 mr-2" />
+            <Video className="w-3.5 h-3.5 mr-1.5" />
             Recording
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="agent" className='flex items-center justify-center h-full'>
-           Agents coming soon...
+        <TabsContent value="agent" className="flex-1 m-0 overflow-hidden">
+           <AgentView />
         </TabsContent>
 
-        <TabsContent value="recording">
+        <TabsContent value="recording" className="flex-1 m-0 overflow-hidden">
           <RecordingView />
         </TabsContent>
       </Tabs>
-    </div>
   );
 }

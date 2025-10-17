@@ -1,17 +1,15 @@
 import { useState, useEffect } from 'react';
-import { Circle, Clock, SparkleIcon } from 'lucide-react';
-import { RecordedAction, RecordingSession } from '@/shared/types';
+import { Circle, SparkleIcon } from 'lucide-react';
+import { RecordedAction } from '@/shared/types';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/renderer/ui/tabs';
-import { LiveRecordingView, SessionsListView } from './recording';
-import { toast } from 'sonner';
+import { LiveRecordingView } from './recording';
 import { cn } from '@/renderer/lib/utils';
-import AgentView from './AgentView';
+import { AgentView } from './agent';
 
 export function RecordingView() {
   const [recordingTab, setRecordingTab] = useState('live');
   const [actions, setActions] = useState<RecordedAction[]>([]);
   const [isRecording, setIsRecording] = useState(false);
-  const [sessions, setSessions] = useState<RecordingSession[]>([]);
   const [showSaveForm, setShowSaveForm] = useState(false);
   const [recordingData, setRecordingData] = useState<{ 
     actions: RecordedAction[]; 
@@ -22,7 +20,6 @@ export function RecordingView() {
   useEffect(() => {
     // Initialize state
     window.browserAPI.isRecording().then(setIsRecording);
-    loadSessions();
 
     // Setup event listeners
     const unsubStart = window.browserAPI.onRecordingStarted(() => {
@@ -62,12 +59,10 @@ export function RecordingView() {
 
     const unsubSaved = window.browserAPI.onRecordingSaved(() => {
       setActions([]);
-      loadSessions();
     });
 
     const unsubDeleted = window.browserAPI.onRecordingDeleted(() => {
       setActions([]);
-      loadSessions();
     });
     
     return () => {
@@ -79,18 +74,13 @@ export function RecordingView() {
     };
   }, []);
 
-  const loadSessions = async () => {
-    const allSessions = await window.browserAPI.getAllRecordings();
-    setSessions(allSessions);
-  };
-
   const handleSaveRecording = async (name: string, description: string) => {
     if (recordingData) {
       await window.browserAPI.saveRecording(name, description, recordingData.actions);
       setShowSaveForm(false);
       setRecordingData(null);
       setActions([]);
-      setRecordingTab('sessions');
+      setRecordingTab('automation');
     }
   };
 
@@ -100,17 +90,10 @@ export function RecordingView() {
     setActions([]);
   };
 
-  const handleDeleteSession = async (id: string) => {
-    const confirmed = confirm('Are you sure you want to delete this recording? This action cannot be undone.');
-    if (confirmed) {
-      await window.browserAPI.deleteRecording(id);
-      toast.success('Recording deleted successfully');
-    }
-  };
 
   return (
     <Tabs value={recordingTab} onValueChange={setRecordingTab} className='h-full'>
-      <TabsList className="w-full rounded-none border-b p-0 h-auto">
+      <TabsList className="w-full text-xs">
         <TabsTrigger 
           value="live" 
         >
@@ -122,12 +105,6 @@ export function RecordingView() {
         >
           <SparkleIcon className='size-3 text-primary' />
           Automation
-        </TabsTrigger>
-        <TabsTrigger 
-          value="sessions"
-        >
-          <Clock className="w-3 h-3 mr-1.5" />
-          Sessions
         </TabsTrigger>
       </TabsList>
 
@@ -144,14 +121,6 @@ export function RecordingView() {
 
       <TabsContent value="automation">
         <AgentView />
-      </TabsContent>
-
-      <TabsContent value="sessions" className="flex-1 m-0 p-0">
-        <SessionsListView
-          sessions={sessions} 
-          onRefresh={loadSessions}
-          onDelete={handleDeleteSession}
-        />
       </TabsContent>
     </Tabs>
   );

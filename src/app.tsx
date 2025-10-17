@@ -13,7 +13,7 @@ function App() {
         ) : (
           <BrowserChrome />
         )}
-      <Toaster position="bottom-right" richColors />
+      <Toaster richColors />
     </ThemeProvider>
   )
 }

@@ -25,7 +25,7 @@ export function BrowserChrome() {
   }, [showSidebar]);
 
   return (
-    <div className="h-full w-full flex flex-col select-none">
+    <div className="w-screen h-screen flex flex-col">
       {/* Tab Bar */}
       <TabBar
         tabs={browserAPI.tabs}
@@ -65,18 +65,13 @@ export function BrowserChrome() {
         }}
       />
 
-      {/* Content Area: Web Content + Sidebar */}
-      <div className="flex-1 overflow-hidden relative flex">
-        {/* Web Content Area - Transparent (shows WebContentsView below) */}
-        <div className="flex-1 pointer-events-none" />
-        
-        {/* Sidebar - Positioned on the right */}
+      <section className="relative flex-1 overflow-hidden">
         {isSidebarVisible && (
-          <div className="absolute top-0 right-0 bottom-0 w-[30%] min-w-[300px] max-w-[600px] pointer-events-auto">
+          <aside className='absolute right-0 top-0 bottom-0 w-[30%]'>
             <Sidebar />
-          </div>
+          </aside>
         )}
-      </div>
+      </section>
     </div>
   );
 }
