@@ -21,7 +21,6 @@ import {
   ChatMessage,
   ToolExecution,
   SessionStats,
-  CompleteChatSession
 } from '@/shared/types';
 
 // ============================================================================

@@ -14,13 +14,16 @@ import {
 import { useAgent } from './AgentContext';
 
 export function ChatFooter() {
-  const { isExecuting, startAutomation, selectedSession, recordingSessionId } = useAgent();
+  const { isExecuting, startAutomation, selectedSession, pendingRecordingId } = useAgent();
   const [prompt, setPrompt] = useState('');
 
   const handleSubmit = async () => {
-    if (!prompt.trim() || isExecuting || !recordingSessionId) return;
+    // Get recording ID from either active session or pending selection
+    const recordingId = selectedSession?.recordingSessionId || pendingRecordingId;
     
-    await startAutomation(prompt, recordingSessionId);
+    if (!prompt.trim() || isExecuting || !recordingId) return;
+    
+    await startAutomation(prompt, recordingId);
     setPrompt('');
   };
 
@@ -32,9 +35,8 @@ export function ChatFooter() {
   };
 
   return (
-    <div className="border-t bg-background p-3 flex-shrink-0">
-      <div className="max-w-4xl mx-auto">
-        <InputGroup>
+    <section className="p-3 flex-shrink-0">
+       <InputGroup>
           <InputGroupTextarea
             placeholder={selectedSession ? "Continue the conversation..." : "Describe what you want to automate..."}
             value={prompt}
@@ -42,7 +44,7 @@ export function ChatFooter() {
             onKeyDown={handleKeyDown}
             disabled={isExecuting}
             rows={2}
-            className="resize-none"
+            className="rounded-3xl"
           />
           <InputGroupAddon align="block-end">
             <InputGroupButton
@@ -61,7 +63,6 @@ export function ChatFooter() {
             </InputGroupButton>
           </InputGroupAddon>
         </InputGroup>
-      </div>
-    </div>
+    </section>
   );
 }

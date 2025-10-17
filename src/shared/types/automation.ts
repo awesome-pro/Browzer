@@ -33,6 +33,7 @@ export interface AutomationStep {
   startTime?: number;
   endTime?: number;
   retryCount?: number;
+  metadata?: Record<string, unknown>; // Additional data for rich progress updates
 }
 
 /**
@@ -58,6 +59,7 @@ export interface AutomationResult {
   plan: AutomationPlan;
   error?: string;
   executionTime: number;
+  sessionId?: string; // Chat session ID for tracking
 }
 
 /**

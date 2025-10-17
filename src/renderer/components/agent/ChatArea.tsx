@@ -5,10 +5,10 @@
 import { useAgent } from './AgentContext';
 import { RecentSessions } from './RecentSessions';
 import { SessionDetails } from './SessionDetails';
-import { ExecutionStream } from './ExecutionStream';
+import { ConversationView } from './ConversationView';
 
 export function ChatArea() {
-  const { selectedSession } = useAgent();
+  const { selectedSession, messages, toolExecutions } = useAgent();
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -19,7 +19,10 @@ export function ChatArea() {
         /* Active Session View */
         <section className="h-full flex flex-col">
           <SessionDetails />
-          <ExecutionStream />
+          <ConversationView 
+            messages={messages} 
+            toolExecutions={toolExecutions}
+          />
         </section>
       )}
     </div>

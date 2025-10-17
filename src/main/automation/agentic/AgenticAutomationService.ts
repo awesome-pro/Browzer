@@ -720,6 +720,7 @@ Remember: You're iterative and adaptive. Each action gives you new information t
         } else {
           context = await this.contextProvider.getContext();
         }
+        console.log('Browser context:', context);
         return this.contextProvider.contextToText(context);
 
       case 'get_element_text':

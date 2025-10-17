@@ -33,6 +33,10 @@ interface AgentContextValue {
   isExecuting: boolean;
   startAutomation: (userPrompt: string, recordingSessionId: string) => Promise<void>;
   cancelAutomation: () => Promise<void>;
+  
+  // Pending recording ID (for new chats)
+  pendingRecordingId: string | null;
+  setPendingRecordingId: (id: string | null) => void;
 }
 
 const AgentContext = createContext<AgentContextValue | null>(null);
@@ -50,6 +54,9 @@ export function AgentProvider({ children }: { children: ReactNode }) {
   // Execution state
   const [isExecuting, setIsExecuting] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  
+  // Pending recording ID (for new chats before session is created)
+  const [pendingRecordingId, setPendingRecordingId] = useState<string | null>(null);
 
   // Load sessions on mount
   useEffect(() => {
@@ -58,25 +65,28 @@ export function AgentProvider({ children }: { children: ReactNode }) {
 
   // Listen for real-time automation progress
   useEffect(() => {
-    const unsubscribe = window.browserAPI.onAutomationProgress((data: AutomationProgressUpdate) => {
+    const unsubscribe = window.browserAPI.onAutomationProgress((data: { step: any; index: number; total: number }) => {
       console.log('🔄 Progress update:', data);
       
-      // Add execution step
-      const step: ExecutionStep = {
-        type: data.type,
-        message: data.message,
-        iteration: data.iteration,
-        toolName: data.toolName,
-        toolInput: data.toolInput,
-        toolOutput: data.toolOutput,
-        error: data.error,
+      const { step, index } = data;
+      const metadata = step.metadata || {};
+      
+      // Convert AutomationStep to ExecutionStep
+      const executionStep: ExecutionStep = {
+        type: (metadata.type as ExecutionStep['type']) || 'acting',
+        message: step.description,
+        iteration: index,
+        toolName: metadata.toolName as string | undefined,
+        toolInput: metadata.toolInput,
+        toolOutput: metadata.toolOutput,
+        error: metadata.error as string | undefined || step.error,
         timestamp: Date.now()
       };
       
-      setExecutionSteps(prev => [...prev, step]);
+      setExecutionSteps(prev => [...prev, executionStep]);
       
       // Handle completion/failure
-      if (data.type === 'completed' || data.type === 'failed') {
+      if (step.status === 'completed' || step.status === 'failed') {
         setIsExecuting(false);
         
         // Reload sessions to get updated status
@@ -87,10 +97,10 @@ export function AgentProvider({ children }: { children: ReactNode }) {
           }
         }, 500);
         
-        if (data.type === 'completed') {
+        if (step.status === 'completed') {
           toast.success('✅ Automation completed successfully!');
         } else {
-          toast.error('❌ Automation failed: ' + (data.error || 'Unknown error'));
+          toast.error('❌ Automation failed: ' + (step.error || 'Unknown error'));
         }
       }
     });
@@ -242,10 +252,12 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       console.log('✅ Automation started, session ID:', result.sessionId);
       setCurrentSessionId(result.sessionId);
 
-      // Load the new session
+      // Immediately load and select the new session
       if (result.sessionId) {
         await loadSessions();
         await loadSessionData(result.sessionId);
+        // Clear pending recording ID since we now have an active session
+        setPendingRecordingId(null);
       }
     } catch (error) {
       console.error('Automation failed:', error);
@@ -285,7 +297,9 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     executionSteps,
     isExecuting,
     startAutomation,
-    cancelAutomation
+    cancelAutomation,
+    pendingRecordingId,
+    setPendingRecordingId
   };
 
   return (

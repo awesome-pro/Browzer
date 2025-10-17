@@ -122,6 +122,7 @@ export class BrowserContextProvider {
 
     // Get page metadata
     const metadata = await this.getPageMetadata();
+    console.log("metadta: ", JSON.stringify(metadata));
 
     // Get pruned DOM if requested
     let interactiveElements: any[] = [];
@@ -160,21 +161,21 @@ export class BrowserContextProvider {
     }
 
     // Get recent network activity
-    let recentNetworkActivity = undefined;
-    if (includeNetworkActivity) {
-      recentNetworkActivity = this.getRecentNetworkActivity(
-        maxNetworkEntries,
-        activitySince
-      );
-      console.log(`  ✓ Network activity: ${recentNetworkActivity.length} requests`);
-    }
+    // let recentNetworkActivity = undefined;
+    // if (includeNetworkActivity) {
+    //   recentNetworkActivity = this.getRecentNetworkActivity(
+    //     maxNetworkEntries,
+    //     activitySince
+    //   );
+    //   console.log(`  ✓ Network activity: ${recentNetworkActivity.length} requests`);
+    // }
 
     // Get visual context if requested
-    let visual = undefined;
-    if (includeScreenshot || includeVisualDescription) {
-      visual = await this.getVisualContext(includeVisualDescription);
-      console.log(`  ✓ Visual context captured`);
-    }
+    // let visual = undefined;
+    // if (includeScreenshot || includeVisualDescription) {
+    //   visual = await this.getVisualContext(includeVisualDescription);
+    //   console.log(`  ✓ Visual context captured`);
+    // }
 
     const context: BrowserContext = {
       metadata,
@@ -182,8 +183,8 @@ export class BrowserContextProvider {
       elementCount,
       accessibilityTree,
       recentConsoleLogs,
-      recentNetworkActivity,
-      visual,
+      // recentNetworkActivity,
+      // visual,
       capturedAt: Date.now()
     };
 
@@ -213,12 +214,12 @@ export class BrowserContextProvider {
       includePrunedDOM: true,
       includeAccessibilityTree: true,
       includeConsoleLogs: true,
-      includeNetworkActivity: true,
-      includeScreenshot: true,
-      includeVisualDescription: false, // Can add later if needed
-      maxElements: 150,
-      maxConsoleEntries: 30,
-      maxNetworkEntries: 30
+      // includeNetworkActivity: true,
+      // includeScreenshot: true,
+      // includeVisualDescription: false, // Can add later if needed
+      maxElements: 250,
+      // maxConsoleEntries: 30,
+      // maxNetworkEntries: 30
     });
   }
 

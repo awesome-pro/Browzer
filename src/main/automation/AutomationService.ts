@@ -55,17 +55,23 @@ export class AutomationService {
         recordingSession: request.recordingSession,
         apiKey: request.apiKey,
         onProgress: (update) => {
-          // Convert agentic progress updates for UI
-          if (update.type === 'acting' && update.toolName) {
-            const step: AutomationStep = {
-              id: `step-${Date.now()}`,
-              action: 'navigate', // Use a valid action type
-              description: `${update.toolName}: ${update.message}`,
-              status: 'running',
-              retryCount: 0
-            };
-            onProgress?.(step, update.iteration, 50);
-          }
+          // Forward ALL progress updates to UI
+          const step: AutomationStep = {
+            id: `step-${Date.now()}`,
+            action: 'navigate', // Generic action type
+            description: update.message,
+            status: update.type === 'failed' ? 'failed' : 
+                   update.type === 'completed' ? 'completed' : 'running',
+            retryCount: 0,
+            metadata: {
+              type: update.type,
+              toolName: update.toolName,
+              toolInput: update.toolInput,
+              toolOutput: update.toolOutput,
+              error: update.error
+            }
+          };
+          onProgress?.(step, update.iteration, 50);
         }
       });
 
@@ -85,7 +91,8 @@ export class AutomationService {
         success: result.success,
         plan,
         error: result.error,
-        executionTime: result.duration
+        executionTime: result.duration,
+        sessionId: result.sessionId // Return session ID for renderer
       };
 
     } catch (error) {

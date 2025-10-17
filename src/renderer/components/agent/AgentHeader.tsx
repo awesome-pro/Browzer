@@ -11,9 +11,8 @@ import { useAgent } from './AgentContext';
 import { RecordingSession } from '@/shared/types';
 
 export function AgentHeader() {
-  const { selectedSession } = useAgent();
+  const { selectedSession, pendingRecordingId, setPendingRecordingId } = useAgent();
   const [recordings, setRecordings] = useState<RecordingSession[]>([]);
-  const [selectedRecordingId, setSelectedRecordingId] = useState<string>('');
   const [selectedRecording, setSelectedRecording] = useState<RecordingSession | null>(null);
 
   // Load recordings on mount
@@ -23,14 +22,14 @@ export function AgentHeader() {
 
   // Find selected recording details
   useEffect(() => {
-    const recordingId = selectedSession?.recordingSessionId || selectedRecordingId;
+    const recordingId = selectedSession?.recordingSessionId || pendingRecordingId;
     if (recordingId) {
       const recording = recordings.find(r => r.id === recordingId);
       setSelectedRecording(recording || null);
     } else {
       setSelectedRecording(null);
     }
-  }, [selectedSession, selectedRecordingId, recordings]);
+  }, [selectedSession, pendingRecordingId, recordings]);
 
   const loadRecordings = async () => {
     try {
@@ -62,8 +61,8 @@ export function AgentHeader() {
           ) : (
             /* Show selector when no active session */
             <Select
-              value={selectedRecordingId}
-              onValueChange={setSelectedRecordingId}
+              value={pendingRecordingId || ''}
+              onValueChange={setPendingRecordingId}
             >
               <SelectTrigger className="h-8 text-xs border-none shadow-none focus:ring-0">
                 <SelectValue placeholder="Select recording session..." />
